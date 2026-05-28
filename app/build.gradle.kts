@@ -4,15 +4,15 @@ plugins {
 }
 
 android {
-    namespace = "com.quickdairy"
+    namespace = "com.quickdaily"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.quickdairy"
+        applicationId = "com.quickdaily"
         minSdk = 26
         targetSdk = 35
-        versionCode = 18
-        versionName = "beta0.16"
+        versionCode = 19
+        versionName = "1.0"
     }
 
     buildFeatures {

@@ -1,4 +1,4 @@
-package com.quickdairy
+﻿package com.quickdaily
 
 import android.Manifest
 import android.content.Intent
@@ -18,9 +18,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModelProvider
-import com.quickdairy.ui.EditorScreen
-import com.quickdairy.ui.SettingsScreen
-import com.quickdairy.ui.theme.QuickDairyTheme
+import com.quickdaily.ui.EditorScreen
+import com.quickdaily.ui.SettingsScreen
+import com.quickdaily.ui.theme.QuickDailyTheme
 
 class MainActivity : ComponentActivity() {
 
@@ -42,7 +42,7 @@ class MainActivity : ComponentActivity() {
         val firstLaunch = appState.config.value.vaultPath.isBlank()
 
         setContent {
-            QuickDairyTheme {
+            QuickDailyTheme {
                 val navigator = remember { Navigator(firstLaunch) }
 
                 when (navigator.screen) {

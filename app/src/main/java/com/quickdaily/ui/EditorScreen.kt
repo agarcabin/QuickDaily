@@ -1,4 +1,4 @@
-package com.quickdairy.ui
+﻿package com.quickdaily.ui
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -21,9 +21,9 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.quickdairy.AppState
-import com.quickdairy.markdown.MdRenderer
-import com.quickdairy.markdown.toggleTaskCheck
+import com.quickdaily.AppState
+import com.quickdaily.markdown.MdRenderer
+import com.quickdaily.markdown.toggleTaskCheck
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -48,7 +48,7 @@ fun EditorScreen(
         contentWindowInsets = WindowInsets(0),
         topBar = {
             TopAppBar(
-                title = { Text(title.ifEmpty { "QuickDairy" }, style = MaterialTheme.typography.titleMedium) },
+                title = { Text(title.ifEmpty { "QuickDaily" }, style = MaterialTheme.typography.titleMedium) },
                 actions = {
                     IconButton(onClick = { showPreview = !showPreview }) {
                         Icon(if (showPreview) Icons.Default.Edit else Icons.Default.Visibility, null)

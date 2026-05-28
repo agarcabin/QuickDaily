@@ -1,8 +1,8 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.QuickDairy" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.QuickDaily" parent="android:Theme.Material.Light.NoActionBar" />
 
-    <style name="Theme.QuickDairy.Floating" parent="android:Theme.Material.Light.Dialog">
+    <style name="Theme.QuickDaily.Floating" parent="android:Theme.Material.Light.Dialog">
         <item name="android:windowIsFloating">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:backgroundDimEnabled">true</item>
@@ -10,7 +10,7 @@
         <item name="android:windowNoTitle">true</item>
     </style>
 
-    <style name="Theme.QuickDairy.Transparent" parent="android:Theme.Material.Light.NoActionBar">
+    <style name="Theme.QuickDaily.Transparent" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowNoTitle">true</item>

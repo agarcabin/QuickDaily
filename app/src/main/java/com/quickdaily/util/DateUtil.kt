@@ -1,4 +1,4 @@
-package com.quickdairy.util
+﻿package com.quickdaily.util
 
 import java.time.LocalDate
 import java.time.LocalDateTime

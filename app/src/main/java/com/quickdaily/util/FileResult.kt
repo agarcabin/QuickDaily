@@ -1,4 +1,4 @@
-package com.quickdairy.util
+﻿package com.quickdaily.util
 
 /** 文件读取结果 */
 sealed class ReadResult {

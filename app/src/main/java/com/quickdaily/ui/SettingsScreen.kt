@@ -1,4 +1,4 @@
-package com.quickdairy.ui
+﻿package com.quickdaily.ui
 
 import android.content.Intent
 import android.net.Uri
@@ -25,9 +25,9 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.quickdairy.AppState
-import com.quickdairy.DiaryConfig
-import com.quickdairy.util.UriUtil
+import com.quickdaily.AppState
+import com.quickdaily.DiaryConfig
+import com.quickdaily.util.UriUtil
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -280,7 +280,7 @@ fun SettingsScreen(
             Spacer(Modifier.height(12.dp))
             Text("关于", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(8.dp))
-            Text("QuickDairy beta0.16", style = MaterialTheme.typography.titleMedium)
+            Text("QuickDaily 1.0", style = MaterialTheme.typography.titleMedium)
             // 可点击的酷安链接
             val coolapkAnnotated = buildAnnotatedString {
                 withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary, fontSize = 14.sp)) {
@@ -295,6 +295,20 @@ fun SettingsScreen(
                 },
                 modifier = Modifier.padding(top = 4.dp)
             )
+            // GitHub 链接
+            val githubAnnotated = buildAnnotatedString {
+                withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary, fontSize = 14.sp)) {
+                    append("GitHub 开源")
+                }
+            }
+            ClickableText(
+                text = githubAnnotated,
+                onClick = {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/agarcabin/QuickDaily"))
+                    context.startActivity(intent)
+                },
+                modifier = Modifier.padding(top = 2.dp)
+            )
             Text(
                 "更新内容：",
                 style = MaterialTheme.typography.labelSmall,
@@ -302,6 +316,11 @@ fun SettingsScreen(
                 modifier = Modifier.padding(top = 8.dp)
             )
             Text(
+                "1.0:\n" +
+                "• 正式发布！APP 更名为 QuickDaily\n" +
+                "• 包名、类名全部统一为 QuickDaily\n" +
+                "• 开源发布到 GitHub\n" +
+                "\n" +
                 "beta0.16:\n" +
                 "• 新增速记锚点文本设置\n" +
                 "• 速记可插入到指定锚点文本之后\n" +

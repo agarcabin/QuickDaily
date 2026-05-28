@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
@@ -15,9 +15,9 @@
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
-        android:label="QuickDairy"
+        android:label="QuickDaily"
         android:supportsRtl="true"
-        android:theme="@style/Theme.QuickDairy">
+        android:theme="@style/Theme.QuickDaily">
 
         <activity
             android:name=".MainActivity"
@@ -34,13 +34,13 @@
             android:name=".NoteEditActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize"
-            android:theme="@style/Theme.QuickDairy.Transparent"
+            android:theme="@style/Theme.QuickDaily.Transparent"
             android:excludeFromRecents="true"
             android:taskAffinity=""
             android:launchMode="singleInstance" />
 
         <receiver
-            android:name=".QuickDairyWidget"
+            android:name=".QuickDailyWidget"
             android:exported="false"
             android:label="桌面便签">
             <intent-filter>
@@ -48,7 +48,7 @@
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
-                android:resource="@xml/quickdairy_widget_info" />
+                android:resource="@xml/quickdaily_widget_info" />
         </receiver>
 
         <receiver

@@ -1,4 +1,4 @@
-package com.quickdairy.util
+﻿package com.quickdaily.util
 
 import android.content.Context
 import android.net.Uri

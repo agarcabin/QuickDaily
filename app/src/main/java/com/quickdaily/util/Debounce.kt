@@ -1,4 +1,4 @@
-package com.quickdairy.util
+﻿package com.quickdaily.util
 
 import kotlinx.coroutines.*
 import kotlin.coroutines.CoroutineContext

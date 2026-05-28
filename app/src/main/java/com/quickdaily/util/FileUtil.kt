@@ -1,4 +1,4 @@
-package com.quickdairy.util
+﻿package com.quickdaily.util
 
 import java.io.File
 
@@ -26,7 +26,7 @@ object FileUtil {
             File(path).writeText(content, Charsets.UTF_8)
             true
         } catch (e: Exception) {
-            android.util.Log.e("QuickDairy", "写入失败: $path", e)
+            android.util.Log.e("QuickDaily", "写入失败: $path", e)
             false
         }
     }
@@ -47,7 +47,7 @@ object FileUtil {
             java.io.File(path).writeText(content, Charsets.UTF_8)
             WriteResult.Success
         } catch (e: Exception) {
-            android.util.Log.e("QuickDairy", "写入失败: $path", e)
+            android.util.Log.e("QuickDaily", "写入失败: $path", e)
             WriteResult.Error(e)
         }
     }

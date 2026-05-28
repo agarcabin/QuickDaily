@@ -1,5 +1,5 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">QuickDairy</string>
+    <string name="app_name">QuickDaily</string>
     <string name="widget_description">今日日记便签 — 快速查看和编辑</string>
 </resources>

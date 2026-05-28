@@ -1,4 +1,4 @@
-package com.quickdairy
+﻿package com.quickdaily
 
 import android.os.Bundle
 import android.view.Gravity
@@ -19,8 +19,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
-import com.quickdairy.util.DateUtil
-import com.quickdairy.util.FileUtil
+import com.quickdaily.util.DateUtil
+import com.quickdaily.util.FileUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -33,7 +33,7 @@ class NoteEditActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        noteAddTimestamp = getSharedPreferences("quickdairy", 0).getBoolean("note_timestamp", false)
+        noteAddTimestamp = getSharedPreferences("QuickDaily", 0).getBoolean("note_timestamp", false)
         val dm = resources.displayMetrics
         val w = (dm.widthPixels * 0.88f).toInt()
         val h = (dm.heightPixels * 0.35f).toInt()
@@ -66,7 +66,7 @@ class NoteEditActivity : ComponentActivity() {
                         addTimestamp = noteAddTimestamp,
                         onTimestampChange = {
                             noteAddTimestamp = it
-                            getSharedPreferences("quickdairy", 0).edit().putBoolean("note_timestamp", it).apply()
+                            getSharedPreferences("QuickDaily", 0).edit().putBoolean("note_timestamp", it).apply()
                         },
                         onSave = {
                             if (noteText.isNotBlank()) appendToDiary(noteText.trim(), noteAddTimestamp)
@@ -81,7 +81,7 @@ class NoteEditActivity : ComponentActivity() {
 
     private fun appendToDiary(text: String, addTimestamp: Boolean) {
         lifecycleScope.launch(Dispatchers.IO) {
-            val prefs = getSharedPreferences("quickdairy", 0)
+            val prefs = getSharedPreferences("QuickDaily", 0)
             val vaultPath = prefs.getString("vault_path", "") ?: ""
             if (vaultPath.isBlank()) { withContext(Dispatchers.Main) { finish() }; return@launch }
             val diaryFolder = prefs.getString("diary_folder", "Daily") ?: "Daily"
@@ -98,7 +98,7 @@ class NoteEditActivity : ComponentActivity() {
             else if (existing.endsWith("\n")) "$existing$line\n"
             else "$existing\n$line\n"
             FileUtil.write(path, nc)
-            QuickDairyWidget.updateAllWidgets(this@NoteEditActivity)
+            QuickDailyWidget.updateAllWidgets(this@NoteEditActivity)
             withContext(Dispatchers.Main) {
                 Toast.makeText(this@NoteEditActivity, "已保存", Toast.LENGTH_SHORT).show()
                 finish()

@@ -1,4 +1,4 @@
-package com.quickdairy
+﻿package com.quickdaily
 
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager

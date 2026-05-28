@@ -1,4 +1,4 @@
-package com.quickdairy.ui.theme
+﻿package com.quickdaily.ui.theme
 
 import android.app.Activity
 import androidx.compose.material3.*
@@ -19,7 +19,7 @@ private val LightColorScheme = lightColorScheme(
 )
 
 @Composable
-fun QuickDairyTheme(content: @Composable () -> Unit) {
+fun QuickDailyTheme(content: @Composable () -> Unit) {
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {

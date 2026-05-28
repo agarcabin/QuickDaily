@@ -1,4 +1,4 @@
-package com.quickdairy
+﻿package com.quickdaily
 
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
@@ -8,10 +8,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.widget.RemoteViews
-import com.quickdairy.util.DateUtil
-import com.quickdairy.util.FileUtil
+import com.quickdaily.util.DateUtil
+import com.quickdaily.util.FileUtil
 
-class QuickDairyWidget : AppWidgetProvider() {
+class QuickDailyWidget : AppWidgetProvider() {
 
     companion object {
         fun updateAllWidgets(context: Context) {
@@ -22,13 +22,13 @@ class QuickDairyWidget : AppWidgetProvider() {
                 return
             }
             val manager = AppWidgetManager.getInstance(context)
-            val component = ComponentName(context, QuickDairyWidget::class.java)
+            val component = ComponentName(context, QuickDailyWidget::class.java)
             val ids = manager.getAppWidgetIds(component)
             for (id in ids) updateWidget(context, manager, id)
         }
 
         private fun updateWidget(ctx: Context, manager: AppWidgetManager, widgetId: Int) {
-            val prefs = ctx.getSharedPreferences("quickdairy", 0)
+            val prefs = ctx.getSharedPreferences("QuickDaily", 0)
             val vaultPath = prefs.getString("vault_path", "") ?: ""
             val diaryFolder = prefs.getString("diary_folder", "Daily") ?: "Daily"
             val dateFormat = prefs.getString("date_format", "YYYY-MM-DD") ?: "YYYY-MM-DD"
@@ -43,7 +43,7 @@ class QuickDairyWidget : AppWidgetProvider() {
             views.setOnClickPendingIntent(R.id.widget_title, pi)
 
             if (vaultPath.isBlank()) {
-                views.setTextViewText(R.id.widget_title, "QuickDairy")
+                views.setTextViewText(R.id.widget_title, "QuickDaily")
                 views.setTextViewText(R.id.widget_content, "请先设置仓库路径")
                 manager.updateAppWidget(widgetId, views)
                 return

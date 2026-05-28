@@ -1,13 +1,13 @@
-package com.quickdairy
+﻿package com.quickdaily
 
 import android.app.Application
 import android.content.SharedPreferences
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.quickdairy.util.DateUtil
-import com.quickdairy.util.Debounce
-import com.quickdairy.util.FileUtil
-import com.quickdairy.util.ReadResult
+import com.quickdaily.util.DateUtil
+import com.quickdaily.util.Debounce
+import com.quickdaily.util.FileUtil
+import com.quickdaily.util.ReadResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -25,7 +25,7 @@ data class DiaryConfig(
 class AppState(application: Application) : AndroidViewModel(application) {
 
     private val prefs: SharedPreferences =
-        application.getSharedPreferences("quickdairy", 0)
+        application.getSharedPreferences("QuickDaily", 0)
 
     private val _config = MutableStateFlow(loadConfig())
     val config: StateFlow<DiaryConfig> = _config.asStateFlow()
@@ -131,7 +131,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
                     ""
                 }
                 is ReadResult.Error -> {
-                    android.util.Log.e("QuickDairy", "读取日记失败: $path", result.exception)
+                    android.util.Log.e("QuickDaily", "读取日记失败: $path", result.exception)
                     null
                 }
             }
@@ -168,7 +168,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
         if (path.isNotEmpty()) {
             viewModelScope.launch(Dispatchers.IO) {
                 FileUtil.write(path, content)
-                QuickDairyWidget.updateAllWidgets(getApplication())
+                QuickDailyWidget.updateAllWidgets(getApplication())
             }
         }
     }
