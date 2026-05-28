@@ -298,7 +298,7 @@ fun SettingsScreen(
             // GitHub 链接
             val githubAnnotated = buildAnnotatedString {
                 withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary, fontSize = 14.sp)) {
-                    append("GitHub 开源")
+                    append("GitHub@agarcabin")
                 }
             }
             ClickableText(
