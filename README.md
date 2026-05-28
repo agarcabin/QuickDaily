@@ -38,7 +38,7 @@
 ## 🚀 构建
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/QuickDairy.git
+git clone https://github.com/agarcabin/QuickDaily.git
 cd QuickDairy
 ./gradlew assembleDebug
 ```
