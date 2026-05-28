@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="40dp"
+    android:minHeight="40dp"
+    android:updatePeriodMillis="0"
+    android:initialLayout="@layout/widget_quicknote"
+    android:widgetCategory="home_screen"
+    android:label="快速添加"
+    android:previewImage="@drawable/quicknote_preview"
+    android:description="@string/widget_description" />
