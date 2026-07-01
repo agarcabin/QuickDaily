@@ -2,14 +2,7 @@
 <resources>
     <style name="Theme.QuickDaily" parent="android:Theme.Material.Light.NoActionBar" />
 
-    <style name="Theme.QuickDaily.Floating" parent="android:Theme.Material.Light.Dialog">
-        <item name="android:windowIsFloating">true</item>
-        <item name="android:windowBackground">@android:color/transparent</item>
-        <item name="android:backgroundDimEnabled">true</item>
-        <item name="android:backgroundDimAmount">0.4</item>
-        <item name="android:windowNoTitle">true</item>
-    </style>
-
+    <!-- NoteEditActivity 使用：透明背景 + 半透弹窗，外部点击可关闭 -->
     <style name="Theme.QuickDaily.Transparent" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowIsTranslucent">true</item>

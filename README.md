@@ -17,7 +17,10 @@
 - 📌 **快速添加悬浮窗** — 1×1 小部件，点击弹出透明悬浮窗，支持时间戳和锚点插入
 - 🎯 **速记锚点** — 可设置锚点文本，速记自动插入到指定位置
 - 🎨 **Material3 主题** — Android 15 Edge-to-Edge 适配
-- <img width="240" height="534" alt="Screenrecorder-2026-05-29-00-41-55-207_小萌GIF_20260529_005437" src="https://github.com/user-attachments/assets/a2718d12-e216-4b45-8f7a-b2b68ce0cefb" />
+
+## 📸 截图
+
+<img width="240" height="534" alt="QuickDaily 录屏演示" src="https://github.com/user-attachments/assets/a2718d12-e216-4b45-8f7a-b2b68ce0cefb" />
 
 ## 📦 下载
 

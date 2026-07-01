@@ -68,14 +68,8 @@ class MainActivity : ComponentActivity() {
                 requestManageStorage()
                 return
             }
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES)
-                != PackageManager.PERMISSION_GRANTED
-            ) {
-                requestPermissions(arrayOf(Manifest.permission.READ_MEDIA_IMAGES), 1)
-            }
-        } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+        } else {
+            // Android 10 及以下仍需运行时申请存储权限
             if (ContextCompat.checkSelfPermission(
                     this, Manifest.permission.WRITE_EXTERNAL_STORAGE
                 ) != PackageManager.PERMISSION_GRANTED
@@ -94,7 +88,9 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         externalLaunching = false
         if (::appState.isInitialized) {
-            appState.loadToday()
+            // 仅当文件比内存新时才重读，避免覆盖用户未保存的编辑
+            // （saveNow 异步执行，可能尚未完成；盲目 loadToday 会丢失编辑）
+            appState.reloadIfNewerOnDisk()
         }
     }
 

@@ -14,13 +14,19 @@ import com.quickdaily.util.FileUtil
 class QuickDailyWidget : AppWidgetProvider() {
 
     companion object {
+        /** 刷新所有桌面便签小部件。线程安全：可在任意线程调用。 */
         fun updateAllWidgets(context: Context) {
             if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+                // RemoteViews/AppWidgetManager 必须在主线程调用
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    updateAllWidgets(context)
+                    doUpdateAllWidgets(context)
                 }
-                return
+            } else {
+                doUpdateAllWidgets(context)
             }
+        }
+
+        private fun doUpdateAllWidgets(context: Context) {
             val manager = AppWidgetManager.getInstance(context)
             val component = ComponentName(context, QuickDailyWidget::class.java)
             val ids = manager.getAppWidgetIds(component)

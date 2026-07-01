@@ -6,17 +6,19 @@ plugins {
 android {
     namespace = "com.quickdaily"
     compileSdk = 35
+    buildToolsVersion = "35.0.0"
 
     defaultConfig {
         applicationId = "com.quickdaily"
         minSdk = 26
         targetSdk = 35
-        versionCode = 19
-        versionName = "1.0"
+        versionCode = 20
+        versionName = "1.0.1"
     }
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     composeOptions {
@@ -30,6 +32,40 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+    }
+
+    // 离线构建环境跳过 lint vital 任务（避免联网下载 SDK 元数据）
+    lint {
+        abortOnError = false
+        checkReleaseBuilds = false
+    }
+
+    signingConfigs {
+        // 使用 debug keystore 作为 release 兜底签名，便于本地打包验证；
+        // 正式上架时应替换为专用 release keystore（不要把真实 keystore 密码硬编码进仓库）
+        getByName("debug").apply {
+            storeFile = rootProject.file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
+    buildTypes {
+        debug {
+            isMinifyEnabled = false
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            signingConfig = signingConfigs.getByName("debug")
+        }
     }
 
     packaging {
@@ -56,13 +92,11 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.6")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")
 
-    // Navigation
-    implementation("androidx.navigation:navigation-compose:2.7.6")
-
     // JSON parsing (for .obsidian config)
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
 
     // Coroutines
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.6")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
     debugImplementation("androidx.compose.ui:ui-tooling")

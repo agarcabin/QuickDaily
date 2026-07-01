@@ -8,7 +8,9 @@ import com.quickdaily.util.DateUtil
 import com.quickdaily.util.Debounce
 import com.quickdaily.util.FileUtil
 import com.quickdaily.util.ReadResult
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,6 +25,16 @@ data class DiaryConfig(
 )
 
 class AppState(application: Application) : AndroidViewModel(application) {
+
+    private val app: Application = application
+
+    /**
+     * 应用级协程作用域 — 用于必须在 Activity 销毁后仍需完成的 IO 操作（如 saveNow）。
+     * 使用 SupervisorJob：单个子协程失败不会取消其他子协程。
+     * viewModelScope 在 Activity finish 后会被取消，导致写入中断；改用此作用域避免数据丢失。
+     */
+    private val appScope: CoroutineScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val prefs: SharedPreferences =
         application.getSharedPreferences("QuickDaily", 0)
@@ -40,6 +52,9 @@ class AppState(application: Application) : AndroidViewModel(application) {
     val todayPath: StateFlow<String> = _todayPath.asStateFlow()
 
     private var autoSave: Debounce? = null
+
+    /** 上次从磁盘加载文件时的 mtime，用于 onResume 时判断是否需要重读 */
+    private var _lastLoadedMtime: Long = 0L
 
     // ── Config ──────────────────────────────────────────
 
@@ -81,11 +96,21 @@ class AppState(application: Application) : AndroidViewModel(application) {
             val jsonPath = "$cleanPath/.obsidian/daily-notes.json"
             val raw = FileUtil.readOrNull(jsonPath) ?: return@withContext null
             try {
-                val folder = extractJsonString(raw, "folder") ?: "Daily"
-                val format = DateUtil.convertObsidianFormat(
-                    extractJsonString(raw, "format") ?: "YYYY-MM-DD"
-                )
-                var template = extractJsonString(raw, "template") ?: ""
+                // 使用 kotlinx-serialization-json 的 JsonObject 解析，
+                // 替代原正则方案——正则无法处理 JSON 转义字符（如路径中的反斜杠）
+                val json = kotlinx.serialization.json.Json {
+                    ignoreUnknownKeys = true
+                    isLenient = true
+                }
+                val obj = json.parseToJsonElement(raw) as? kotlinx.serialization.json.JsonObject
+                    ?: return@withContext null
+
+                fun field(key: String): String? =
+                    (obj[key] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNullBlank()
+
+                val folder = field("folder") ?: "Daily"
+                val format = DateUtil.convertObsidianFormat(field("format") ?: "YYYY-MM-DD")
+                var template = field("template") ?: ""
                 // 模板路径没有 .md 后缀时自动补上
                 if (template.isNotBlank() && !template.endsWith(".md", ignoreCase = true)) {
                     template += ".md"
@@ -95,11 +120,6 @@ class AppState(application: Application) : AndroidViewModel(application) {
                 null
             }
         }
-    }
-
-    private fun extractJsonString(raw: String, key: String): String? {
-        val regex = "\"$key\"\\s*:\\s*\"([^\"]*)\"".toRegex()
-        return regex.find(raw)?.groupValues?.getOrNull(1)
     }
 
     // ── Diary ───────────────────────────────────────────
@@ -123,12 +143,14 @@ class AppState(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             val path = todayFilePath()
             _todayPath.value = path
+            _lastLoadedMtime = FileUtil.lastModified(path)
 
             val content = when (val result = FileUtil.readResult(path)) {
                 is ReadResult.Success -> result.content
                 is ReadResult.NotFound -> {
-                    FileUtil.write(path, "")
-                    ""
+                    // 不立即创建空文件——Obsidian 不会自动创建空日记，
+                    // 此处仅加载模板内容到内存，真正写入推迟到用户首次编辑后的防抖保存
+                    null
                 }
                 is ReadResult.Error -> {
                     android.util.Log.e("QuickDaily", "读取日记失败: $path", result.exception)
@@ -145,14 +167,41 @@ class AppState(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * 仅当磁盘上的日记文件比上次加载时更新（例如 Obsidian 同步覆盖、外部修改）才重新加载。
+     * 避免每次 onResume 都盲目重读，覆盖掉用户尚未保存到磁盘的编辑。
+     */
+    fun reloadIfNewerOnDisk() {
+        if (_config.value.vaultPath.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val path = _todayPath.value
+            if (path.isEmpty()) {
+                loadToday()
+                return@launch
+            }
+            val mtime = FileUtil.lastModified(path)
+            if (mtime > _lastLoadedMtime) {
+                _lastLoadedMtime = mtime
+                val content = when (val result = FileUtil.readResult(path)) {
+                    is ReadResult.Success -> result.content
+                    else -> return@launch
+                }
+                _diaryContent.value =
+                    if (content.isNotEmpty()) content else loadTemplate()
+            }
+        }
+    }
+
     private fun loadTemplate(): String {
         val cfg = _config.value
+        if (cfg.templatePath.isBlank()) return ""
         val tplPath = if (cfg.templatePath.startsWith("/")) {
             cfg.templatePath
         } else {
-            "${cfg.vaultPath}/${cfg.templatePath}"
+            "${cfg.vaultPath.trimEnd('/')}/${cfg.templatePath}"
         }
-        return FileUtil.read(tplPath)
+        // 用 readOrNull 区分"模板不存在"与"读取失败"，避免吞异常返回空串
+        return FileUtil.readOrNull(tplPath) ?: ""
     }
 
     /** 编辑时调用：更新内容 + 触发防抖保存 */
@@ -161,15 +210,30 @@ class AppState(application: Application) : AndroidViewModel(application) {
         autoSave?.trigger()
     }
 
-    /** 切后台时调用：立即保存 */
+    /**
+     * 立即保存（切后台/离开 Activity 时调用）。
+     *
+     * 关键修复：使用 [appScope] 而非 viewModelScope。
+     * MainActivity.onUserLeaveHint 会在 saveNow 后立即 finishAffinity，
+     * viewModelScope 随之取消，可能导致写入中途被切断、文件损坏。
+     * appScope 生命周期与 Application 绑定，可保证协程完整执行后再进程退出。
+     */
     fun saveNow() {
         val path = _todayPath.value
         val content = _diaryContent.value
-        if (path.isNotEmpty()) {
-            viewModelScope.launch(Dispatchers.IO) {
+        if (path.isNotEmpty() && content.isNotEmpty()) {
+            appScope.launch(Dispatchers.IO) {
                 FileUtil.write(path, content)
-                QuickDailyWidget.updateAllWidgets(getApplication())
+                QuickDailyWidget.updateAllWidgets(app)
             }
         }
     }
 }
+
+/** 把 JsonPrimitive 转为 String，空白视为 null（便于默认值兜底） */
+private fun kotlinx.serialization.json.JsonPrimitive.contentOrNullBlank(): String? =
+    if (this.isString) {
+        content.takeIf { it.isNotBlank() }
+    } else {
+        content.takeIf { it.isNotBlank() }
+    }

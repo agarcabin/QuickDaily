@@ -5,17 +5,17 @@
     <!-- 存储权限 -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
-    <!-- Android 11+ 管理所有文件 -->
+    <!-- Android 11+ 管理所有文件（Obsidian vault 直接路径访问所需，后续可重构为 SAF 移除） -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
-    <!-- Android 13+ 图片/媒体访问 -->
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
 
     <application
-        android:allowBackup="true"
+        android:name=".QuickDailyApp"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
-        android:label="QuickDaily"
+        android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.QuickDaily">
 
@@ -41,7 +41,7 @@
 
         <receiver
             android:name=".QuickDailyWidget"
-            android:exported="false"
+            android:exported="true"
             android:label="桌面便签">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
@@ -53,7 +53,7 @@
 
         <receiver
             android:name=".QuickNoteWidget"
-            android:exported="false"
+            android:exported="true"
             android:label="快速添加">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />

@@ -54,4 +54,9 @@ object FileUtil {
 
     fun exists(path: String): Boolean = File(path).exists()
     fun isDirectory(path: String): Boolean = File(path).isDirectory
+
+    /** 返回文件最后修改时间戳；不存在返回 0 */
+    fun lastModified(path: String): Long = runCatching {
+        File(path).lastModified()
+    }.getOrDefault(0L)
 }
