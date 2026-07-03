@@ -30,10 +30,13 @@ import android.widget.Toast
 class NoteEditActivity : ComponentActivity() {
     private var noteText by mutableStateOf("")
     private var noteAddTimestamp by mutableStateOf(false)
+    private var noteEnterToSave by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        noteAddTimestamp = getSharedPreferences("QuickDaily", 0).getBoolean("note_timestamp", false)
+        val prefs = getSharedPreferences("QuickDaily", 0)
+        noteAddTimestamp = prefs.getBoolean("add_timestamp", false)
+        noteEnterToSave = prefs.getBoolean("enter_to_save", false)
         val dm = resources.displayMetrics
         val w = (dm.widthPixels * 0.88f).toInt()
         val h = (dm.heightPixels * 0.35f).toInt()
@@ -63,11 +66,7 @@ class NoteEditActivity : ComponentActivity() {
                     NoteEditDialog(
                         text = noteText,
                         onTextChange = { noteText = it },
-                        addTimestamp = noteAddTimestamp,
-                        onTimestampChange = {
-                            noteAddTimestamp = it
-                            getSharedPreferences("QuickDaily", 0).edit().putBoolean("note_timestamp", it).apply()
-                        },
+                        enterToSave = noteEnterToSave,
                         onSave = {
                             if (noteText.isNotBlank()) appendToDiary(noteText.trim(), noteAddTimestamp)
                             else finish()
@@ -123,8 +122,7 @@ class NoteEditActivity : ComponentActivity() {
 private fun NoteEditDialog(
     text: String,
     onTextChange: (String) -> Unit,
-    addTimestamp: Boolean,
-    onTimestampChange: (Boolean) -> Unit,
+    enterToSave: Boolean,
     onSave: () -> Unit,
     onClose: () -> Unit
 ) {
@@ -146,20 +144,29 @@ private fun NoteEditDialog(
                     if (text.isNotBlank()) onSave() else onClose()
                 }) { Text("保存", color = Color(0xFF6EB8FF), fontSize = 13.sp) }
             }
-            BasicTextField(value = text, onValueChange = { onTextChange(it) },
+            BasicTextField(value = text, onValueChange = { newText ->
+                if (enterToSave) {
+                    // 单行模式：过滤掉换行符
+                    onTextChange(newText.replace("\n", ""))
+                } else {
+                    onTextChange(newText)
+                }
+            },
                 textStyle = TextStyle(fontSize = 15.sp, lineHeight = 22.sp, color = Color(0xFFEEEEEE)),
                 modifier = Modifier.fillMaxWidth().weight(1f).focusRequester(focusRequester),
+                singleLine = enterToSave,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    imeAction = if (enterToSave) androidx.compose.ui.text.input.ImeAction.Done else androidx.compose.ui.text.input.ImeAction.Default
+                ),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                    onDone = {
+                        if (enterToSave && text.isNotBlank()) onSave()
+                    }
+                ),
                 decorationBox = { inner ->
                     if (text.isEmpty()) Text("写点什么...", color = Color(0x66FFFFFF), fontSize = 14.sp)
                     inner()
                 })
-            Spacer(Modifier.height(2.dp))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = addTimestamp, onCheckedChange = {
-                    onTimestampChange(it)
-                }, colors = CheckboxDefaults.colors(checkedColor = Color(0xFF6EB8FF), uncheckedColor = Color(0xFF666666)))
-                Text("加入时间戳", color = Color(0xFFAAAAAA), fontSize = 13.sp)
-            }
         }
     }
 }

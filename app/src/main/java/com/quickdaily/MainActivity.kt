@@ -41,6 +41,9 @@ class MainActivity : ComponentActivity() {
         appState = ViewModelProvider(this)[AppState::class.java]
         val firstLaunch = appState.config.value.vaultPath.isBlank()
 
+        // 处理分享意图
+        handleShareIntent()
+
         setContent {
             QuickDailyTheme {
                 val navigator = remember { Navigator(firstLaunch) }
@@ -60,6 +63,43 @@ class MainActivity : ComponentActivity() {
         }
         // 权限检查延迟到 UI 首帧之后，不阻塞冷启动
         window.decorView.post { checkPermissions() }
+    }
+
+    private fun handleShareIntent() {
+        val intent = intent
+        if (Intent.ACTION_SEND == intent.action) {
+            val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
+            if (sharedText != null && sharedText.isNotBlank()) {
+                // 保存到日记
+                saveSharedTextToDiary(sharedText)
+            }
+        }
+    }
+
+    private fun saveSharedTextToDiary(text: String) {
+        val prefs = getSharedPreferences("QuickDaily", 0)
+        val vaultPath = prefs.getString("vault_path", "") ?: ""
+        if (vaultPath.isBlank()) {
+            android.widget.Toast.makeText(this, "请先设置仓库路径", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        val diaryFolder = prefs.getString("diary_folder", "Daily") ?: "Daily"
+        val dateFormat = prefs.getString("date_format", "YYYY-MM-DD") ?: "YYYY-MM-DD"
+        val addTimestamp = prefs.getBoolean("add_timestamp", false)
+        val d = com.quickdaily.util.DateUtil.todayStr(dateFormat)
+        val path = "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/$d.md"
+        
+        val line = if (addTimestamp) "${com.quickdaily.util.DateUtil.nowTimeStr()} $text" else text
+        val existing = com.quickdaily.util.FileUtil.read(path)
+        val nc = if (existing.isEmpty()) "$line\n"
+        else if (existing.endsWith("\n")) "$existing$line\n"
+        else "$existing\n$line\n"
+        
+        com.quickdaily.util.FileUtil.write(path, nc)
+        com.quickdaily.QuickDailyWidget.updateAllWidgets(this)
+        
+        android.widget.Toast.makeText(this, "已保存分享内容到日记", android.widget.Toast.LENGTH_SHORT).show()
     }
 
     private fun checkPermissions() {

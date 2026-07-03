@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.quickdaily.AppState
 import com.quickdaily.DiaryConfig
+import com.quickdaily.QuickNoteWidget
 import com.quickdaily.util.UriUtil
 import kotlinx.coroutines.launch
 
@@ -50,6 +51,26 @@ fun SettingsScreen(
     var obsidianDetected by remember { mutableStateOf(false) }
     var obsidianMsg by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
+    
+    // 小部件图片 URI
+    var widgetImageUri by remember { mutableStateOf(config.widgetImageUri) }
+    
+    // ── 图片选择器 ──
+    val imagePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    it, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) { /* 权限持久化失败不崩溃 */ }
+            widgetImageUri = it.toString()
+            appState.saveConfig(config.copy(widgetImageUri = it.toString()))
+            // 更新所有小部件
+            QuickNoteWidget.updateAllWidgets(context)
+        }
+    }
 
     // ── SAF 文件夹选择器（vault） ──
     val vaultPicker = rememberLauncherForActivityResult(
@@ -246,6 +267,107 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(20.dp))
 
+            // ── 速记设置 ──
+            Text("速记设置", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(8.dp))
+            
+            // 时间戳开关
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("添加时间戳", style = MaterialTheme.typography.bodyMedium)
+                Switch(
+                    checked = config.addTimestamp,
+                    onCheckedChange = { checked ->
+                        appState.saveConfig(config.copy(addTimestamp = checked))
+                    }
+                )
+            }
+            Text(
+                "开启后在速记内容前添加时间，如 \"10:30 内容\"",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                modifier = Modifier.padding(top = 2.dp)
+            )
+            
+            Spacer(Modifier.height(12.dp))
+            
+            // 回车键直接保存
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("回车键直接保存", style = MaterialTheme.typography.bodyMedium)
+                Switch(
+                    checked = config.enterToSave,
+                    onCheckedChange = { checked ->
+                        appState.saveConfig(config.copy(enterToSave = checked))
+                    }
+                )
+            }
+            Text(
+                "开启后回车键直接保存速记，无法换行（单行输入）",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                modifier = Modifier.padding(top = 2.dp)
+            )
+
+            Spacer(Modifier.height(20.dp))
+
+            // ── 小部件设置 ──
+            Text("小部件设置", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(8.dp))
+            
+            // 自定义图片
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("自定义图片", style = MaterialTheme.typography.bodyMedium)
+                Row {
+                    FilledTonalButton(
+                        onClick = {
+                            onExternalLaunch()
+                            imagePicker.launch("image/*")
+                        }
+                    ) {
+                        Text("选择图片")
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    FilledTonalButton(
+                        onClick = {
+                            widgetImageUri = ""
+                            appState.saveConfig(config.copy(widgetImageUri = ""))
+                            // 更新所有小部件
+                            QuickNoteWidget.updateAllWidgets(context)
+                        }
+                    ) {
+                        Text("重置")
+                    }
+                }
+            }
+            if (widgetImageUri.isNotEmpty()) {
+                Text(
+                    "已选择图片：${widgetImageUri.take(50)}...",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            } else {
+                Text(
+                    "未选择图片，使用默认+号",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+
+            Spacer(Modifier.height(20.dp))
+
             // ── 预览 ──
             Text("今天的日记路径", style = MaterialTheme.typography.titleSmall)
             Text(
@@ -280,7 +402,72 @@ fun SettingsScreen(
             Spacer(Modifier.height(12.dp))
             Text("关于", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(8.dp))
-            Text("QuickDaily 1.0", style = MaterialTheme.typography.titleMedium)
+            Text("QuickDaily 1.0.2", style = MaterialTheme.typography.titleMedium)
+            // 检查更新按钮
+            Spacer(Modifier.height(8.dp))
+            var isCheckingUpdate by remember { mutableStateOf(false) }
+            var updateInfo by remember { mutableStateOf<com.quickdaily.util.ReleaseInfo?>(null) }
+            var updateError by remember { mutableStateOf("") }
+            
+            Button(
+                onClick = {
+                    isCheckingUpdate = true
+                    updateError = ""
+                    updateInfo = null
+                    scope.launch {
+                        val info = com.quickdaily.util.UpdateChecker.checkUpdate()
+                        if (info != null) {
+                            updateInfo = info
+                        } else {
+                            updateError = "检查更新失败，请稍后重试"
+                        }
+                        isCheckingUpdate = false
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isCheckingUpdate
+            ) {
+                if (isCheckingUpdate) {
+                    Text("检查中...")
+                } else {
+                    Text("检查更新")
+                }
+            }
+            
+            if (updateInfo != null) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "发现新版本：${updateInfo!!.version}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    updateInfo!!.body,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        com.quickdaily.util.UpdateChecker.openReleasePage(context, updateInfo!!.releaseUrl)
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("前往 GitHub 下载")
+                }
+            }
+            
+            if (updateError.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    updateError,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+            
+            Spacer(Modifier.height(12.dp))
             // 可点击的酷安链接
             val coolapkAnnotated = buildAnnotatedString {
                 withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary, fontSize = 14.sp)) {

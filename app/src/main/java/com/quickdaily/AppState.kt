@@ -21,7 +21,10 @@ data class DiaryConfig(
     val diaryFolder: String = "Daily",
     val dateFormat: String = "YYYY-MM-DD",
     val templatePath: String = "",
-    val anchorText: String = ""
+    val anchorText: String = "",
+    val addTimestamp: Boolean = false,
+    val enterToSave: Boolean = false,
+    val widgetImageUri: String = ""
 )
 
 class AppState(application: Application) : AndroidViewModel(application) {
@@ -64,7 +67,10 @@ class AppState(application: Application) : AndroidViewModel(application) {
             diaryFolder = prefs.getString("diary_folder", "Daily") ?: "Daily",
             dateFormat = prefs.getString("date_format", "YYYY-MM-DD") ?: "YYYY-MM-DD",
             templatePath = prefs.getString("template_path", "") ?: "",
-            anchorText = prefs.getString("anchor_text", "") ?: ""
+            anchorText = prefs.getString("anchor_text", "") ?: "",
+            addTimestamp = prefs.getBoolean("add_timestamp", false),
+            enterToSave = prefs.getBoolean("enter_to_save", false),
+            widgetImageUri = prefs.getString("widget_image_uri", "") ?: ""
         )
     }
 
@@ -75,7 +81,10 @@ class AppState(application: Application) : AndroidViewModel(application) {
             diaryFolder = raw.diaryFolder.trim().ifBlank { "Daily" },
             dateFormat = raw.dateFormat.trim().ifBlank { "YYYY-MM-DD" },
             templatePath = raw.templatePath.trim(),
-            anchorText = raw.anchorText.trim()
+            anchorText = raw.anchorText.trim(),
+            addTimestamp = raw.addTimestamp,
+            enterToSave = raw.enterToSave,
+            widgetImageUri = raw.widgetImageUri
         )
         prefs.edit()
             .putString("vault_path", config.vaultPath)
@@ -83,6 +92,9 @@ class AppState(application: Application) : AndroidViewModel(application) {
             .putString("date_format", config.dateFormat)
             .putString("template_path", config.templatePath)
             .putString("anchor_text", config.anchorText)
+            .putBoolean("add_timestamp", config.addTimestamp)
+            .putBoolean("enter_to_save", config.enterToSave)
+            .putString("widget_image_uri", config.widgetImageUri)
             .commit()  // 同步写入，防止进程被杀时配置丢失
         _config.value = config
         // 保存后重新加载日记，确保立即生效
