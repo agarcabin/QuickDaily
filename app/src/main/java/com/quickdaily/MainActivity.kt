@@ -18,9 +18,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
 import com.quickdaily.ui.EditorScreen
 import com.quickdaily.ui.SettingsScreen
 import com.quickdaily.ui.theme.QuickDailyTheme
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -41,8 +43,8 @@ class MainActivity : ComponentActivity() {
         appState = ViewModelProvider(this)[AppState::class.java]
         val firstLaunch = appState.config.value.vaultPath.isBlank()
 
-        // 处理分享意图
-        handleShareIntent()
+        // 处理分享意图（冷启动时走这里）
+        handleShareIntent(intent)
 
         setContent {
             QuickDailyTheme {
@@ -63,14 +65,48 @@ class MainActivity : ComponentActivity() {
         }
         // 权限检查延迟到 UI 首帧之后，不阻塞冷启动
         window.decorView.post { checkPermissions() }
+
+        // 启动时自动检查更新
+        if (appState.config.value.autoCheckUpdate) {
+            lifecycleScope.launch {
+                val result = com.quickdaily.util.UpdateChecker.checkUpdate(context = this@MainActivity)
+                when (result) {
+                    is com.quickdaily.util.UpdateResult.UpdateAvailable -> {
+                        runOnUiThread {
+                            android.widget.Toast.makeText(
+                                this@MainActivity,
+                                "发现新版本 ${result.info.version}，请在设置中查看详情",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                    com.quickdaily.util.UpdateResult.UpToDate -> {
+                        // 静默，不打扰用户
+                    }
+                    is com.quickdaily.util.UpdateResult.Failed -> {
+                        // 静默失败，不打扰用户（仅在用户主动检查时才显示错误）
+                    }
+                    else -> {}
+                }
+            }
+        }
     }
 
-    private fun handleShareIntent() {
-        val intent = intent
+    /**
+     * singleTask 启动模式下，app 已在后台运行时再次被分享 Intent 拉起，
+     * 系统会复用现有 Activity 实例并走 onNewIntent()，而不会走 onCreate()。
+     * 必须在此处处理分享，否则有后台时分享内容会丢失。
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleShareIntent(intent)
+    }
+
+    private fun handleShareIntent(intent: Intent) {
         if (Intent.ACTION_SEND == intent.action) {
             val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
             if (sharedText != null && sharedText.isNotBlank()) {
-                // 保存到日记
                 saveSharedTextToDiary(sharedText)
             }
         }
@@ -86,19 +122,28 @@ class MainActivity : ComponentActivity() {
         
         val diaryFolder = prefs.getString("diary_folder", "Daily") ?: "Daily"
         val dateFormat = prefs.getString("date_format", "YYYY-MM-DD") ?: "YYYY-MM-DD"
-        val addTimestamp = prefs.getBoolean("add_timestamp", false)
+        val addTimestamp = prefs.getBoolean("add_timestamp", true)
+        val anchor = (prefs.getString("anchor_text", "") ?: "").trim()
         val d = com.quickdaily.util.DateUtil.todayStr(dateFormat)
         val path = "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/$d.md"
         
         val line = if (addTimestamp) "${com.quickdaily.util.DateUtil.nowTimeStr()} $text" else text
         val existing = com.quickdaily.util.FileUtil.read(path)
-        val nc = if (existing.isEmpty()) "$line\n"
+        val nc = if (anchor.isNotEmpty() && existing.contains(anchor)) {
+            val idx = existing.indexOf(anchor) + anchor.length
+            existing.substring(0, idx) + "\n" + line + existing.substring(idx)
+        } else if (existing.isEmpty()) "$line\n"
         else if (existing.endsWith("\n")) "$existing$line\n"
         else "$existing\n$line\n"
         
         com.quickdaily.util.FileUtil.write(path, nc)
         com.quickdaily.QuickDailyWidget.updateAllWidgets(this)
-        
+
+        // 刷新编辑器内容，让用户立即看到新加入的分享内容
+        if (::appState.isInitialized) {
+            appState.reloadIfNewerOnDisk()
+        }
+
         android.widget.Toast.makeText(this, "已保存分享内容到日记", android.widget.Toast.LENGTH_SHORT).show()
     }
 

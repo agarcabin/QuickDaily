@@ -35,8 +35,8 @@ class NoteEditActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = getSharedPreferences("QuickDaily", 0)
-        noteAddTimestamp = prefs.getBoolean("add_timestamp", false)
-        noteEnterToSave = prefs.getBoolean("enter_to_save", false)
+        noteAddTimestamp = prefs.getBoolean("add_timestamp", true)
+        noteEnterToSave = prefs.getBoolean("enter_to_save", true)
         val dm = resources.displayMetrics
         val w = (dm.widthPixels * 0.88f).toInt()
         val h = (dm.heightPixels * 0.35f).toInt()

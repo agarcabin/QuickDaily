@@ -2,4 +2,5 @@
 <resources>
     <string name="app_name">QuickDaily</string>
     <string name="widget_description">今日日记便签 — 快速查看和编辑</string>
+    <string name="accessibility_service_desc">QuickDaily 速记辅助服务。用于从通知面板快捷磁贴点击后自动收起通知面板，确保悬浮窗可正常输入。不收集任何内容。</string>
 </resources>

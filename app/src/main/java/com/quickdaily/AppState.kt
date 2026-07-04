@@ -22,9 +22,10 @@ data class DiaryConfig(
     val dateFormat: String = "YYYY-MM-DD",
     val templatePath: String = "",
     val anchorText: String = "",
-    val addTimestamp: Boolean = false,
-    val enterToSave: Boolean = false,
-    val widgetImageUri: String = ""
+    val addTimestamp: Boolean = true,
+    val enterToSave: Boolean = true,
+    val widgetImageUri: String = "",
+    val autoCheckUpdate: Boolean = true
 )
 
 class AppState(application: Application) : AndroidViewModel(application) {
@@ -68,9 +69,10 @@ class AppState(application: Application) : AndroidViewModel(application) {
             dateFormat = prefs.getString("date_format", "YYYY-MM-DD") ?: "YYYY-MM-DD",
             templatePath = prefs.getString("template_path", "") ?: "",
             anchorText = prefs.getString("anchor_text", "") ?: "",
-            addTimestamp = prefs.getBoolean("add_timestamp", false),
-            enterToSave = prefs.getBoolean("enter_to_save", false),
-            widgetImageUri = prefs.getString("widget_image_uri", "") ?: ""
+            addTimestamp = prefs.getBoolean("add_timestamp", true),
+            enterToSave = prefs.getBoolean("enter_to_save", true),
+            widgetImageUri = prefs.getString("widget_image_uri", "") ?: "",
+            autoCheckUpdate = prefs.getBoolean("auto_check_update", true)
         )
     }
 
@@ -84,7 +86,8 @@ class AppState(application: Application) : AndroidViewModel(application) {
             anchorText = raw.anchorText.trim(),
             addTimestamp = raw.addTimestamp,
             enterToSave = raw.enterToSave,
-            widgetImageUri = raw.widgetImageUri
+            widgetImageUri = raw.widgetImageUri,
+            autoCheckUpdate = raw.autoCheckUpdate
         )
         prefs.edit()
             .putString("vault_path", config.vaultPath)
@@ -95,6 +98,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
             .putBoolean("add_timestamp", config.addTimestamp)
             .putBoolean("enter_to_save", config.enterToSave)
             .putString("widget_image_uri", config.widgetImageUri)
+            .putBoolean("auto_check_update", config.autoCheckUpdate)
             .commit()  // 同步写入，防止进程被杀时配置丢失
         _config.value = config
         // 保存后重新加载日记，确保立即生效

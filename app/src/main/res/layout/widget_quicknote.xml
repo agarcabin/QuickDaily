@@ -1,26 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!-- FrameLayout 叠加布局：
+     - 根背景提供圆角，ImageView 和 TextView 叠加居中，互不影响
+     - ImageView 铺满并用 fitCenter 居中显示正方形圆角图片
+     - TextView 居中显示 + 号 -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/quicknote_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@drawable/widget_background"
-    android:gravity="center"
-    android:orientation="vertical">
+    android:background="@drawable/widget_background">
 
     <ImageView
         android:id="@+id/quicknote_image"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:scaleType="centerInside"
+        android:layout_gravity="center"
+        android:scaleType="fitCenter"
         android:visibility="gone" />
 
     <TextView
         android:id="@+id/quicknote_label"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:gravity="center"
+        android:includeFontPadding="false"
         android:textColor="#FFFFFF"
-        android:textSize="16sp"
+        android:textSize="22sp"
         android:textStyle="bold"
         android:text="+" />
 
-</LinearLayout>
+</FrameLayout>

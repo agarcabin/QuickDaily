@@ -2,12 +2,20 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- 网络权限（检查更新、GitHub API 所必需） -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <!-- 存储权限 -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <!-- Android 11+ 管理所有文件（Obsidian vault 直接路径访问所需，后续可重构为 SAF 移除） -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
+
+    <!-- 桌面快捷方式（Android 7.x 兼容 + 部分启动器） -->
+    <uses-permission android:name="com.android.launcher.permission.INSTALL_SHORTCUT" />
+    <uses-permission android:name="com.android.launcher.permission.UNINSTALL_SHORTCUT" />
 
     <application
         android:name=".QuickDailyApp"
@@ -44,6 +52,17 @@
             android:taskAffinity=""
             android:launchMode="singleInstance" />
 
+        <!-- 桌面快捷方式中转 Activity：点击后立即跳转到速记悬浮窗 -->
+        <activity
+            android:name=".QuickShortcutActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:launchMode="singleInstance" />
+
+        <!-- 磁贴中转 Activity 已废弃，改用 AccessibilityService 方案 -->
+
         <receiver
             android:name=".QuickDailyWidget"
             android:exported="true"
@@ -71,11 +90,26 @@
         <service
             android:name=".QuickTileService"
             android:exported="true"
-            android:label="QuickDaily 速记"
-            android:icon="@mipmap/ic_launcher">
+            android:label="速记"
+            android:icon="@drawable/ic_tile_quicknote"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
+        </service>
+
+        <!-- 无障碍辅助服务：用于磁贴点击后收起通知面板 -->
+        <service
+            android:name=".QuickAccessibilityService"
+            android:exported="true"
+            android:label="QuickDaily 速记辅助"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
         </service>
 
     </application>
