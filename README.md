@@ -25,8 +25,7 @@
 <img width="240" height="534" alt="QuickDaily 录屏演示" src="https://github.com/user-attachments/assets/a2718d12-e216-4b45-8f7a-b2b68ce0cefb" />
 
 ## 📺 宣传视频
-[![点击观看演示视频](https://i0.hdslb.com/bfs/archive/BV1smTm6wE4t.jpg)](https://www.bilibili.com/video/BV1smTm6wE4t/)
-<iframe src="//player.bilibili.com/player.html?isOutside=true&aid=116868341957716&bvid=BV1smTm6wE4t&cid=39683163509&p=1" scrolling="no" border="0" frameborder="no" framespacing="0" allowfullscreen="true"></iframe>
+[![点击观看演示视频](https://www.bilibili.com/video/BV1smTm6wE4t/)
 
 ## 📦 下载
 
