@@ -24,8 +24,8 @@
 
 <img width="240" height="534" alt="QuickDaily 录屏演示" src="https://github.com/user-attachments/assets/a2718d12-e216-4b45-8f7a-b2b68ce0cefb" />
 
-## 📺 宣传视频
-![点击观看演示视频](https://www.bilibili.com/video/BV1smTm6wE4t/)
+## 📺 演示视频
+[点击观看演示视频](https://www.bilibili.com/video/BV1smTm6wE4t/)
 
 ## 📦 下载
 
