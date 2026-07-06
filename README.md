@@ -25,15 +25,15 @@
 <img width="240" height="534" alt="QuickDaily 录屏演示" src="https://github.com/user-attachments/assets/a2718d12-e216-4b45-8f7a-b2b68ce0cefb" />
 
 ## 📺 宣传视频
-[![点击观看演示视频](封面图地址.png)](https://www.bilibili.com/video/BV1smTm6wE4t/)
+[![点击观看演示视频](https://i0.hdslb.com/bfs/archive/BV1smTm6wE4t.jpg)](https://www.bilibili.com/video/BV1smTm6wE4t/)
 
 ## 📦 下载
 
 > 最新版本：**1.2**
 
 - 全球通用(Github): [点击下载](https://github.com/agarcabin/QuickDaily/releases)
-- 国内加速分流(蓝奏云): [点击下载](https://github.com/agarcabin/QuickDaily/releases) (密码:fjdr)
-- 酷安社区：[@附近的人](https://www.coolapk.com/u/400522)
+- 国内分流(蓝奏云): [点击下载](https://github.com/agarcabin/QuickDaily/releases) (密码:fjdr)
+- 酷安社区: [@附近的人](https://www.coolapk.com/u/400522)
 
 ## 🛠 技术栈
 
