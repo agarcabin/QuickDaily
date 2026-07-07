@@ -1,4 +1,4 @@
-package com.quickdaily.ui
+﻿package com.quickdaily.ui
 
 import android.content.Intent
 import android.net.Uri
@@ -149,6 +149,42 @@ fun SettingsScreen(
                 .padding(16.dp)
                 .verticalScroll(rememberScrollState())
         ) {
+
+            Spacer(Modifier.height(16.dp))
+
+            // 时间戳添加顺序
+            Text("时间戳添加顺序", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(4.dp))
+            var timestampOrderExpanded by remember { mutableStateOf(false) }
+            val timestampOrderLabels = mapOf("above" to "新添加在上方", "below" to "新添加在下方")
+            ExposedDropdownMenuBox(
+                expanded = timestampOrderExpanded,
+                onExpandedChange = { timestampOrderExpanded = !timestampOrderExpanded }
+            ) {
+                OutlinedTextField(
+                    value = timestampOrderLabels[config.timestampOrder] ?: "新添加在下方",
+                    onValueChange = {},
+                    readOnly = true,
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = timestampOrderExpanded) },
+                    modifier = Modifier.menuAnchor().fillMaxWidth(),
+                    singleLine = true
+                )
+                ExposedDropdownMenu(
+                    expanded = timestampOrderExpanded,
+                    onDismissRequest = { timestampOrderExpanded = false }
+                ) {
+                    timestampOrderLabels.forEach { (value, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            onClick = {
+                                appState.saveConfig(config.copy(timestampOrder = value))
+                                timestampOrderExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+
             // ══════════════════════════════════════
             // 1. 日记存储
             // ══════════════════════════════════════
@@ -210,7 +246,7 @@ fun SettingsScreen(
             Spacer(Modifier.height(12.dp))
 
             // 日期格式
-            Text("日期格式", style = MaterialTheme.typography.titleSmall)
+            Text("日记文件名格式", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(4.dp))
             OutlinedTextField(value = dateFormat, onValueChange = { dateFormat = it },
                 label = { Text("YYYY-MM-DD") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
@@ -218,7 +254,7 @@ fun SettingsScreen(
             Spacer(Modifier.height(12.dp))
 
             // 模板路径
-            Text("模板路径", style = MaterialTheme.typography.titleSmall)
+            Text("日记模板路径", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 OutlinedTextField(value = templatePath, onValueChange = { templatePath = it },
@@ -247,7 +283,9 @@ fun SettingsScreen(
                     dateFormat = dateFormat.trim().ifBlank { "YYYY-MM-DD" },
                     templatePath = templatePath.trim(),
                     anchorText = anchorText.trim(),
-                    addTimestamp = config.addTimestamp,
+                    timestampFormat = config.timestampFormat,
+                    addAnchorIfMissing = config.addAnchorIfMissing,
+                    timestampOrder = config.timestampOrder,
                     enterToSave = config.enterToSave,
                     widgetImageUri = config.widgetImageUri,
                     autoCheckUpdate = config.autoCheckUpdate
@@ -272,23 +310,73 @@ fun SettingsScreen(
             Spacer(Modifier.height(4.dp))
             OutlinedTextField(value = anchorText, onValueChange = { anchorText = it },
                 label = { Text("例：## 今日速记") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-            Text("速记内容插入到该文本之后；为空则添加到末尾",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                modifier = Modifier.padding(top = 2.dp))
+           Text("速记内容插入到该文本之后；为空则添加到末尾",
+               style = MaterialTheme.typography.bodySmall,
+               color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+               modifier = Modifier.padding(top = 2.dp))
 
-            Spacer(Modifier.height(16.dp))
-
-            // 时间戳开关
+           Spacer(Modifier.height(16.dp))
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("添加时间戳", style = MaterialTheme.typography.bodyMedium)
-                    Text("开启后在速记内容前添加时间，如 \"10:30 内容\"",
+                    Text("找不到锚点文本时先添加锚点文本", style = MaterialTheme.typography.bodyMedium)
+                    Text("开启后若日记中找不到锚点文本，先自动添加锚点文本再插入速记内容",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
                 }
-                Switch(checked = config.addTimestamp, onCheckedChange = { appState.saveConfig(config.copy(addTimestamp = it)) })
+                Switch(checked = config.addAnchorIfMissing,
+                    onCheckedChange = { appState.saveConfig(config.copy(addAnchorIfMissing = it)) })
             }
+
+            Spacer(Modifier.height(16.dp))
+
+            // 时间戳格式
+            Text("时间戳格式", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(4.dp))
+            var timestampFormatExpanded by remember { mutableStateOf(false) }
+            val timestampFormatLabels = mapOf(
+                "none" to "无格式",
+                "time_only" to "仅时间",
+                "list" to "无序列表",
+                "list_time" to "无序列表+时间"
+            )
+            ExposedDropdownMenuBox(
+                expanded = timestampFormatExpanded,
+                onExpandedChange = { timestampFormatExpanded = !timestampFormatExpanded }
+            ) {
+                OutlinedTextField(
+                    value = timestampFormatLabels[config.timestampFormat] ?: "无序列表+时间",
+                    onValueChange = {},
+                    readOnly = true,
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = timestampFormatExpanded) },
+                    modifier = Modifier.menuAnchor().fillMaxWidth(),
+                    singleLine = true
+                )
+                ExposedDropdownMenu(
+                    expanded = timestampFormatExpanded,
+                    onDismissRequest = { timestampFormatExpanded = false }
+                ) {
+                    timestampFormatLabels.forEach { (value, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            onClick = {
+                                appState.saveConfig(config.copy(timestampFormat = value))
+                                timestampFormatExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+            val previewText = when (config.timestampFormat) {
+                "none" -> "速记内容"
+                "time_only" -> "13:29 速记内容"
+                "list" -> "- 速记内容"
+                "list_time" -> "- 13:29 速记内容"
+                else -> "速记内容"
+            }
+            Text(previewText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 4.dp))
 
             Spacer(Modifier.height(12.dp))
 
@@ -604,7 +692,7 @@ fun SettingsScreen(
             Spacer(Modifier.height(12.dp))
             Text("关于", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(8.dp))
-            Text("QuickDaily 1.2", style = MaterialTheme.typography.titleMedium)
+            Text("QuickDaily 1.3", style = MaterialTheme.typography.titleMedium)
 
             Spacer(Modifier.height(12.dp))
             val coolapkAnnotated = buildAnnotatedString {
@@ -645,7 +733,12 @@ fun SettingsScreen(
             Text("更新内容：", style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                 modifier = Modifier.padding(top = 8.dp))
-            Text("1.2:\n" +
+            Text("1.3:\n" +
+                "• 新增 时间戳格式设置（无格式/仅时间/无序列表/无序列表+时间）\n" +
+                "• 新增 无锚点时自动添加锚点文本\n" +
+                "• 新增 时间戳添加顺序（上方/下方）\n" +
+                "• 修复 清空日记内容后无法加载模板\n\n" +
+                "1.2:\n" +
                 "• 新增 快速添加（桌面图标）\n" +
                 "• 修复 磁贴点击后收回状态栏\n\n" +
                 "1.1:\n" +

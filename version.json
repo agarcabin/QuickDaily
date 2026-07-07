@@ -1,5 +1,5 @@
-{
-  "version": "1.2",
+﻿{
+  "version": "1.3",
   "url": "https://github.com/agarcabin/QuickDaily/releases/latest",
-  "body": "QuickDaily 1.2\n• 新增 快速添加（桌面图标）\n• 修复 磁贴点击后收回状态栏"
+  "body": "QuickDaily 1.3\n• 新增 时间戳格式设置（无格式/仅时间/无序列表/无序列表+时间）\n• 新增 无锚点时自动添加锚点文本\n• 新增 时间戳添加顺序（上方/下方）\n• 修复 清空日记内容后无法重新加载模板"
 }

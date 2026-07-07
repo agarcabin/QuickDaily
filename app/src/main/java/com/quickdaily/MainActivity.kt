@@ -122,15 +122,33 @@ class MainActivity : ComponentActivity() {
         
         val diaryFolder = prefs.getString("diary_folder", "Daily") ?: "Daily"
         val dateFormat = prefs.getString("date_format", "YYYY-MM-DD") ?: "YYYY-MM-DD"
-        val addTimestamp = prefs.getBoolean("add_timestamp", true)
+        val timestampFormat = prefs.getString("timestamp_format", "list_time") ?: "list_time"
+        val addAnchorIfMissing = prefs.getBoolean("add_anchor_if_missing", false)
+        val timestampOrder = prefs.getString("timestamp_order", "below") ?: "below"
         val anchor = (prefs.getString("anchor_text", "") ?: "").trim()
         val d = com.quickdaily.util.DateUtil.todayStr(dateFormat)
         val path = "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/$d.md"
         
-        val line = if (addTimestamp) "${com.quickdaily.util.DateUtil.nowTimeStr()} $text" else text
-        val existing = com.quickdaily.util.FileUtil.read(path)
-        val nc = if (anchor.isNotEmpty() && existing.contains(anchor)) {
+        val line = when (timestampFormat) {
+            "none" -> text
+            "time_only" -> "${com.quickdaily.util.DateUtil.nowTimeStr()} $text"
+            "list" -> "- $text"
+            "list_time" -> "- ${com.quickdaily.util.DateUtil.nowTimeStr()} $text"
+            else -> text
+        }
+
+        var existing = com.quickdaily.util.FileUtil.read(path)
+
+        if (anchor.isNotEmpty() && !existing.contains(anchor) && addAnchorIfMissing) {
+            if (existing.isNotEmpty() && !existing.endsWith("\n")) {
+                existing += "\n"
+            }
+            existing += "$anchor\n"
+        }
+
+        val nc = if (anchor.isNotEmpty() && existing.contains(anchor) && timestampOrder == "above") {
             val idx = existing.indexOf(anchor) + anchor.length
+
             existing.substring(0, idx) + "\n" + line + existing.substring(idx)
         } else if (existing.isEmpty()) "$line\n"
         else if (existing.endsWith("\n")) "$existing$line\n"

@@ -22,7 +22,9 @@ data class DiaryConfig(
     val dateFormat: String = "YYYY-MM-DD",
     val templatePath: String = "",
     val anchorText: String = "",
-    val addTimestamp: Boolean = true,
+    val timestampFormat: String = "list_time",
+    val addAnchorIfMissing: Boolean = false,
+    val timestampOrder: String = "below",
     val enterToSave: Boolean = true,
     val widgetImageUri: String = "",
     val autoCheckUpdate: Boolean = true
@@ -69,7 +71,9 @@ class AppState(application: Application) : AndroidViewModel(application) {
             dateFormat = prefs.getString("date_format", "YYYY-MM-DD") ?: "YYYY-MM-DD",
             templatePath = prefs.getString("template_path", "") ?: "",
             anchorText = prefs.getString("anchor_text", "") ?: "",
-            addTimestamp = prefs.getBoolean("add_timestamp", true),
+            timestampFormat = prefs.getString("timestamp_format", "list_time") ?: "list_time",
+            addAnchorIfMissing = prefs.getBoolean("add_anchor_if_missing", false),
+            timestampOrder = prefs.getString("timestamp_order", "below") ?: "below",
             enterToSave = prefs.getBoolean("enter_to_save", true),
             widgetImageUri = prefs.getString("widget_image_uri", "") ?: "",
             autoCheckUpdate = prefs.getBoolean("auto_check_update", true)
@@ -84,7 +88,9 @@ class AppState(application: Application) : AndroidViewModel(application) {
             dateFormat = raw.dateFormat.trim().ifBlank { "YYYY-MM-DD" },
             templatePath = raw.templatePath.trim(),
             anchorText = raw.anchorText.trim(),
-            addTimestamp = raw.addTimestamp,
+            timestampFormat = raw.timestampFormat,
+            addAnchorIfMissing = raw.addAnchorIfMissing,
+            timestampOrder = raw.timestampOrder,
             enterToSave = raw.enterToSave,
             widgetImageUri = raw.widgetImageUri,
             autoCheckUpdate = raw.autoCheckUpdate
@@ -95,7 +101,9 @@ class AppState(application: Application) : AndroidViewModel(application) {
             .putString("date_format", config.dateFormat)
             .putString("template_path", config.templatePath)
             .putString("anchor_text", config.anchorText)
-            .putBoolean("add_timestamp", config.addTimestamp)
+            .putString("timestamp_format", config.timestampFormat)
+            .putBoolean("add_anchor_if_missing", config.addAnchorIfMissing)
+            .putString("timestamp_order", config.timestampOrder)
             .putBoolean("enter_to_save", config.enterToSave)
             .putString("widget_image_uri", config.widgetImageUri)
             .putBoolean("auto_check_update", config.autoCheckUpdate)
@@ -237,7 +245,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
     fun saveNow() {
         val path = _todayPath.value
         val content = _diaryContent.value
-        if (path.isNotEmpty() && content.isNotEmpty()) {
+        if (path.isNotEmpty()) {
             appScope.launch(Dispatchers.IO) {
                 FileUtil.write(path, content)
                 QuickDailyWidget.updateAllWidgets(app)

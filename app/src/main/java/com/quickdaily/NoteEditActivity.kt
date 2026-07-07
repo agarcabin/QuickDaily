@@ -29,13 +29,17 @@ import android.widget.Toast
 
 class NoteEditActivity : ComponentActivity() {
     private var noteText by mutableStateOf("")
-    private var noteAddTimestamp by mutableStateOf(false)
+    private var noteTimestampFormat by mutableStateOf("list_time")
+    private var noteAddAnchorIfMissing by mutableStateOf(false)
+    private var noteTimestampOrder by mutableStateOf("below")
     private var noteEnterToSave by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = getSharedPreferences("QuickDaily", 0)
-        noteAddTimestamp = prefs.getBoolean("add_timestamp", true)
+        noteTimestampFormat = prefs.getString("timestamp_format", "list_time") ?: "list_time"
+        noteAddAnchorIfMissing = prefs.getBoolean("add_anchor_if_missing", false)
+        noteTimestampOrder = prefs.getString("timestamp_order", "below") ?: "below"
         noteEnterToSave = prefs.getBoolean("enter_to_save", true)
         val dm = resources.displayMetrics
         val w = (dm.widthPixels * 0.88f).toInt()
@@ -68,8 +72,8 @@ class NoteEditActivity : ComponentActivity() {
                         onTextChange = { noteText = it },
                         enterToSave = noteEnterToSave,
                         onSave = {
-                            if (noteText.isNotBlank()) appendToDiary(noteText.trim(), noteAddTimestamp)
-                            else finish()
+                    if (noteText.isNotBlank()) appendToDiary(noteText.trim())
+                    else finish()
                         },
                         onClose = { finish() }
                     )
@@ -78,7 +82,7 @@ class NoteEditActivity : ComponentActivity() {
         }
     }
 
-    private fun appendToDiary(text: String, addTimestamp: Boolean) {
+    private fun appendToDiary(text: String) {
         lifecycleScope.launch(Dispatchers.IO) {
             val prefs = getSharedPreferences("QuickDaily", 0)
             val vaultPath = prefs.getString("vault_path", "") ?: ""
@@ -88,9 +92,25 @@ class NoteEditActivity : ComponentActivity() {
             val d = DateUtil.todayStr(dateFormat)
             val path = "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/$d.md"
             val anchor = (prefs.getString("anchor_text", "") ?: "").trim()
-            val line = if (addTimestamp) "${DateUtil.nowTimeStr()} $text" else text
-            val existing = FileUtil.read(path)
-            val nc = if (anchor.isNotEmpty() && existing.contains(anchor)) {
+            val line = when (noteTimestampFormat) {
+                "none" -> text
+                "time_only" -> "${DateUtil.nowTimeStr()} $text"
+                "list" -> "- $text"
+                "list_time" -> "- ${DateUtil.nowTimeStr()} $text"
+                else -> text
+            }
+
+            var existing = FileUtil.read(path)
+
+            if (anchor.isNotEmpty() && !existing.contains(anchor) && noteAddAnchorIfMissing) {
+                if (existing.isNotEmpty() && !existing.endsWith("\n")) {
+                    existing += "\n"
+                }
+                existing += "$anchor\n"
+            }
+
+            val nc = if (anchor.isNotEmpty() && existing.contains(anchor) && noteTimestampOrder == "above") {
+
                 val idx = existing.indexOf(anchor) + anchor.length
                 existing.substring(0, idx) + "\n" + line + existing.substring(idx)
             } else if (existing.isEmpty()) "$line\n"
@@ -108,7 +128,7 @@ class NoteEditActivity : ComponentActivity() {
     override fun onTouchEvent(event: MotionEvent?): Boolean {
         if (event?.action == MotionEvent.ACTION_OUTSIDE) {
             if (noteText.isNotBlank()) {
-                appendToDiary(noteText.trim(), noteAddTimestamp)
+                    if (noteText.isNotBlank()) appendToDiary(noteText.trim())
             } else {
                 finish()
             }

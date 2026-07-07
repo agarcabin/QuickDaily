@@ -44,7 +44,7 @@ data class SourceError(
 )
 
 object UpdateChecker {
-    private const val CURRENT_VERSION = "1.2"
+    private const val CURRENT_VERSION = "1.3"
     private const val REPO_OWNER = "agarcabin"
     private const val REPO_NAME = "QuickDaily"
 
