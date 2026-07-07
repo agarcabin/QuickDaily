@@ -34,7 +34,12 @@ object DateUtil {
     }
 
     /** 获取当前时间字符串 (HH:mm) */
-    fun nowTimeStr(): String {
-        return LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
+   fun nowTimeStr(): String {
+       return LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
+   }
+
+    /** 获取当前时间字符串 (HH:mm:ss) */
+    fun nowTimeSecondsStr(): String {
+        return LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))
     }
 }

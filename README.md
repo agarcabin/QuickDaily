@@ -29,7 +29,7 @@
 
 ## 📦 下载
 
-> 最新版本：**1.2**
+> 最新版本：**1.3**
 
 - 全球通用(Github): [点击下载](https://github.com/agarcabin/QuickDaily/releases)
 - 国内分流(蓝奏云): [点击下载](https://github.com/agarcabin/QuickDaily/releases) (密码:fjdr)

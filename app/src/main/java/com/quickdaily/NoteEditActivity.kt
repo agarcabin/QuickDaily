@@ -30,16 +30,16 @@ import android.widget.Toast
 class NoteEditActivity : ComponentActivity() {
     private var noteText by mutableStateOf("")
     private var noteTimestampFormat by mutableStateOf("list_time")
-    private var noteAddAnchorIfMissing by mutableStateOf(false)
-    private var noteTimestampOrder by mutableStateOf("below")
+    private var noteAddAnchorIfMissing by mutableStateOf(true)
+    private var noteTimestampOrder by mutableStateOf("above")
     private var noteEnterToSave by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = getSharedPreferences("QuickDaily", 0)
         noteTimestampFormat = prefs.getString("timestamp_format", "list_time") ?: "list_time"
-        noteAddAnchorIfMissing = prefs.getBoolean("add_anchor_if_missing", false)
-        noteTimestampOrder = prefs.getString("timestamp_order", "below") ?: "below"
+        noteAddAnchorIfMissing = prefs.getBoolean("add_anchor_if_missing", true)
+        noteTimestampOrder = prefs.getString("timestamp_order", "above") ?: "above"
         noteEnterToSave = prefs.getBoolean("enter_to_save", true)
         val dm = resources.displayMetrics
         val w = (dm.widthPixels * 0.88f).toInt()
@@ -95,12 +95,28 @@ class NoteEditActivity : ComponentActivity() {
             val line = when (noteTimestampFormat) {
                 "none" -> text
                 "time_only" -> "${DateUtil.nowTimeStr()} $text"
+                "time_only_seconds" -> "${DateUtil.nowTimeSecondsStr()} $text"
                 "list" -> "- $text"
+                "ordered" -> "1. $text"
                 "list_time" -> "- ${DateUtil.nowTimeStr()} $text"
-                else -> text
-            }
+                "list_time_seconds" -> "- ${DateUtil.nowTimeSecondsStr()} $text"
+               else -> text
+           }
 
             var existing = FileUtil.read(path)
+
+            // 今日文件不存在或为空时，从模板加载
+            if (existing.isEmpty()) {
+                val tplPathPref = prefs.getString("template_path", "") ?: ""
+                if (tplPathPref.isNotBlank()) {
+                    val tplPath = if (tplPathPref.startsWith("/")) tplPathPref
+                    else "${vaultPath.trimEnd('/')}/${tplPathPref}"
+                    val tplContent = FileUtil.readOrNull(tplPath)
+                    if (tplContent != null && tplContent.isNotEmpty()) {
+                        existing = tplContent
+                    }
+                }
+            }
 
             if (anchor.isNotEmpty() && !existing.contains(anchor) && noteAddAnchorIfMissing) {
                 if (existing.isNotEmpty() && !existing.endsWith("\n")) {

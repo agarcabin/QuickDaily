@@ -1,5 +1,5 @@
 ﻿{
   "version": "1.3",
   "url": "https://github.com/agarcabin/QuickDaily/releases/latest",
-  "body": "QuickDaily 1.3\n• 新增 时间戳格式设置（无格式/仅时间/无序列表/无序列表+时间）\n• 新增 无锚点时自动添加锚点文本\n• 新增 时间戳添加顺序（上方/下方）\n• 修复 清空日记内容后无法重新加载模板"
+  "body": "QuickDaily 1.3\n• 新增 7种时间戳格式设置，可适配Thino/Knomo \n• 新增 时间戳文本插入顺序\n• 新增 无锚点时自动添加锚点文本\n\n• 修复 清空日记内容后无法重新加载模板\n• 修复 每日首次录入内容时略过日记模板"
 }

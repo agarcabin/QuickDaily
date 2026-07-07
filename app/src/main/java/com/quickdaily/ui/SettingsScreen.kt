@@ -30,6 +30,7 @@ import com.quickdaily.AppState
 import com.quickdaily.DiaryConfig
 import com.quickdaily.QuickDailyWidget
 import com.quickdaily.QuickNoteWidget
+import com.quickdaily.util.DateUtil
 import com.quickdaily.util.ShortcutHelper
 import com.quickdaily.util.UriUtil
 import kotlinx.coroutines.launch
@@ -74,6 +75,33 @@ fun SettingsScreen(
             val path = UriUtil.treeUriToPath(it)
             if (path != null) {
                 vaultPath = path
+                // 选择仓库后自动触发读取 Obsidian 配置
+                scope.launch {
+                    val obsCfg = appState.loadObsidianConfig(path)
+                    if (obsCfg != null) {
+                        diaryFolder = obsCfg.diaryFolder
+                        dateFormat = obsCfg.dateFormat
+                        templatePath = obsCfg.templatePath
+                        obsidianDetected = true
+                        obsidianMsg = "已读取 Obsidian 配置"
+                        appState.saveConfig(DiaryConfig(
+                            vaultPath = path.trim(),
+                            diaryFolder = obsCfg.diaryFolder.trim().ifBlank { "Daily" },
+                            dateFormat = obsCfg.dateFormat.trim().ifBlank { "YYYY-MM-DD" },
+                            templatePath = obsCfg.templatePath.trim(),
+                            anchorText = anchorText.trim(),
+                            timestampFormat = config.timestampFormat,
+                            addAnchorIfMissing = config.addAnchorIfMissing,
+                            timestampOrder = config.timestampOrder,
+                            enterToSave = config.enterToSave,
+                            widgetImageUri = config.widgetImageUri,
+                            autoCheckUpdate = config.autoCheckUpdate
+                        ))
+                    } else {
+                        obsidianDetected = false
+                        obsidianMsg = "未找到 .obsidian/daily-notes.json"
+                    }
+                }
             }
         }
     }
@@ -134,10 +162,33 @@ fun SettingsScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
                     }
                 },
+                actions = {
+                    IconButton(onClick = {
+                        if (vaultPath.isNotBlank()) {
+                            appState.saveConfig(DiaryConfig(
+                                vaultPath = vaultPath.trim(),
+                                diaryFolder = diaryFolder.trim().ifBlank { "Daily" },
+                                dateFormat = dateFormat.trim().ifBlank { "YYYY-MM-DD" },
+                                templatePath = templatePath.trim(),
+                                anchorText = anchorText.trim(),
+                                timestampFormat = config.timestampFormat,
+                                addAnchorIfMissing = config.addAnchorIfMissing,
+                                timestampOrder = config.timestampOrder,
+                                enterToSave = config.enterToSave,
+                                widgetImageUri = config.widgetImageUri,
+                                autoCheckUpdate = config.autoCheckUpdate
+                            ))
+                        }
+                        onBack()
+                    }) {
+                        Icon(Icons.Default.Check, "保存")
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary
+                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
+                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary
                 )
             )
         }
@@ -149,41 +200,6 @@ fun SettingsScreen(
                 .padding(16.dp)
                 .verticalScroll(rememberScrollState())
         ) {
-
-            Spacer(Modifier.height(16.dp))
-
-            // 时间戳添加顺序
-            Text("时间戳添加顺序", style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(4.dp))
-            var timestampOrderExpanded by remember { mutableStateOf(false) }
-            val timestampOrderLabels = mapOf("above" to "新添加在上方", "below" to "新添加在下方")
-            ExposedDropdownMenuBox(
-                expanded = timestampOrderExpanded,
-                onExpandedChange = { timestampOrderExpanded = !timestampOrderExpanded }
-            ) {
-                OutlinedTextField(
-                    value = timestampOrderLabels[config.timestampOrder] ?: "新添加在下方",
-                    onValueChange = {},
-                    readOnly = true,
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = timestampOrderExpanded) },
-                    modifier = Modifier.menuAnchor().fillMaxWidth(),
-                    singleLine = true
-                )
-                ExposedDropdownMenu(
-                    expanded = timestampOrderExpanded,
-                    onDismissRequest = { timestampOrderExpanded = false }
-                ) {
-                    timestampOrderLabels.forEach { (value, label) ->
-                        DropdownMenuItem(
-                            text = { Text(label) },
-                            onClick = {
-                                appState.saveConfig(config.copy(timestampOrder = value))
-                                timestampOrderExpanded = false
-                            }
-                        )
-                    }
-                }
-            }
 
             // ══════════════════════════════════════
             // 1. 日记存储
@@ -318,7 +334,7 @@ fun SettingsScreen(
            Spacer(Modifier.height(16.dp))
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("找不到锚点文本时先添加锚点文本", style = MaterialTheme.typography.bodyMedium)
+                    Text("无锚点文本时先添加锚点文本", style = MaterialTheme.typography.bodyMedium)
                     Text("开启后若日记中找不到锚点文本，先自动添加锚点文本再插入速记内容",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
@@ -334,17 +350,20 @@ fun SettingsScreen(
             Spacer(Modifier.height(4.dp))
             var timestampFormatExpanded by remember { mutableStateOf(false) }
             val timestampFormatLabels = mapOf(
-                "none" to "无格式",
-                "time_only" to "仅时间",
+                "none" to "无格式（仅速记内容）",
+                "time_only" to "仅时间（HH:mm）",
+                "time_only_seconds" to "仅时间（HH:mm:ss）",
                 "list" to "无序列表",
-                "list_time" to "无序列表+时间"
+                "ordered" to "有序列表",
+                "list_time" to "无序列表+时间（HH:mm）",
+                "list_time_seconds" to "无序列表+时间（HH:mm:ss）适配Thino/Knomo"
             )
             ExposedDropdownMenuBox(
                 expanded = timestampFormatExpanded,
                 onExpandedChange = { timestampFormatExpanded = !timestampFormatExpanded }
             ) {
                 OutlinedTextField(
-                    value = timestampFormatLabels[config.timestampFormat] ?: "无序列表+时间",
+                    value = timestampFormatLabels[config.timestampFormat] ?: "无序列表+时间（HH:mm）",
                     onValueChange = {},
                     readOnly = true,
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = timestampFormatExpanded) },
@@ -368,9 +387,12 @@ fun SettingsScreen(
             }
             val previewText = when (config.timestampFormat) {
                 "none" -> "速记内容"
-                "time_only" -> "13:29 速记内容"
+                "time_only" -> "${DateUtil.nowTimeStr()} 速记内容"
+                "time_only_seconds" -> "${DateUtil.nowTimeSecondsStr()} 速记内容"
                 "list" -> "- 速记内容"
-                "list_time" -> "- 13:29 速记内容"
+                "ordered" -> "1. 速记内容"
+                "list_time" -> "- ${DateUtil.nowTimeStr()} 速记内容"
+                "list_time_seconds" -> "- ${DateUtil.nowTimeSecondsStr()} 速记内容"
                 else -> "速记内容"
             }
             Text(previewText,
@@ -380,6 +402,41 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(12.dp))
 
+
+            Spacer(Modifier.height(16.dp))
+
+            // 时间戳添加顺序
+            Text("时间戳添加顺序", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(4.dp))
+            var timestampOrderExpanded by remember { mutableStateOf(false) }
+            val timestampOrderLabels = mapOf("above" to "新添加在上方", "below" to "新添加在下方")
+            ExposedDropdownMenuBox(
+                expanded = timestampOrderExpanded,
+                onExpandedChange = { timestampOrderExpanded = !timestampOrderExpanded }
+            ) {
+                OutlinedTextField(
+                    value = timestampOrderLabels[config.timestampOrder] ?: "新添加在下方",
+                    onValueChange = {},
+                    readOnly = true,
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = timestampOrderExpanded) },
+                    modifier = Modifier.menuAnchor().fillMaxWidth(),
+                    singleLine = true
+                )
+                ExposedDropdownMenu(
+                    expanded = timestampOrderExpanded,
+                    onDismissRequest = { timestampOrderExpanded = false }
+                ) {
+                    timestampOrderLabels.forEach { (value, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            onClick = {
+                                appState.saveConfig(config.copy(timestampOrder = value))
+                                timestampOrderExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
             // 回车键直接保存
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
@@ -608,13 +665,13 @@ fun SettingsScreen(
                 }
             }
 
-            // 已是最新版本
-            if (isLatest) {
-                Spacer(Modifier.height(4.dp))
-                Text("当前已是最新版本（1.2）",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary)
-            }
+           // 已是最新版本
+           if (isLatest) {
+               Spacer(Modifier.height(4.dp))
+                Text("当前已是最新版本（1.3）",
+                   style = MaterialTheme.typography.bodySmall,
+                   color = MaterialTheme.colorScheme.primary)
+           }
 
             // 失败：显示每个源的错误
             if (updateErrors.isNotEmpty()) {
@@ -730,14 +787,15 @@ fun SettingsScreen(
                 }
             }, modifier = Modifier.padding(top = 2.dp))
 
-            Text("更新内容：", style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                modifier = Modifier.padding(top = 8.dp))
+           Text("更新内容：", style = MaterialTheme.typography.labelSmall,
+               color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+               modifier = Modifier.padding(top = 8.dp))
             Text("1.3:\n" +
-                "• 新增 时间戳格式设置（无格式/仅时间/无序列表/无序列表+时间）\n" +
-                "• 新增 无锚点时自动添加锚点文本\n" +
-                "• 新增 时间戳添加顺序（上方/下方）\n" +
-                "• 修复 清空日记内容后无法加载模板\n\n" +
+                "• 新增 7种时间戳格式设置，可适配Thino/Knomo \n" +
+               "• 新增 时间戳文本插入顺序\n" +
+               "• 新增 无锚点时自动添加锚点文本\n" +
+                "• 修复 清空日记内容后无法重新加载模板\n" +
+                "• 修复 每日首次录入内容时略过日记模板\n\n" +
                 "1.2:\n" +
                 "• 新增 快速添加（桌面图标）\n" +
                 "• 修复 磁贴点击后收回状态栏\n\n" +

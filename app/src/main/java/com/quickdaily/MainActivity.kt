@@ -132,12 +132,28 @@ class MainActivity : ComponentActivity() {
         val line = when (timestampFormat) {
             "none" -> text
             "time_only" -> "${com.quickdaily.util.DateUtil.nowTimeStr()} $text"
+            "time_only_seconds" -> "${com.quickdaily.util.DateUtil.nowTimeSecondsStr()} $text"
             "list" -> "- $text"
+            "ordered" -> "1. $text"
             "list_time" -> "- ${com.quickdaily.util.DateUtil.nowTimeStr()} $text"
-            else -> text
-        }
+            "list_time_seconds" -> "- ${com.quickdaily.util.DateUtil.nowTimeSecondsStr()} $text"
+           else -> text
+       }
 
         var existing = com.quickdaily.util.FileUtil.read(path)
+
+        // 今日文件不存在或为空时，从模板加载
+        if (existing.isEmpty()) {
+            val tplPathPref = prefs.getString("template_path", "") ?: ""
+            if (tplPathPref.isNotBlank()) {
+                val tplPath = if (tplPathPref.startsWith("/")) tplPathPref
+                else "${vaultPath.trimEnd('/')}/${tplPathPref}"
+                val tplContent = com.quickdaily.util.FileUtil.readOrNull(tplPath)
+                if (tplContent != null && tplContent.isNotEmpty()) {
+                    existing = tplContent
+                }
+            }
+        }
 
         if (anchor.isNotEmpty() && !existing.contains(anchor) && addAnchorIfMissing) {
             if (existing.isNotEmpty() && !existing.endsWith("\n")) {
