@@ -34,7 +34,7 @@
 - 全球通用(Github): [点击下载](https://github.com/agarcabin/QuickDaily/releases)
 - 国内分流(蓝奏云): [点击下载](https://github.com/agarcabin/QuickDaily/releases) (密码:fjdr)
 - 酷安社区: [@附近的人](https://www.coolapk.com/u/400522)
-- QQ交流群：[Obsidian 许愿屋: 1050092886](https://qm.qq.com/q/G2zLL5RpiU)
+- QQ交流群：[1050092886](https://qm.qq.com/q/G2zLL5RpiU) (Obsidian 许愿屋) 
 
 ## 🛠 技术栈
 
