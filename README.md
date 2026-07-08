@@ -1,11 +1,11 @@
-# QuickDaily — Obsidian 秒开日记 · Android App
+# QuickDaily — Obsidian 闪念速记 · Android 小部件
 
 <p align="center">
   <img width="120" height="120" alt="QuickDaily" src="https://github.com/user-attachments/assets/a2718d12-e216-4b45-8f7a-b2b68ce0cefb" style="border-radius:24px" />
 </p>
 
 <p align="center">
-  <b>掏出手机 → 秒开 → 写一句话 → 放回口袋</b>
+  <b>掏出手机 → 小部件秒开 → 速录一键保存至ob库 → 放回口袋</b>
 </p>
 
 <p align="center">
@@ -53,7 +53,7 @@ QuickDaily 只做一件事：**让你用最快的速度记下今天的一句话*
 | **📑 Markdown 渲染** — 标题、列表、任务勾选、粗斜体、链接均支持 | **💾 实时保存** — 防抖 500ms 自动写入，切后台立即落盘 |
 | **🏠 桌面便签小部件** — 自适应大小，主屏浏览今日日记全文 | **🪟 快速添加悬浮窗** — 1x1 小部件，弹出透明悬浮窗一键速记 |
 | **📥 任务录入** — 悬浮窗支持任务模式，双击切换完成状态 | **🖼️ 图片录入** — 支持从悬浮窗批量导入图片到日记 |
-| **📆 WW 周数格式** — 新增周数日期格式支持 | **🔍 Frontmatter 过滤** — 可选隐藏日记文件头，专注内容 |
+| **📆 全日期格式支持** — 新增周数日期格式支持 | **🔍 Frontmatter 过滤** — 可选隐藏日记文件头，专注内容 |
 | **🔖 速记锚点** — 自定义锚点文本，自动插入指定位置 | **🎯 今日任务小部件** — 桌面直接查看/勾选待办任务 |
 
 ---
@@ -86,6 +86,11 @@ QuickDaily 只做一件事：**让你用最快的速度记下今天的一句话*
 | QQ 交流群 | [1050092886](https://qm.qq.com/q/G2zLL5RpiU) — Obsidian 许愿屋 |
 
 ---
+
+
+## 打赏
+如果你觉得对你很有帮助的话，请我喝杯咖啡吧~
+![赞赏码](https://github.com/agarcabin/QuickDaily/blob/main/%E8%B5%9E%E8%B5%8F%E7%A0%81.png)
 
 ## 技术栈
 
