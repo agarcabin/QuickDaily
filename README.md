@@ -90,7 +90,7 @@ QuickDaily 只做一件事：**让你用最快的速度记下今天的一句话*
 
 ## 打赏
 如果你觉得对你很有帮助的话，请我喝杯咖啡吧~
-![赞赏码](https://github.com/agarcabin/QuickDaily/blob/main/%E8%B5%9E%E8%B5%8F%E7%A0%81.png)
+![赞赏码](%E8%B5%9E%E8%B5%8F%E7%A0%81.jpg)
 
 ## 技术栈
 
