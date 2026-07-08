@@ -22,6 +22,7 @@ import androidx.lifecycle.lifecycleScope
 import com.quickdaily.ui.EditorScreen
 import com.quickdaily.ui.SettingsScreen
 import com.quickdaily.ui.theme.QuickDailyTheme
+import com.quickdaily.util.ImageUtil
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -103,11 +104,30 @@ class MainActivity : ComponentActivity() {
         handleShareIntent(intent)
     }
 
-    private fun handleShareIntent(intent: Intent) {
-        if (Intent.ACTION_SEND == intent.action) {
-            val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
-            if (sharedText != null && sharedText.isNotBlank()) {
-                saveSharedTextToDiary(sharedText)
+        private fun handleShareIntent(intent: Intent) {
+        when (intent.action) {
+            Intent.ACTION_SEND -> {
+                // 文本分享
+                val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
+                if (sharedText != null && sharedText.isNotBlank()) {
+                    saveSharedTextToDiary(sharedText)
+                    return
+                }
+                // 图片分享（单张）
+                if (intent.type?.startsWith("image/") == true) {
+                    val imageUri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                    if (imageUri != null) {
+                        saveSharedImagesToDiary(listOf(imageUri))
+                    }
+                }
+            }
+            Intent.ACTION_SEND_MULTIPLE -> {
+                if (intent.type?.startsWith("image/") == true) {
+                    val imageUris = intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+                    if (imageUris != null && imageUris.isNotEmpty()) {
+                        saveSharedImagesToDiary(imageUris)
+                    }
+                }
             }
         }
     }
@@ -142,6 +162,10 @@ class MainActivity : ComponentActivity() {
 
         var existing = com.quickdaily.util.FileUtil.read(path)
 
+        // parse frontmatter, work on body only
+        val parsed = com.quickdaily.util.ContentUtil.parseFrontmatter(existing)
+        var body = if (parsed.hasFrontmatter) parsed.body else existing
+
         // 今日文件不存在或为空时，从模板加载
         if (existing.isEmpty()) {
             val tplPathPref = prefs.getString("template_path", "") ?: ""
@@ -154,23 +178,53 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-
-        if (anchor.isNotEmpty() && !existing.contains(anchor) && addAnchorIfMissing) {
-            if (existing.isNotEmpty() && !existing.endsWith("\n")) {
-                existing += "\n"
-            }
-            existing += "$anchor\n"
+        // Re-parse body after potential template loading
+        if (body.isEmpty() && existing.isNotEmpty()) {
+            val reParsed = com.quickdaily.util.ContentUtil.parseFrontmatter(existing)
+            body = if (reParsed.hasFrontmatter) reParsed.body else existing
         }
 
-        val nc = if (anchor.isNotEmpty() && existing.contains(anchor) && timestampOrder == "above") {
-            val idx = existing.indexOf(anchor) + anchor.length
-
-            existing.substring(0, idx) + "\n" + line + existing.substring(idx)
-        } else if (existing.isEmpty()) "$line\n"
-        else if (existing.endsWith("\n")) "$existing$line\n"
-        else "$existing\n$line\n"
-        
-        com.quickdaily.util.FileUtil.write(path, nc)
+        if (anchor.isNotEmpty() && !body.contains(anchor) && addAnchorIfMissing) {
+                val newBody = if (body.isNotEmpty() && !body.endsWith("\n")) {
+                    body + "\n$anchor\n"
+                } else {
+                    body + "$anchor\n"
+                }
+                if (parsed.hasFrontmatter) {
+                    existing = com.quickdaily.util.ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, newBody)
+                } else {
+                    existing = newBody
+                }
+            }
+            val workingContent = if (parsed.hasFrontmatter) body else existing
+            val nc = if (anchor.isNotEmpty() && workingContent.contains(anchor) && timestampOrder == "above") {
+                val idx = workingContent.indexOf(anchor) + anchor.length
+                val newBody = workingContent.substring(0, idx) + "\n" + line + workingContent.substring(idx)
+                if (parsed.hasFrontmatter) {
+                    com.quickdaily.util.ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, newBody)
+                } else {
+                    newBody
+                }
+            } else if (workingContent.isEmpty()) {
+                if (parsed.hasFrontmatter) {
+                    com.quickdaily.util.ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, "$line\n")
+                } else {
+                    "$line\n"
+                }
+            } else if (workingContent.endsWith("\n")) {
+                if (parsed.hasFrontmatter) {
+                    com.quickdaily.util.ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, workingContent + "$line\n")
+                } else {
+                    workingContent + "$line\n"
+                }
+            } else {
+                if (parsed.hasFrontmatter) {
+                    com.quickdaily.util.ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, workingContent + "\n$line\n")
+                } else {
+                    workingContent + "\n$line\n"
+                }
+            }
+            com.quickdaily.util.FileUtil.write(path, nc)
         com.quickdaily.QuickDailyWidget.updateAllWidgets(this)
 
         // 刷新编辑器内容，让用户立即看到新加入的分享内容
@@ -179,6 +233,73 @@ class MainActivity : ComponentActivity() {
         }
 
         android.widget.Toast.makeText(this, "已保存分享内容到日记", android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * 保存分享的图片到日记。
+     * 将图片复制到 vault，然后在日记中插入 Markdown 图片引用。
+     */
+    private fun saveSharedImagesToDiary(uris: List<Uri>) {
+        val prefs = getSharedPreferences("QuickDaily", 0)
+        val vaultPath = prefs.getString("vault_path", "") ?: ""
+        if (vaultPath.isBlank()) {
+            android.widget.Toast.makeText(this, "请先设置仓库路径", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        val storagePath = prefs.getString("image_storage_path", "") ?: ""
+        val namingFormat = prefs.getString("image_naming_format", "timestamp_ext") ?: "timestamp_ext"
+        val linkFormat = prefs.getString("image_link_format", "described") ?: "described"
+        val customNamingFormat = prefs.getString("image_custom_naming_format", "") ?: ""
+        val diaryFolder = prefs.getString("diary_folder", "Daily") ?: "Daily"
+        val dateFormat = prefs.getString("date_format", "YYYY-MM-DD") ?: "YYYY-MM-DD"
+        val textAnchor = (prefs.getString("anchor_text", "") ?: "").trim()
+        val addAnchorIfMissing = prefs.getBoolean("add_anchor_if_missing", false)
+        val d = com.quickdaily.util.DateUtil.todayStr(dateFormat)
+        val path = "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/$d.md"
+
+        // 处理图片
+        val links = ImageUtil.processImages(this, uris, vaultPath, storagePath, namingFormat, linkFormat, customNamingFormat)
+        if (links.isEmpty()) {
+            android.widget.Toast.makeText(this, "复制图片失败", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // 将图片引用插入日记（带 frontmatter 保护）
+        var existing = com.quickdaily.util.FileUtil.read(path)
+        val parsed = com.quickdaily.util.ContentUtil.parseFrontmatter(existing)
+        var body = if (parsed.hasFrontmatter) parsed.body else existing
+
+        val anchor = textAnchor
+        var workingContent = body
+        if (anchor.isNotEmpty() && !workingContent.contains(anchor) && addAnchorIfMissing) {
+            workingContent = if (workingContent.isNotEmpty() && !workingContent.endsWith("\n")) {
+                workingContent + "\n$anchor\n"
+            } else {
+                workingContent + "$anchor\n"
+            }
+        }
+
+        val imageText = links.joinToString("\n")
+        val newBody = if (anchor.isNotEmpty() && workingContent.contains(anchor)) {
+            val idx = workingContent.indexOf(anchor) + anchor.length
+            workingContent.substring(0, idx) + "\n" + imageText + workingContent.substring(idx)
+        } else if (workingContent.isEmpty()) {
+            "$imageText\n"
+        } else if (workingContent.endsWith("\n")) {
+            "$workingContent$imageText\n"
+        } else {
+            "$workingContent\n$imageText\n"
+        }
+
+        val saveContent = if (parsed.hasFrontmatter) {
+            com.quickdaily.util.ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, newBody)
+        } else {
+            newBody
+        }
+        com.quickdaily.util.FileUtil.write(path, saveContent)
+        com.quickdaily.QuickDailyWidget.updateAllWidgets(this)
+
+        android.widget.Toast.makeText(this, "已保存 ${links.size} 张图片到日记", android.widget.Toast.LENGTH_SHORT).show()
     }
 
     private fun checkPermissions() {

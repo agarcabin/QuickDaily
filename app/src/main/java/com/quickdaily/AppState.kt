@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.quickdaily.util.DateUtil
 import com.quickdaily.util.Debounce
 import com.quickdaily.util.FileUtil
+import com.quickdaily.util.ContentUtil
 import com.quickdaily.util.ReadResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,7 +28,18 @@ data class DiaryConfig(
     val timestampOrder: String = "above",
     val enterToSave: Boolean = true,
     val widgetImageUri: String = "",
-    val autoCheckUpdate: Boolean = true
+    val autoCheckUpdate: Boolean = true,
+    val filterFrontmatter: Boolean = true,
+    val imageStoragePath: String = "",
+    val imageNamingFormat: String = "timestamp_original",
+    val imageLinkFormat: String = "described",
+    val imageCustomNamingFormat: String = ""
+)
+
+
+/** Obsidian 应用配置（来自 .obsidian/app.json） */
+data class ObsidianAppConfig(
+    val attachmentFolderPath: String = "/"
 )
 
 class AppState(application: Application) : AndroidViewModel(application) {
@@ -50,6 +62,9 @@ class AppState(application: Application) : AndroidViewModel(application) {
 
     private val _diaryContent = MutableStateFlow("")
     val diaryContent: StateFlow<String> = _diaryContent.asStateFlow()
+
+    private val _frontmatter = MutableStateFlow("")
+    val frontmatter: StateFlow<String> = _frontmatter.asStateFlow()
 
     private val _isLoaded = MutableStateFlow(false)
     val isLoaded: StateFlow<Boolean> = _isLoaded.asStateFlow()
@@ -76,7 +91,12 @@ class AppState(application: Application) : AndroidViewModel(application) {
             timestampOrder = prefs.getString("timestamp_order", "above") ?: "above",
             enterToSave = prefs.getBoolean("enter_to_save", true),
             widgetImageUri = prefs.getString("widget_image_uri", "") ?: "",
-            autoCheckUpdate = prefs.getBoolean("auto_check_update", true)
+            autoCheckUpdate = prefs.getBoolean("auto_check_update", true),
+            filterFrontmatter = prefs.getBoolean("filter_frontmatter", true),
+            imageStoragePath = prefs.getString("image_storage_path", "") ?: "",
+            imageNamingFormat = prefs.getString("image_naming_format", "timestamp_original") ?: "timestamp_original",
+            imageLinkFormat = prefs.getString("image_link_format", "described") ?: "described",
+            imageCustomNamingFormat = prefs.getString("image_custom_naming_format", "") ?: ""
         )
     }
 
@@ -93,7 +113,12 @@ class AppState(application: Application) : AndroidViewModel(application) {
             timestampOrder = raw.timestampOrder,
             enterToSave = raw.enterToSave,
             widgetImageUri = raw.widgetImageUri,
-            autoCheckUpdate = raw.autoCheckUpdate
+            autoCheckUpdate = raw.autoCheckUpdate,
+        filterFrontmatter = raw.filterFrontmatter,
+            imageStoragePath = raw.imageStoragePath,
+            imageNamingFormat = raw.imageNamingFormat,
+            imageLinkFormat = raw.imageLinkFormat,
+            imageCustomNamingFormat = raw.imageCustomNamingFormat
         )
         prefs.edit()
             .putString("vault_path", config.vaultPath)
@@ -107,6 +132,11 @@ class AppState(application: Application) : AndroidViewModel(application) {
             .putBoolean("enter_to_save", config.enterToSave)
             .putString("widget_image_uri", config.widgetImageUri)
             .putBoolean("auto_check_update", config.autoCheckUpdate)
+            .putBoolean("filter_frontmatter", config.filterFrontmatter)
+            .putString("image_storage_path", config.imageStoragePath)
+            .putString("image_naming_format", config.imageNamingFormat)
+            .putString("image_link_format", config.imageLinkFormat)
+            .putString("image_custom_naming_format", config.imageCustomNamingFormat)
             .commit()  // 同步写入，防止进程被杀时配置丢失
         _config.value = config
         // 保存后重新加载日记，确保立即生效
@@ -146,7 +176,30 @@ class AppState(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ── Diary ───────────────────────────────────────────
+    
+    /**
+     * 从 Obsidian 的 .obsidian/app.json 读取附件配置。
+     */
+    suspend fun loadObsidianAppConfig(vaultPath: String): ObsidianAppConfig? {
+        return kotlinx.coroutines.withContext(Dispatchers.IO) {
+            val cleanPath = vaultPath.trimEnd('/')
+            val jsonPath = "$cleanPath/.obsidian/app.json"
+            val raw = FileUtil.readOrNull(jsonPath) ?: return@withContext null
+            try {
+                val json = kotlinx.serialization.json.Json {
+                    ignoreUnknownKeys = true
+                    isLenient = true
+                }
+                val obj = json.parseToJsonElement(raw) as? kotlinx.serialization.json.JsonObject ?: return@withContext null
+                val folder = (obj["attachmentFolderPath"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "/"
+                ObsidianAppConfig(attachmentFolderPath = folder)
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
+// ── Diary ───────────────────────────────────────────
 
     /** 根据配置拼出今天的日记完整路径 */
     fun todayFilePath(): String {
@@ -181,7 +234,16 @@ class AppState(application: Application) : AndroidViewModel(application) {
                     null
                 }
             }
-            _diaryContent.value = if (content != null && content.isNotEmpty()) content else loadTemplate()
+            val rawContent = if (content != null && content.isNotEmpty()) content else loadTemplate()
+            // 解析 frontmatter（无论是否开启过滤，始终记录 frontmatter）
+            val parsed = ContentUtil.parseFrontmatter(rawContent)
+            _frontmatter.value = parsed.frontmatter
+            // 根据 filterFrontmatter 决定显示内容
+            if (parsed.hasFrontmatter && config.value.filterFrontmatter) {
+                _diaryContent.value = parsed.body
+            } else {
+                _diaryContent.value = rawContent
+            }
 
             _isLoaded.value = true
 
@@ -245,9 +307,15 @@ class AppState(application: Application) : AndroidViewModel(application) {
     fun saveNow() {
         val path = _todayPath.value
         val content = _diaryContent.value
+        // 如果开启了 frontmatter 过滤且有 frontmatter，需要重组
+        val saveContent = if (_frontmatter.value.isNotEmpty() && config.value.filterFrontmatter) {
+            ContentUtil.reconstructWithFrontmatter(_frontmatter.value, content)
+        } else {
+            content
+        }
         if (path.isNotEmpty()) {
             appScope.launch(Dispatchers.IO) {
-                FileUtil.write(path, content)
+                FileUtil.write(path, saveContent)
                 QuickDailyWidget.updateAllWidgets(app)
             }
         }

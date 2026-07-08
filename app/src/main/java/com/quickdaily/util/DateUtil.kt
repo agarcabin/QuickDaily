@@ -18,6 +18,7 @@ object DateUtil {
             .replace("dddd", "EEEE")   // full day name
             .replace("ddd", "EEE")     // abbreviated day name
             .replace("YYYY", "yyyy")   // week-based year → calendar year
+            .replace("WW", "ww")       // ISO week-of-year → Java week-of-year
             .replace("DD", "dd")       // day-of-month（修复关键差异）
             .replace("YY", "yy")
     }

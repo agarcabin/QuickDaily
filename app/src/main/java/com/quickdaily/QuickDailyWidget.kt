@@ -10,6 +10,7 @@ import android.content.SharedPreferences
 import android.widget.RemoteViews
 import com.quickdaily.util.DateUtil
 import com.quickdaily.util.FileUtil
+import com.quickdaily.util.ContentUtil
 
 class QuickDailyWidget : AppWidgetProvider() {
 
@@ -59,9 +60,14 @@ class QuickDailyWidget : AppWidgetProvider() {
 
             val path = "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/$date.md"
             val content = FileUtil.read(path)
+            val displayContent = if (prefs.getBoolean("filter_frontmatter", false)) {
+                ContentUtil.stripFrontmatter(content)
+            } else {
+                content
+            }
 
             views.setTextViewText(R.id.widget_title, date)
-            views.setTextViewText(R.id.widget_content, content.ifEmpty { "(空白日记)" })
+            views.setTextViewText(R.id.widget_content, displayContent.ifEmpty { "(空白日记)" })
 
             manager.updateAppWidget(widgetId, views)
         }

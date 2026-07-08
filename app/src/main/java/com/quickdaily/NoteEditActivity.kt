@@ -5,10 +5,13 @@ import android.view.Gravity
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
@@ -20,6 +23,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import com.quickdaily.util.DateUtil
+import com.quickdaily.util.ContentUtil
+import com.quickdaily.util.ImageUtil
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.Image
+import androidx.compose.runtime.snapshots.SnapshotStateList
+import android.net.Uri
 import com.quickdaily.util.FileUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -29,10 +42,17 @@ import android.widget.Toast
 
 class NoteEditActivity : ComponentActivity() {
     private var noteText by mutableStateOf("")
+    private val selectedImages = mutableStateListOf<Uri>()
     private var noteTimestampFormat by mutableStateOf("list_time")
     private var noteAddAnchorIfMissing by mutableStateOf(true)
     private var noteTimestampOrder by mutableStateOf("above")
     private var noteEnterToSave by mutableStateOf(false)
+
+    private val imagePicker = registerForActivityResult(
+        ActivityResultContracts.GetMultipleContents()
+    ) { uris: List<Uri> ->
+        selectedImages.addAll(uris)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -75,7 +95,10 @@ class NoteEditActivity : ComponentActivity() {
                     if (noteText.isNotBlank()) appendToDiary(noteText.trim())
                     else finish()
                         },
-                        onClose = { finish() }
+                        onClose = { finish() },
+                        imageUris = selectedImages,
+                        onPickImages = { imagePicker.launch("image/*") },
+                        onRemoveImage = { index -> selectedImages.removeAt(index) }
                     )
                 }
             }
@@ -104,6 +127,8 @@ class NoteEditActivity : ComponentActivity() {
            }
 
             var existing = FileUtil.read(path)
+            val parsed = ContentUtil.parseFrontmatter(existing)
+            var body = if (parsed.hasFrontmatter) parsed.body else existing
 
             // 今日文件不存在或为空时，从模板加载
             if (existing.isEmpty()) {
@@ -118,21 +143,59 @@ class NoteEditActivity : ComponentActivity() {
                 }
             }
 
-            if (anchor.isNotEmpty() && !existing.contains(anchor) && noteAddAnchorIfMissing) {
-                if (existing.isNotEmpty() && !existing.endsWith("\n")) {
-                    existing += "\n"
+            if (anchor.isNotEmpty() && !body.contains(anchor) && noteAddAnchorIfMissing) {
+                body = if (body.isNotEmpty() && !body.endsWith("\n")) {
+                    body + "\n$anchor\n"
+                } else {
+                    body + "$anchor\n"
                 }
-                existing += "$anchor\n"
+            }
+            val workingContent = body
+            val nc = if (anchor.isNotEmpty() && workingContent.contains(anchor) && noteTimestampOrder == "above") {
+                val idx = workingContent.indexOf(anchor) + anchor.length
+                val newBody = workingContent.substring(0, idx) + "\n" + line + workingContent.substring(idx)
+                if (parsed.hasFrontmatter) {
+                    ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, newBody)
+                } else {
+                    newBody
+                }
+            } else if (workingContent.isEmpty()) {
+                if (parsed.hasFrontmatter) {
+                    ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, "$line\n")
+                } else {
+                    "$line\n"
+                }
+            } else if (workingContent.endsWith("\n")) {
+                if (parsed.hasFrontmatter) {
+                    ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, workingContent + "$line\n")
+                } else {
+                    workingContent + "$line\n"
+                }
+            } else {
+                if (parsed.hasFrontmatter) {
+                    ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, workingContent + "\n$line\n")
+                } else {
+                    workingContent + "\n$line\n"
+                }
+            }
+            val imageLinks = if (selectedImages.isNotEmpty()) {
+                val imgStoragePath = prefs.getString("image_storage_path", "") ?: ""
+                val imgNamingFormat = prefs.getString("image_naming_format", "timestamp_ext") ?: "timestamp_ext"
+                val imgLinkFormat = prefs.getString("image_link_format", "described") ?: "described"
+                val imgCustomNaming = prefs.getString("image_custom_naming_format", "") ?: ""
+                ImageUtil.processImages(this@NoteEditActivity, selectedImages.toList(), vaultPath, imgStoragePath, imgNamingFormat, imgLinkFormat, imgCustomNaming)
+            } else emptyList()
+
+            val finalNc = if (imageLinks.isNotEmpty()) {
+                val imagesText = imageLinks.joinToString("\n")
+                if (nc.endsWith("\n")) "${nc}${imagesText}\n" else "${nc}\n${imagesText}\n"
+            } else nc
+
+            if (selectedImages.isNotEmpty()) {
+                withContext(Dispatchers.Main) { selectedImages.clear() }
             }
 
-            val nc = if (anchor.isNotEmpty() && existing.contains(anchor) && noteTimestampOrder == "above") {
-
-                val idx = existing.indexOf(anchor) + anchor.length
-                existing.substring(0, idx) + "\n" + line + existing.substring(idx)
-            } else if (existing.isEmpty()) "$line\n"
-            else if (existing.endsWith("\n")) "$existing$line\n"
-            else "$existing\n$line\n"
-            FileUtil.write(path, nc)
+            FileUtil.write(path, finalNc)
             QuickDailyWidget.updateAllWidgets(this@NoteEditActivity)
             withContext(Dispatchers.Main) {
                 Toast.makeText(this@NoteEditActivity, "已保存", Toast.LENGTH_SHORT).show()
@@ -160,7 +223,10 @@ private fun NoteEditDialog(
     onTextChange: (String) -> Unit,
     enterToSave: Boolean,
     onSave: () -> Unit,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    imageUris: SnapshotStateList<Uri>,
+    onPickImages: () -> Unit,
+    onRemoveImage: (Int) -> Unit
 ) {
 
     val focusRequester = remember { FocusRequester() }
@@ -180,6 +246,50 @@ private fun NoteEditDialog(
                     if (text.isNotBlank()) onSave() else onClose()
                 }) { Text("保存", color = Color(0xFF6EB8FF), fontSize = 13.sp) }
             }
+
+            // Image picker button
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onPickImages) {
+                    Text("+ [图片]", color = Color(0xFF6EB8FF), fontSize = 13.sp)
+                }
+            }
+
+            // Thumbnail preview
+            if (imageUris.isNotEmpty()) {
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth().height(70.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    itemsIndexed(imageUris) { index, uri ->
+                        Box(modifier = Modifier.size(60.dp)) {
+                            val ctx = LocalContext.current
+                            val thumbBitmap = remember(uri) {
+                                runCatching {
+                                    val thumb = ctx.contentResolver.loadThumbnail(
+                                        uri, android.util.Size(120, 120), null
+                                    )
+                                    thumb?.asImageBitmap()
+                                }.getOrNull()
+                            }
+                            thumbBitmap?.let {
+                                Image(
+                                    bitmap = it,
+                                    contentDescription = null,
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop
+                                )
+                            }
+                            IconButton(
+                                onClick = { onRemoveImage(index) },
+                                modifier = Modifier.align(Alignment.TopEnd).size(18.dp)
+                            ) {
+                                Icon(Icons.Default.Close, "删除", tint = Color.Red, modifier = Modifier.size(14.dp))
+                            }
+                        }
+                    }
+                }
+            }
+
             BasicTextField(value = text, onValueChange = { newText ->
                 if (enterToSave) {
                     // 单行模式：过滤掉换行符
