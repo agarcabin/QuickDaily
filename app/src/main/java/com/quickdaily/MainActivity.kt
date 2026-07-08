@@ -71,7 +71,7 @@ class MainActivity : ComponentActivity() {
         // 启动时自动检查更新
         if (appState.config.value.autoCheckUpdate) {
             lifecycleScope.launch {
-                val result = com.quickdaily.util.UpdateChecker.checkUpdate(context = this@MainActivity)
+                val result = com.quickdaily.util.UpdateChecker.checkUpdate(currentVersion = BuildConfig.VERSION_NAME, context = this@MainActivity)
                 when (result) {
                     is com.quickdaily.util.UpdateResult.UpdateAvailable -> {
                         runOnUiThread {

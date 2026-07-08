@@ -44,7 +44,6 @@ data class SourceError(
 )
 
 object UpdateChecker {
-    private const val CURRENT_VERSION = "1.3"
     private const val REPO_OWNER = "agarcabin"
     private const val REPO_NAME = "QuickDaily"
 
@@ -97,7 +96,8 @@ object UpdateChecker {
      * @param context 用于读取/保存上次成功的镜像源（可为 null）
      * @param onProgress 回调（消息文本），在每次尝试新镜像源时触发
      */
-    suspend fun checkUpdate(
+suspend fun checkUpdate(
+        currentVersion: String,
         context: Context? = null,
         onProgress: (String) -> Unit = {}
     ): UpdateResult {
@@ -123,7 +123,7 @@ object UpdateChecker {
                         saveSuccessMirror(context, mirror)
 
                         return@withContext if (version.isNotEmpty() &&
-                            isNewerVersion(version, CURRENT_VERSION)) {
+                            isNewerVersion(version, currentVersion)) {
                             UpdateResult.UpdateAvailable(
                                 ReleaseInfo(version, body, apkUrl, releaseUrl)
                             )

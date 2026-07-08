@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.quickdaily.AppState
+import com.quickdaily.BuildConfig
 import com.quickdaily.DiaryConfig
 import com.quickdaily.QuickDailyWidget
 import com.quickdaily.QuickNoteWidget
@@ -843,7 +844,7 @@ fun SettingsScreen(
                 isLatest = false
                 updateStatus = "正在检查更新..."
                 scope.launch {
-                    val result = com.quickdaily.util.UpdateChecker.checkUpdate(context = context) { progress ->
+                    val result = com.quickdaily.util.UpdateChecker.checkUpdate(currentVersion = BuildConfig.VERSION_NAME, context = context) { progress ->
                         updateStatus = progress
                     }
                     when (result) {
@@ -895,9 +896,9 @@ fun SettingsScreen(
            // 已是最新版本
            if (isLatest) {
                Spacer(Modifier.height(4.dp))
-                Text("当前已是最新版本（1.3）",
-                   style = MaterialTheme.typography.bodySmall,
-                   color = MaterialTheme.colorScheme.primary)
+                Text("当前已是最新版本（${BuildConfig.VERSION_NAME}）",
+                  style = MaterialTheme.typography.bodySmall,
+                  color = MaterialTheme.colorScheme.primary)
            }
 
             // 失败：显示每个源的错误
@@ -976,7 +977,7 @@ fun SettingsScreen(
             Spacer(Modifier.height(12.dp))
             Text("关于", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(8.dp))
-            Text("QuickDaily 1.3", style = MaterialTheme.typography.titleMedium)
+            Text("QuickDaily ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleMedium)
 
             Spacer(Modifier.height(12.dp))
             val coolapkAnnotated = buildAnnotatedString {
