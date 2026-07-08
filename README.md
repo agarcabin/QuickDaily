@@ -26,10 +26,13 @@
 ---
 
 ## 使用截图
+
 <p align="lift">
   <img width="240" alt="QuickDaily 录屏演示" src="https://github.com/user-attachments/assets/a2718d12-e216-4b45-8f7a-b2b68ce0cefb" />
 </p>
+
 速录案例
+
 ---
 
 ## 为什么需要 QuickDaily？
