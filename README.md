@@ -1,10 +1,6 @@
 # QuickDaily — Obsidian 闪念速记 · Android 小部件
 
 <p align="center">
-  <img width="120" height="120" alt="QuickDaily" src="https://github.com/user-attachments/assets/a2718d12-e216-4b45-8f7a-b2b68ce0cefb" style="border-radius:24px" />
-</p>
-
-<p align="center">
   <b>掏出手机 → 小部件秒开 → 速录一键保存至ob库 → 放回口袋</b>
 </p>
 
@@ -26,7 +22,9 @@
   <img src="https://img.shields.io/badge/Jetpack%20Compose-BOM%202024.09-purple?logo=jetpackcompose" />
   <img src="https://img.shields.io/badge/License-MIT-yellow" />
 </p>
+---
 
+## 使用截图
 <p align="center">
   <img width="240" alt="QuickDaily 录屏演示" src="https://github.com/user-attachments/assets/a2718d12-e216-4b45-8f7a-b2b68ce0cefb" />
 </p>
@@ -90,7 +88,7 @@ QuickDaily 只做一件事：**让你用最快的速度记下今天的一句话*
 
 ## 打赏
 如果你觉得对你很有帮助的话，请我喝杯咖啡吧~
-![赞赏码](%E8%B5%9E%E8%B5%8F%E7%A0%81.jpg)
+![赞赏码](%E8%B5%9E%E8%B5%8F%E7%A0%81.png)
 
 ## 技术栈
 
