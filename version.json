@@ -1,5 +1,5 @@
-﻿{
-  "version": "1.3",
+{
+  "version": "1.4",
   "url": "https://github.com/agarcabin/QuickDaily/releases/latest",
-  "body": "QuickDaily 1.3\n• 新增 7种时间戳格式设置，可适配Thino/Knomo \n• 新增 时间戳文本插入顺序\n• 新增 无锚点时自动添加锚点文本\n\n• 修复 清空日记内容后无法重新加载模板\n• 修复 每日首次录入内容时略过日记模板"
+  "body": "QuickDaily 1.4\\n- Frontmatter 过滤显示\\n- WW 周数日期格式支持\\n- 图片快速添加\\n- 图片储存目录/命名规则设置\\n- Obsidian 附件目录自动读取\\n- 改进: Frontmatter 过滤默认开启\\n- 修复: Frontmatter 重复复制问题"
 }

@@ -53,6 +53,7 @@ fun SettingsScreen(
     var dateFormat by remember { mutableStateOf(config.dateFormat) }
     var templatePath by remember { mutableStateOf(config.templatePath) }
     var anchorText by remember { mutableStateOf(config.anchorText) }
+    var imageStoragePath by remember { mutableStateOf(config.imageStoragePath) }
 
     var obsidianDetected by remember { mutableStateOf(false) }
     var obsidianMsg by remember { mutableStateOf("") }
@@ -78,12 +79,16 @@ fun SettingsScreen(
                 // 选择仓库后自动触发读取 Obsidian 配置
                 scope.launch {
                     val obsCfg = appState.loadObsidianConfig(path)
+                    val appCfg = appState.loadObsidianAppConfig(path)
                     if (obsCfg != null) {
                         diaryFolder = obsCfg.diaryFolder
                         dateFormat = obsCfg.dateFormat
                         templatePath = obsCfg.templatePath
                         obsidianDetected = true
                         obsidianMsg = "已读取 Obsidian 配置"
+                        if (appCfg != null) {
+                            imageStoragePath = appCfg.attachmentFolderPath.let { if (it == "/") "" else it.trimStart('/') }
+                        }
                         appState.saveConfig(DiaryConfig(
                             vaultPath = path.trim(),
                             diaryFolder = obsCfg.diaryFolder.trim().ifBlank { "Daily" },
@@ -95,7 +100,11 @@ fun SettingsScreen(
                             timestampOrder = config.timestampOrder,
                             enterToSave = config.enterToSave,
                             widgetImageUri = config.widgetImageUri,
-                            autoCheckUpdate = config.autoCheckUpdate
+                            autoCheckUpdate = config.autoCheckUpdate,
+                        filterFrontmatter = config.filterFrontmatter,
+                        imageStoragePath = imageStoragePath.trim(),
+                        imageNamingFormat = config.imageNamingFormat,
+                        imageLinkFormat = config.imageLinkFormat
                         ))
                     } else {
                         obsidianDetected = false
@@ -176,7 +185,11 @@ fun SettingsScreen(
                                 timestampOrder = config.timestampOrder,
                                 enterToSave = config.enterToSave,
                                 widgetImageUri = config.widgetImageUri,
-                                autoCheckUpdate = config.autoCheckUpdate
+                                autoCheckUpdate = config.autoCheckUpdate,
+                        filterFrontmatter = config.filterFrontmatter,
+                        imageStoragePath = imageStoragePath.trim(),
+                        imageNamingFormat = config.imageNamingFormat,
+                        imageLinkFormat = config.imageLinkFormat
                             ))
                         }
                         onBack()
@@ -229,12 +242,16 @@ fun SettingsScreen(
             Button(onClick = {
                 scope.launch {
                     val obsCfg = appState.loadObsidianConfig(vaultPath)
+                    val appCfg = appState.loadObsidianAppConfig(vaultPath)
                     if (obsCfg != null) {
                         diaryFolder = obsCfg.diaryFolder
                         dateFormat = obsCfg.dateFormat
                         templatePath = obsCfg.templatePath
                         obsidianDetected = true
                         obsidianMsg = "已读取 Obsidian 配置"
+                        if (appCfg != null) {
+                            imageStoragePath = appCfg.attachmentFolderPath.let { if (it == "/") "" else it.trimStart('/') }
+                        }
                     } else {
                         obsidianDetected = false
                         obsidianMsg = "未找到 .obsidian/daily-notes.json"
@@ -304,7 +321,11 @@ fun SettingsScreen(
                     timestampOrder = config.timestampOrder,
                     enterToSave = config.enterToSave,
                     widgetImageUri = config.widgetImageUri,
-                    autoCheckUpdate = config.autoCheckUpdate
+                    autoCheckUpdate = config.autoCheckUpdate,
+                        filterFrontmatter = config.filterFrontmatter,
+                        imageStoragePath = imageStoragePath.trim(),
+                        imageNamingFormat = config.imageNamingFormat,
+                        imageLinkFormat = config.imageLinkFormat
                 ))
                 onBack()
             }, modifier = Modifier.fillMaxWidth(), enabled = vaultPath.isNotBlank()) {
@@ -448,8 +469,191 @@ fun SettingsScreen(
                 Switch(checked = config.enterToSave, onCheckedChange = { appState.saveConfig(config.copy(enterToSave = it)) })
             }
 
+            // Frontmatter filtering
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("\u8fc7\u6ee4 Frontmatter \u663e\u793a", style = MaterialTheme.typography.bodyMedium)
+                    Text("\u5f00\u542f\u540e\u7f16\u8f91\u5668\u548c\u684c\u9762\u4fbf\u7b7e\u5c06\u9690\u85cf YAML \u62ac\u5934\u6570\u636e\uff0c\u4fdd\u5b58\u65f6\u81ea\u52a8\u4fdd\u7559",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                }
+                Switch(checked = config.filterFrontmatter, onCheckedChange = { appState.saveConfig(config.copy(filterFrontmatter = it)) })
+            }
+
             // ══════════════════════════════════════
-            // 分界线 + 3. 小部件设置
+// 图片设置
+            // ================================================
+            HorizontalDivider(Modifier.padding(top = 20.dp, bottom = 12.dp))
+
+            Text("图片设置", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(8.dp))
+
+            Text("图片存储目录", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                OutlinedTextField(
+                    value = imageStoragePath,
+                    onValueChange = { imageStoragePath = it },
+                    label = { Text("assets/") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true
+                )
+                Spacer(Modifier.width(8.dp))
+                FilledTonalButton(onClick = { onExternalLaunch(); vaultPicker.launch(null) }, modifier = Modifier.height(56.dp)) {
+                    Icon(Icons.Default.FolderOpen, "选择文件夹", Modifier.size(18.dp))
+                }
+            }
+            Text("为空时图片保存到日记同目录",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                modifier = Modifier.padding(top = 2.dp))
+
+            Spacer(Modifier.height(12.dp))
+
+            Text("图片文件名规则", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(4.dp))
+            var namingFormatExpanded by remember { mutableStateOf(false) }
+            val namingFormatLabels = mapOf(
+                "original" to "原始文件名",
+                "timestamp_original" to "时间戳+原始文件名",
+                "custom" to "时间戳+自定义扩展名"
+            )
+            ExposedDropdownMenuBox(
+                expanded = namingFormatExpanded,
+                onExpandedChange = { namingFormatExpanded = !namingFormatExpanded }
+            ) {
+                OutlinedTextField(
+                    value = namingFormatLabels[config.imageNamingFormat] ?: "时间戳+原始文件名",
+                    onValueChange = {},
+                    readOnly = true,
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = namingFormatExpanded) },
+                    modifier = Modifier.menuAnchor().fillMaxWidth(),
+                    singleLine = true
+                )
+                ExposedDropdownMenu(
+                    expanded = namingFormatExpanded,
+                    onDismissRequest = { namingFormatExpanded = false }
+                ) {
+                    namingFormatLabels.forEach { (value, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            onClick = {
+                                appState.saveConfig(config.copy(imageNamingFormat = value))
+                                namingFormatExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            // Custom naming pattern (only when "custom" is selected)
+            if (config.imageNamingFormat == "custom") {
+                Spacer(Modifier.height(8.dp))
+                Text("自定义命名格式", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = config.imageCustomNamingFormat.ifEmpty { "yyyyMMdd_HHmmssSSS_{filename}{ext}" },
+                    onValueChange = { appState.saveConfig(config.copy(imageCustomNamingFormat = it)) },
+                    label = { Text("yyyyMMdd_HHmmssSSS_{filename}{ext}") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                Text("可用占位符: yyyy MM dd HH mm ss SSS = 时间戳, {filename} = 原始文件名, {ext} = 文件扩展名",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                    modifier = Modifier.padding(top = 2.dp))
+            }
+
+            // Preview
+            Spacer(Modifier.height(8.dp))
+            Text("名称预览", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(4.dp))
+            val previewFileName = remember(config.imageNamingFormat, config.imageCustomNamingFormat) {
+                val now = java.time.LocalDateTime.now()
+                val ts = now.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
+                when (config.imageNamingFormat) {
+                    "original" -> "原始文件名.jpg"
+                    "timestamp_original" -> "${ts}_picture.jpg"
+                    "custom" -> {
+                        val customPtn = config.imageCustomNamingFormat.ifEmpty { "yyyyMMdd_HHmmssSSS_{filename}{ext}" }
+                        // Simple preview: don't use ImageUtil to avoid complexity,
+                        // just show the pattern with placeholders replaced
+                        customPtn
+                            .replace("yyyy", now.format(java.time.format.DateTimeFormatter.ofPattern("yyyy")))
+                            .replace("MM", now.format(java.time.format.DateTimeFormatter.ofPattern("MM")))
+                            .replace("dd", now.format(java.time.format.DateTimeFormatter.ofPattern("dd")))
+                            .replace("HH", now.format(java.time.format.DateTimeFormatter.ofPattern("HH")))
+                            .replace("mm", now.format(java.time.format.DateTimeFormatter.ofPattern("mm")))
+                            .replace("ss", now.format(java.time.format.DateTimeFormatter.ofPattern("ss")))
+                            .replace("SSS", now.format(java.time.format.DateTimeFormatter.ofPattern("SSS")))
+                            .replace("{filename}", "picture")
+                            .replace("{ext}", ".jpg")
+                    }
+                    else -> "${ts}_picture.jpg"
+                }
+            }
+            if (config.imageNamingFormat == "custom") {
+                Text(previewFileName, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary)
+            } else {
+                Text(previewFileName, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary)
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // Link format
+            Text("图片 Markdown 链接格式", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(4.dp))
+            var linkFormatExpanded by remember { mutableStateOf(false) }
+            val linkFormatLabels = mapOf(
+                "bare" to "![](/path/to/image.jpg)",
+                "described" to "![filename](/path/to/image.jpg)"
+            )
+            ExposedDropdownMenuBox(
+                expanded = linkFormatExpanded,
+                onExpandedChange = { linkFormatExpanded = !linkFormatExpanded }
+            ) {
+                OutlinedTextField(
+                    value = linkFormatLabels[config.imageLinkFormat] ?: "![filename](/path/to/image.jpg)",
+                    onValueChange = {},
+                    readOnly = true,
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = linkFormatExpanded) },
+                    modifier = Modifier.menuAnchor().fillMaxWidth(),
+                    singleLine = true
+                )
+                ExposedDropdownMenu(
+                    expanded = linkFormatExpanded,
+                    onDismissRequest = { linkFormatExpanded = false }
+                ) {
+                    linkFormatLabels.forEach { (value, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            onClick = {
+                                appState.saveConfig(config.copy(imageLinkFormat = value))
+                                linkFormatExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            // Link preview
+            Spacer(Modifier.height(8.dp))
+            val previewLink = remember(config.imageLinkFormat) {
+                when (config.imageLinkFormat) {
+                    "bare" -> "![](assets/20260708_143021_picture.jpg)"
+                    "described" -> "![20260708_143021_picture](assets/20260708_143021_picture.jpg)"
+                    else -> "![](assets/20260708_143021_picture.jpg)"
+                }
+            }
+            Text("链接预览", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(4.dp))
+            Text(previewLink, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary)
+
+            // ================================================
+            // 3. 小部件设置            // 分界线 + 3. 小部件设置
             // ══════════════════════════════════════
             HorizontalDivider(Modifier.padding(top = 20.dp, bottom = 12.dp))
 
@@ -790,6 +994,14 @@ fun SettingsScreen(
            Text("更新内容：", style = MaterialTheme.typography.labelSmall,
                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                modifier = Modifier.padding(top = 8.dp))
+            "1.4:\n" +
+                "\u2022 \u65b0\u589e Frontmatter \u8fc7\u6ee4\u663e\u793a\n" +
+                "\u2022 \u65b0\u589e WW \u5468\u6570\u65e5\u671f\u683c\u5f0f\u652f\u6301\n" +
+                "\u2022 \u65b0\u589e \u56fe\u7247\u5feb\u901f\u6dfb\u52a0\uff08\u60ac\u6d6e\u7a97\u9009\u56fe + \u5206\u4eab\u5230\u65e5\u8bb0\uff09\n" +
+                "\u2022 \u65b0\u589e \u56fe\u7247\u50a8\u5b58\u76ee\u5f55/\u547d\u540d\u89c4\u5219/\u94fe\u63a5\u683c\u5f0f\u8bbe\u7f6e\n" +
+                "\u2022 \u65b0\u589e \u8bfb\u53d6 Obsidian \u9644\u4ef6\u50a8\u5b58\u76ee\u5f55\u914d\u7f6e\n" +
+                "\u2022 \u6539\u8fdb Frontmatter \u8fc7\u6ee4\u9ed8\u8ba4\u5f00\u542f\n" +
+                "\u2022 \u4fee\u590d Frontmatter \u91cd\u590d\u590d\u5236\u95ee\u9898\n\n" +
             Text("1.3:\n" +
                 "• 新增 7种时间戳格式设置，可适配Thino/Knomo \n" +
                "• 新增 时间戳文本插入顺序\n" +
