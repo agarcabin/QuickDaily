@@ -23,6 +23,7 @@ import com.quickdaily.ui.EditorScreen
 import com.quickdaily.ui.SettingsScreen
 import com.quickdaily.ui.theme.QuickDailyTheme
 import com.quickdaily.util.ImageUtil
+import com.quickdaily.TaskWidget
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -226,6 +227,7 @@ class MainActivity : ComponentActivity() {
             }
             com.quickdaily.util.FileUtil.write(path, nc)
         com.quickdaily.QuickDailyWidget.updateAllWidgets(this)
+        com.quickdaily.TaskWidget.refreshAllWidgets(this)
 
         // 刷新编辑器内容，让用户立即看到新加入的分享内容
         if (::appState.isInitialized) {
@@ -298,6 +300,7 @@ class MainActivity : ComponentActivity() {
         }
         com.quickdaily.util.FileUtil.write(path, saveContent)
         com.quickdaily.QuickDailyWidget.updateAllWidgets(this)
+        com.quickdaily.TaskWidget.refreshAllWidgets(this)
 
         android.widget.Toast.makeText(this, "已保存 ${links.size} 张图片到日记", android.widget.Toast.LENGTH_SHORT).show()
     }

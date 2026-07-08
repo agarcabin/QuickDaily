@@ -30,6 +30,7 @@ import com.quickdaily.AppState
 import com.quickdaily.DiaryConfig
 import com.quickdaily.QuickDailyWidget
 import com.quickdaily.QuickNoteWidget
+import com.quickdaily.TaskWidget
 import com.quickdaily.util.DateUtil
 import com.quickdaily.util.ShortcutHelper
 import com.quickdaily.util.UriUtil
@@ -693,7 +694,7 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(12.dp))
 
-            // 快捷添加到桌面（三个按钮竖排）
+            // 快捷添加到桌面（四个按钮竖排）
             Text("快捷添加到桌面", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(4.dp))
 
@@ -777,6 +778,28 @@ fun SettingsScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("快速添加（桌面图标）")
+                }
+                // 4. 今日任务（小部件）
+                FilledTonalButton(
+                    onClick = {
+                        try {
+                            val appWidgetManager = android.appwidget.AppWidgetManager.getInstance(context)
+                            val component = android.content.ComponentName(context, TaskWidget::class.java)
+                            if (appWidgetManager.isRequestPinAppWidgetSupported) {
+                                val successCallback = android.app.PendingIntent.getBroadcast(
+                                    context, 3, Intent(), android.app.PendingIntent.FLAG_IMMUTABLE
+                                )
+                                appWidgetManager.requestPinAppWidget(component, null, successCallback)
+                            } else {
+                                context.startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME))
+                            }
+                        } catch (_: Exception) {
+                            context.startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME))
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("今日任务（小部件）")
                 }
             }
             Text(
@@ -994,14 +1017,15 @@ fun SettingsScreen(
            Text("更新内容：", style = MaterialTheme.typography.labelSmall,
                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                modifier = Modifier.padding(top = 8.dp))
-            "1.4:\n" +
-                "\u2022 \u65b0\u589e Frontmatter \u8fc7\u6ee4\u663e\u793a\n" +
-                "\u2022 \u65b0\u589e WW \u5468\u6570\u65e5\u671f\u683c\u5f0f\u652f\u6301\n" +
-                "\u2022 \u65b0\u589e \u56fe\u7247\u5feb\u901f\u6dfb\u52a0\uff08\u60ac\u6d6e\u7a97\u9009\u56fe + \u5206\u4eab\u5230\u65e5\u8bb0\uff09\n" +
-                "\u2022 \u65b0\u589e \u56fe\u7247\u50a8\u5b58\u76ee\u5f55/\u547d\u540d\u89c4\u5219/\u94fe\u63a5\u683c\u5f0f\u8bbe\u7f6e\n" +
-                "\u2022 \u65b0\u589e \u8bfb\u53d6 Obsidian \u9644\u4ef6\u50a8\u5b58\u76ee\u5f55\u914d\u7f6e\n" +
-                "\u2022 \u6539\u8fdb Frontmatter \u8fc7\u6ee4\u9ed8\u8ba4\u5f00\u542f\n" +
-                "\u2022 \u4fee\u590d Frontmatter \u91cd\u590d\u590d\u5236\u95ee\u9898\n\n" +
+            Text("1.4:\n" +
+                "• 新增 Frontmatter 过滤 \n" +
+                "• 新增 WW 等日期格式支持 \n" +
+                "• 新增 悬浮窗增加图片录入功能（可批量导入）\n" +
+                "• 新增 悬浮窗增加任务录入功能（双击切换任务状态） \n" +
+                "• 新增 《今日任务》桌面小部件 \n\n",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                modifier = Modifier.padding(top = 4.dp))
             Text("1.3:\n" +
                 "• 新增 7种时间戳格式设置，可适配Thino/Knomo \n" +
                "• 新增 时间戳文本插入顺序\n" +

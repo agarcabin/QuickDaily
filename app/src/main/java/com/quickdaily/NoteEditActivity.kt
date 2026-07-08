@@ -18,6 +18,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -56,6 +59,8 @@ class NoteEditActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val prefillTxt = intent.getStringExtra("prefill_text") ?: ""
+        if (prefillTxt.isNotBlank()) noteText = prefillTxt
         val prefs = getSharedPreferences("QuickDaily", 0)
         noteTimestampFormat = prefs.getString("timestamp_format", "list_time") ?: "list_time"
         noteAddAnchorIfMissing = prefs.getBoolean("add_anchor_if_missing", true)
@@ -107,7 +112,9 @@ class NoteEditActivity : ComponentActivity() {
 
     private fun appendToDiary(text: String) {
         lifecycleScope.launch(Dispatchers.IO) {
-            val prefs = getSharedPreferences("QuickDaily", 0)
+            val prefillTxt = intent.getStringExtra("prefill_text") ?: ""
+        if (prefillTxt.isNotBlank()) noteText = prefillTxt
+        val prefs = getSharedPreferences("QuickDaily", 0)
             val vaultPath = prefs.getString("vault_path", "") ?: ""
             if (vaultPath.isBlank()) { withContext(Dispatchers.Main) { finish() }; return@launch }
             val diaryFolder = prefs.getString("diary_folder", "Daily") ?: "Daily"
@@ -115,16 +122,31 @@ class NoteEditActivity : ComponentActivity() {
             val d = DateUtil.todayStr(dateFormat)
             val path = "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/$d.md"
             val anchor = (prefs.getString("anchor_text", "") ?: "").trim()
-            val line = when (noteTimestampFormat) {
-                "none" -> text
-                "time_only" -> "${DateUtil.nowTimeStr()} $text"
-                "time_only_seconds" -> "${DateUtil.nowTimeSecondsStr()} $text"
-                "list" -> "- $text"
-                "ordered" -> "1. $text"
-                "list_time" -> "- ${DateUtil.nowTimeStr()} $text"
-                "list_time_seconds" -> "- ${DateUtil.nowTimeSecondsStr()} $text"
-               else -> text
-           }
+            val isTask = text.startsWith("- [ ] ")
+            val line = if (isTask) {
+                val taskDesc = text.removePrefix("- [ ] ").trim()
+                when (noteTimestampFormat) {
+                    "none" -> "- [ ] $taskDesc"
+                    "time_only" -> "- [ ] ${DateUtil.nowTimeStr()} $taskDesc"
+                    "time_only_seconds" -> "- [ ] ${DateUtil.nowTimeSecondsStr()} $taskDesc"
+                    "list" -> "- [ ] $taskDesc"
+                    "ordered" -> "- [ ] $taskDesc"
+                    "list_time" -> "- [ ] ${DateUtil.nowTimeStr()} $taskDesc"
+                    "list_time_seconds" -> "- [ ] ${DateUtil.nowTimeSecondsStr()} $taskDesc"
+                    else -> "- [ ] $taskDesc"
+                }
+            } else {
+                when (noteTimestampFormat) {
+                    "none" -> text
+                    "time_only" -> "${DateUtil.nowTimeStr()} $text"
+                    "time_only_seconds" -> "${DateUtil.nowTimeSecondsStr()} $text"
+                    "list" -> "- $text"
+                    "ordered" -> "1. $text"
+                    "list_time" -> "- ${DateUtil.nowTimeStr()} $text"
+                    "list_time_seconds" -> "- ${DateUtil.nowTimeSecondsStr()} $text"
+                   else -> text
+               }
+            }
 
             var existing = FileUtil.read(path)
             val parsed = ContentUtil.parseFrontmatter(existing)
@@ -197,6 +219,7 @@ class NoteEditActivity : ComponentActivity() {
 
             FileUtil.write(path, finalNc)
             QuickDailyWidget.updateAllWidgets(this@NoteEditActivity)
+            TaskWidget.refreshAllWidgets(this@NoteEditActivity)
             withContext(Dispatchers.Main) {
                 Toast.makeText(this@NoteEditActivity, "已保存", Toast.LENGTH_SHORT).show()
                 finish()
@@ -217,6 +240,20 @@ class NoteEditActivity : ComponentActivity() {
     }
 }
 
+private fun taskToggleAtCursor(tfv: TextFieldValue): String {
+    val text = tfv.text
+    val pos = tfv.selection.start
+    val lineStart = text.lastIndexOf('\n', pos - 1) + 1
+    val lineEnd = text.indexOf('\n', pos).let { if (it < 0) text.length else it }
+    val line = text.substring(lineStart, lineEnd)
+    val newLine = when {
+        line.startsWith("- [x] ") -> line.removePrefix("- [x] ")
+        line.startsWith("- [ ] ") -> line.replaceFirst("- [ ] ", "- [x] ")
+        else -> "- [ ] $line"
+    }
+    return text.substring(0, lineStart) + newLine + text.substring(lineEnd)
+}
+
 @Composable
 private fun NoteEditDialog(
     text: String,
@@ -230,7 +267,9 @@ private fun NoteEditDialog(
 ) {
 
     val focusRequester = remember { FocusRequester() }
+    var tfv by remember { mutableStateOf(TextFieldValue(text, TextRange(text.length))) }
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    LaunchedEffect(text) { if (text != tfv.text) tfv = TextFieldValue(text, TextRange(text.length)) }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -247,11 +286,25 @@ private fun NoteEditDialog(
                 }) { Text("保存", color = Color(0xFF6EB8FF), fontSize = 13.sp) }
             }
 
-            // Image picker button
+            // Image + Task buttons
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onPickImages) {
-                    Text("+ [图片]", color = Color(0xFF6EB8FF), fontSize = 13.sp)
-                }
+                Text("+ [图片]",
+                    color = Color(0xFF6EB8FF),
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .clickable(onClick = onPickImages)
+                        .padding(horizontal = 12.dp, vertical = 8.dp))
+                Spacer(Modifier.width(16.dp))
+                Text("+ [任务]",
+                    color = Color(0xFF6EB8FF),
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .clickable {
+                            val newText = taskToggleAtCursor(tfv)
+                            tfv = TextFieldValue(newText, TextRange(newText.length))
+                            onTextChange(newText)
+                        }
+                        .padding(horizontal = 12.dp, vertical = 8.dp))
             }
 
             // Thumbnail preview
@@ -290,13 +343,15 @@ private fun NoteEditDialog(
                 }
             }
 
-            BasicTextField(value = text, onValueChange = { newText ->
-                if (enterToSave) {
-                    // 单行模式：过滤掉换行符
-                    onTextChange(newText.replace("\n", ""))
-                } else {
-                    onTextChange(newText)
-                }
+            BasicTextField(value = tfv, onValueChange = { newTfv ->
+                    if (enterToSave) {
+                        tfv = TextFieldValue(newTfv.text.replace("\n", ""), TextRange(newTfv.text.replace("\n", "").length))
+                        onTextChange(newTfv.text.replace("\n", ""))
+                    } else {
+                        tfv = newTfv
+                        onTextChange(newTfv.text)
+                    }
+                    
             },
                 textStyle = TextStyle(fontSize = 15.sp, lineHeight = 22.sp, color = Color(0xFFEEEEEE)),
                 modifier = Modifier.fillMaxWidth().weight(1f).focusRequester(focusRequester),
