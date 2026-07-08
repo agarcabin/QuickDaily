@@ -317,6 +317,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
             appScope.launch(Dispatchers.IO) {
                 FileUtil.write(path, saveContent)
                 QuickDailyWidget.updateAllWidgets(app)
+                TaskWidget.refreshAllWidgets(app)
             }
         }
     }
