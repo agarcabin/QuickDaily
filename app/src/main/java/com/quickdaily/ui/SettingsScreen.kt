@@ -1036,14 +1036,13 @@ fun SettingsScreen(
            Text("更新内容：", style = MaterialTheme.typography.labelSmall,
                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                modifier = Modifier.padding(top = 8.dp))
-            Text("1.4.1:\n" +
-                "• 新增 Templater 日期格式支持 \n" +
-                "• 新增 阅读视图图片显示 \n" +
-                "• 新增 编辑器底部快捷工具栏 \n" +
-                "• 新增 赞赏码 \n" +
-                "• 修复 小部件空任务输入 \n" +
-                "• 修复 浮窗任务切换格式 \n" +
-                "• 改进 小部件兼容性 \n\n",
+            Text("1.5:\n" +
+                "• 新增 Templater 插件日期格式支持 \n" +
+                "• 新增 首页 阅读视图图片显示 \n" +
+                "• 新增 首页/悬浮窗 底部工具栏 \n" +
+                "• 修复 悬浮窗 任务切换格式错误 \n" +
+                "• 修复 悬浮窗 空任务异常触发保存 \n" +
+                "• 修复 小部件 今日任务刷新异常 \n\n",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                 modifier = Modifier.padding(top = 4.dp))
