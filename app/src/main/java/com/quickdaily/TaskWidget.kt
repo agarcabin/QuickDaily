@@ -27,7 +27,11 @@ class TaskWidget : AppWidgetProvider() {
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
         if (ACTION_REFRESH == intent.action) {
-            flashRefreshFeedback(context)
+            android.util.Log.d("QuickDaily", "Refresh pressed")
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                android.widget.Toast.makeText(context, "今日任务已刷新", android.widget.Toast.LENGTH_LONG).show()
+            }
+            refreshAllWidgets(context)
         } else if (ACTION_ADD_TASK == intent.action) {
             val intent2 = Intent(context, NoteEditActivity::class.java).apply {
                 putExtra("prefill_text", "- [ ] ")
@@ -145,30 +149,6 @@ class TaskWidget : AppWidgetProvider() {
 
             // Refresh widget
             refreshAllWidgets(context)
-        }
-        /**
-         * 刷新时在 widget 标题上显示 "✓ 已刷新" 反馈（比 Toast 可靠，兼容国产 ROM）。
-         * 1 秒后自动恢复并刷新列表。
-         */
-        private fun flashRefreshFeedback(context: Context) {
-            android.util.Log.d("QuickDaily", "flashRefreshFeedback")
-            val manager = AppWidgetManager.getInstance(context)
-            val component = ComponentName(context, TaskWidget::class.java)
-            val ids = manager.getAppWidgetIds(component)
-            for (id in ids) {
-                updateWidget(context, manager, id)
-                val views = RemoteViews(context.packageName, R.layout.widget_tasks)
-                views.setTextViewText(R.id.widget_title, "✓ 已刷新")
-                manager.updateAppWidget(id, views)
-            }
-            // 延迟刷新任务列表
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                val mgr = AppWidgetManager.getInstance(context)
-                val comp = ComponentName(context, TaskWidget::class.java)
-                for (id in mgr.getAppWidgetIds(comp)) {
-                    updateWidget(context, mgr, id)
-                }
-            }, 800L)
         }
     }
 }
