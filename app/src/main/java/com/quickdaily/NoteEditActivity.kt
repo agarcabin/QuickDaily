@@ -97,7 +97,7 @@ class NoteEditActivity : ComponentActivity() {
                         onTextChange = { noteText = it },
                         enterToSave = noteEnterToSave,
                         onSave = {
-                    if (noteText.isNotBlank()) appendToDiary(noteText.trim())
+                    if (hasRealContent(noteText)) appendToDiary(noteText.trim())
                     else finish()
                         },
                         onClose = { finish() },
@@ -111,10 +111,13 @@ class NoteEditActivity : ComponentActivity() {
     }
 
     private fun appendToDiary(text: String) {
+        // 空内容检查：只有任务标记没有实质内容时直接返回
+        if (!hasRealContent(text)) {
+            finish()
+            return
+        }
         lifecycleScope.launch(Dispatchers.IO) {
-            val prefillTxt = intent.getStringExtra("prefill_text") ?: ""
-        if (prefillTxt.isNotBlank()) noteText = prefillTxt
-        val prefs = getSharedPreferences("QuickDaily", 0)
+            val prefs = getSharedPreferences("QuickDaily", 0)
             val vaultPath = prefs.getString("vault_path", "") ?: ""
             if (vaultPath.isBlank()) { withContext(Dispatchers.Main) { finish() }; return@launch }
             val diaryFolder = prefs.getString("diary_folder", "Daily") ?: "Daily"
@@ -122,18 +125,28 @@ class NoteEditActivity : ComponentActivity() {
             val d = DateUtil.todayStr(dateFormat)
             val path = "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/$d.md"
             val anchor = (prefs.getString("anchor_text", "") ?: "").trim()
-            val isTask = text.startsWith("- [ ] ")
+            // 同时识别 - [ ] 和 - [x] 前缀
+            val isTask = text.startsWith("- [ ] ") || text.startsWith("- [x] ") || text.startsWith("- [X] ")
             val line = if (isTask) {
-                val taskDesc = text.removePrefix("- [ ] ").trim()
+                val wasChecked = text.startsWith("- [x] ") || text.startsWith("- [X] ")
+                val taskDesc = text.trim().let { t ->
+                    when {
+                        t.startsWith("- [ ] ") -> t.removePrefix("- [ ] ").trim()
+                        t.startsWith("- [x] ") -> t.removePrefix("- [x] ").trim()
+                        t.startsWith("- [X] ") -> t.removePrefix("- [X] ").trim()
+                        else -> t
+                    }
+                }
+                val marker = if (wasChecked) "- [x]" else "- [ ]"
                 when (noteTimestampFormat) {
-                    "none" -> "- [ ] $taskDesc"
-                    "time_only" -> "- [ ] ${DateUtil.nowTimeStr()} $taskDesc"
-                    "time_only_seconds" -> "- [ ] ${DateUtil.nowTimeSecondsStr()} $taskDesc"
-                    "list" -> "- [ ] $taskDesc"
-                    "ordered" -> "- [ ] $taskDesc"
-                    "list_time" -> "- [ ] ${DateUtil.nowTimeStr()} $taskDesc"
-                    "list_time_seconds" -> "- [ ] ${DateUtil.nowTimeSecondsStr()} $taskDesc"
-                    else -> "- [ ] $taskDesc"
+                    "none" -> "$marker $taskDesc"
+                    "time_only" -> "$marker ${DateUtil.nowTimeStr()} $taskDesc"
+                    "time_only_seconds" -> "$marker ${DateUtil.nowTimeSecondsStr()} $taskDesc"
+                    "list" -> "$marker $taskDesc"
+                    "ordered" -> "$marker $taskDesc"
+                    "list_time" -> "$marker ${DateUtil.nowTimeStr()} $taskDesc"
+                    "list_time_seconds" -> "$marker ${DateUtil.nowTimeSecondsStr()} $taskDesc"
+                    else -> "$marker $taskDesc"
                 }
             } else {
                 when (noteTimestampFormat) {
@@ -229,8 +242,8 @@ class NoteEditActivity : ComponentActivity() {
 
     override fun onTouchEvent(event: MotionEvent?): Boolean {
         if (event?.action == MotionEvent.ACTION_OUTSIDE) {
-            if (noteText.isNotBlank()) {
-                    if (noteText.isNotBlank()) appendToDiary(noteText.trim())
+            if (hasRealContent(noteText)) {
+                    appendToDiary(noteText.trim())
             } else {
                 finish()
             }
@@ -240,16 +253,42 @@ class NoteEditActivity : ComponentActivity() {
     }
 }
 
+/**
+ * 判断文本是否有实质内容（去除任务标记后仍有内容）。
+ * 用于防止仅含 "- [ ] " 前缀的空任务被保存。
+ */
+private fun hasRealContent(text: String): Boolean {
+    val trimmed = text.trim()
+    if (trimmed.isBlank()) return false
+    // 任务标记前缀
+    val taskPrefixes = listOf("- [ ] ", "- [x] ", "- [X] ")
+    for (prefix in taskPrefixes) {
+        if (trimmed.startsWith(prefix)) {
+            val rest = trimmed.removePrefix(prefix).trim()
+            return rest.isNotBlank()
+        }
+    }
+    return true
+}
+
+/** 在光标所在行切换任务状态（- [ ] ↔ - [x]） */
 private fun taskToggleAtCursor(tfv: TextFieldValue): String {
     val text = tfv.text
     val pos = tfv.selection.start
     val lineStart = text.lastIndexOf('\n', pos - 1) + 1
     val lineEnd = text.indexOf('\n', pos).let { if (it < 0) text.length else it }
     val line = text.substring(lineStart, lineEnd)
-    val newLine = when {
-        line.startsWith("- [x] ") -> line.removePrefix("- [x] ")
-        line.startsWith("- [ ] ") -> line.replaceFirst("- [ ] ", "- [x] ")
-        else -> "- [ ] $line"
+    // 使用更精确的匹配 — 支持 - [ ]、- [x]、- [X] 以及前后可能有空格的情况
+    val taskRegex = Regex("""^\s*(-\s*\[\s*([ xX])\s*\])\s*""")
+    val match = taskRegex.find(line)
+    val newLine = if (match != null) {
+        val marker = match.groupValues[1]  // 例如 "- [ ]" 或 "- [x]"
+        val checked = match.groupValues[2] // " " / "x" / "X"
+        val rest = line.substring(match.value.length)
+        val newMarker = if (checked.trim().isEmpty()) "- [x]" else "- [ ]"
+        "$newMarker $rest".trimStart()
+    } else {
+        "- [ ] $line"
     }
     return text.substring(0, lineStart) + newLine + text.substring(lineEnd)
 }
@@ -366,8 +405,7 @@ private fun NoteEditDialog(
                 ),
                 decorationBox = { inner ->
                     if (text.isEmpty()) Text("写点什么...", color = Color(0x66FFFFFF), fontSize = 14.sp)
-                    inner()
-                })
+                    inner() })
         }
     }
 }

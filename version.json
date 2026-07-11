@@ -1,5 +1,5 @@
-{
-  "version": "1.4",
+﻿{
+  "version": "1.4.1",
   "url": "https://github.com/agarcabin/QuickDaily/releases/latest",
-  "body": "QuickDaily 1.4\\n- Frontmatter 过滤显示\\n- WW 周数日期格式支持\\n- 图片快速添加\\n- 图片储存目录/命名规则设置\\n- Obsidian 附件目录自动读取\\n- 改进: Frontmatter 过滤默认开启\\n- 修复: Frontmatter 重复复制问题"
+  "body": "QuickDaily 1.4.1\n- Templater 日期格式支持\n- 阅读视图图片显示\n- 编辑器底部快捷工具栏\n- 赞赏码\n- 修复: 小部件空任务输入\n- 修复: 浮窗任务切换格式\n- 改进: 小部件兼容性"
 }

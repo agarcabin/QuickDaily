@@ -58,6 +58,8 @@ class TaskWidget : AppWidgetProvider() {
             // Use RemoteViewsService for the list
             val serviceIntent = Intent(context, TaskWidgetService::class.java)
             views.setRemoteAdapter(R.id.task_list, serviceIntent)
+            // 设置 emptyView，在某些国产 ROM 上不自动关联
+            views.setEmptyView(R.id.task_list, R.id.empty_view)
 
             // Template for click intents on items
             val clickIntent = Intent(context, TaskWidget::class.java)
@@ -100,6 +102,7 @@ class TaskWidget : AppWidgetProvider() {
         }
 
         fun refreshAllWidgets(context: Context) {
+            android.util.Log.d("QuickDaily", "TaskWidget.refreshAllWidgets")
             val manager = AppWidgetManager.getInstance(context)
             val component = ComponentName(context, TaskWidget::class.java)
             manager.notifyAppWidgetViewDataChanged(manager.getAppWidgetIds(component), R.id.task_list)

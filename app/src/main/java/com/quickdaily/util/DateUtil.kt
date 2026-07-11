@@ -1,10 +1,74 @@
 ﻿package com.quickdaily.util
 
+import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import java.time.temporal.TemporalAdjusters
 
 object DateUtil {
+
+    /**
+     * Templater 格式解析结果。
+     */
+    data class TemplaterResult(
+        val format: String,
+        val dayOffset: Long = 0
+    )
+
+    /**
+     * 解析 Templater 日期格式字符串，提取格式和日期偏移。
+     *
+     * 支持格式：
+     * - 普通格式: "YYYY-MM-DD"
+     * - tp.date.now: "<% tp.date.now("格式") %>" 或 tp.date.now("格式")
+     * - tp.date.tomorrow: "<% tp.date.tomorrow("格式") %>"
+     * - tp.date.yesterday: "<% tp.date.yesterday("格式") %>"
+     * - tp.date.weekday: "<% tp.date.weekday("格式", 1) %>"
+     * - 可选带 [[...]] 包裹
+     */
+    fun parseTemplaterFormat(raw: String): TemplaterResult {
+        var s = raw.trim()
+
+        // 剥离 [[...]] 包裹
+        if (s.startsWith("[[") && s.endsWith("]]")) {
+            s = s.substring(2, s.length - 2).trim()
+        }
+
+        // 剥离 <% ... %> 包裹
+        if (s.startsWith("<%") && s.endsWith("%>")) {
+            s = s.substring(2, s.length - 2).trim()
+        }
+
+        // 尝试匹配 tp.date.xxx("format", ...)
+        val dateFuncRegex = Regex("""tp\.date\.(\w+)\s*\(\s*"([^"]*)"\s*(?:,\s*(\d+))?\s*\)""")
+        val match = dateFuncRegex.find(s)
+        if (match != null) {
+            val funcName = match.groupValues[1]
+            val formatStr = match.groupValues[2]
+            val extraArg = match.groupValues[3]
+
+            val offset = when (funcName) {
+                "now" -> 0L
+                "tomorrow" -> 1L
+                "yesterday" -> -1L
+                "weekday" -> {
+                    val targetDay = extraArg.toIntOrNull()?.let {
+                        DayOfWeek.of(((it - 1) % 7) + 1)
+                    } ?: DayOfWeek.MONDAY
+                    val today = LocalDate.now()
+                    val next = today.with(TemporalAdjusters.next(targetDay))
+                    java.time.temporal.ChronoUnit.DAYS.between(today, next)
+                }
+                else -> 0L
+            }
+            return TemplaterResult(formatStr, offset)
+        }
+
+        // 非 Templater 格式，直接返回原字符串
+        return TemplaterResult(raw)
+    }
+
     /**
      * 将 Obsidian (Moment.js) 日期格式转为 Java DateTimeFormatter 格式。
      *
@@ -23,14 +87,20 @@ object DateUtil {
             .replace("YY", "yy")
     }
 
-    /** 用给定格式获取今天日期字符串 */
+    /** 用给定格式获取日期字符串（支持 Templater 格式） */
     fun todayStr(format: String): String {
-        val javaFormat = convertObsidianFormat(format)
+        val parsed = parseTemplaterFormat(format)
+        val javaFormat = convertObsidianFormat(parsed.format)
+        val baseDate = if (parsed.dayOffset == 0L) {
+            LocalDate.now()
+        } else {
+            LocalDate.now().plusDays(parsed.dayOffset)
+        }
         return try {
-            LocalDate.now().format(DateTimeFormatter.ofPattern(javaFormat))
+            baseDate.format(DateTimeFormatter.ofPattern(javaFormat))
         } catch (_: IllegalArgumentException) {
             // 格式非法时回退到 ISO 标准格式
-            LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+            baseDate.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
         }
     }
 

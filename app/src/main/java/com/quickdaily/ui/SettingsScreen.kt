@@ -3,6 +3,7 @@
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import androidx.compose.foundation.Image
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -16,10 +17,13 @@ import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material3.*
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import com.quickdaily.R
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
@@ -1018,6 +1022,17 @@ fun SettingsScreen(
            Text("更新内容：", style = MaterialTheme.typography.labelSmall,
                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                modifier = Modifier.padding(top = 8.dp))
+            Text("1.4.1:\n" +
+                "• 新增 Templater 日期格式支持 \n" +
+                "• 新增 阅读视图图片显示 \n" +
+                "• 新增 编辑器底部快捷工具栏 \n" +
+                "• 新增 赞赏码 \n" +
+                "• 修复 小部件空任务输入 \n" +
+                "• 修复 浮窗任务切换格式 \n" +
+                "• 改进 小部件兼容性 \n\n",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                modifier = Modifier.padding(top = 4.dp))
             Text("1.4:\n" +
                 "• 新增 Frontmatter 过滤 \n" +
                 "• 新增 WW 等日期格式支持 \n" +
@@ -1043,11 +1058,25 @@ fun SettingsScreen(
                 "• 新增 文本分享至本应用\n" +
                 "• 新增 检测更新\n\n" +
                 "1.0:\n" +
-                "• 正式发布！APP 更名为 QuickDaily\n" +
-                "• 开源发布到 GitHub",
+               "• 正式发布！APP 更名为 QuickDaily\n" +
+               "• 开源发布到 GitHub",
+               style = MaterialTheme.typography.bodySmall,
+               color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+               modifier = Modifier.padding(top = 4.dp))
+
+            Spacer(Modifier.height(20.dp))
+            Text("如果您喜欢 QuickDaily，可以扫码支持：",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                 modifier = Modifier.padding(top = 4.dp))
+            Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) {
+                Image(
+                    painter = painterResource(id = R.drawable.qr_donate),
+                    contentDescription = "赞赏码",
+                    modifier = Modifier.width(200.dp).height(200.dp),
+                    contentScale = ContentScale.Fit
+                )
+            }
         }
     }
 }

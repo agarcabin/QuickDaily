@@ -1,6 +1,8 @@
 ﻿package com.quickdaily.markdown
 
+import android.graphics.BitmapFactory
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.material.icons.Icons
@@ -12,6 +14,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.*
@@ -25,6 +29,7 @@ import androidx.compose.ui.unit.sp
 @Composable
 fun MdRenderer(
     text: String,
+    vaultBasePath: String? = null,
     onToggleCheckbox: ((Int) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -88,6 +93,30 @@ fun MdRenderer(
                         BasicText(
                             text = buildAnnotated(line.text),
                             style = LocalTextStyle.current
+                        )
+                    }
+                }
+                is MdLine.Image -> {
+                    val fullPath = remember(line.path, vaultBasePath) {
+                        resolveImagePath(line.path, vaultBasePath)
+                    }
+                    val bitmap = remember(fullPath) {
+                        try {
+                            BitmapFactory.decodeFile(fullPath)
+                        } catch (_: Exception) { null }
+                    }
+                    if (bitmap != null) {
+                        Image(
+                            bitmap = bitmap.asImageBitmap(),
+                            contentDescription = line.alt,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            contentScale = ContentScale.Fit
+                        )
+                    } else {
+                        BasicText(
+                            text = AnnotatedString(line.alt.ifEmpty { "[图片: ${line.path}]" }),
+                            style = LocalTextStyle.current.copy(color = Color.Gray),
+                            modifier = Modifier.padding(vertical = 2.dp)
                         )
                     }
                 }
@@ -177,6 +206,7 @@ private fun buildAnnotated(raw: String): AnnotatedString {
 sealed class MdLine {
     data object Blank : MdLine()
     data class Heading(val level: Int, val text: String) : MdLine()
+    data class Image(val path: String, val alt: String) : MdLine()
     data class Task(val index: Int, val checked: Boolean, val text: String) : MdLine()
     data class Bullet(val text: String) : MdLine()
     data class Plain(val text: String) : MdLine()
@@ -185,6 +215,7 @@ sealed class MdLine {
 // ── Parser ───────────────────────────────────────────────
 
 private val ORDERED_LIST_RE = Regex("^\\d+\\.\\s.*")
+private val IMAGE_INLINE_RE = Regex("""^!\[([^\]]*)\]\(([^)]+)\)\s*$""")
 private val TOGGLE_CHECK_RE = Regex("- \\[x\\]", RegexOption.IGNORE_CASE)
 
 fun parseLines(markdown: String): List<MdLine> {
@@ -196,6 +227,11 @@ fun parseLines(markdown: String): List<MdLine> {
         val trimmed = line.trim()
         when {
             trimmed.isEmpty() -> result.add(MdLine.Blank)
+            // 图片行 ![](path) 或 ![alt](path)
+            trimmed.matches(IMAGE_INLINE_RE) -> {
+                val match = IMAGE_INLINE_RE.find(trimmed)!!
+                result.add(MdLine.Image(match.groupValues[2], match.groupValues[1]))
+            }
             // 标题
             trimmed.startsWith("#") -> {
                 val level = trimmed.takeWhile { it == '#' }.length
@@ -225,6 +261,17 @@ fun parseLines(markdown: String): List<MdLine> {
 }
 
 // ── 编辑器中切换勾选 ────────────────────────────────────
+
+/** 解析 Markdown 图片路径为本地文件系统绝对路径 */
+private fun resolveImagePath(path: String, vaultBasePath: String?): String {
+    if (vaultBasePath == null) return path
+    // 已经是绝对路径或 URI
+    if (path.startsWith("/") || path.startsWith("file:") || Regex("^[A-Za-z]:").containsMatchIn(path)) {
+        return path
+    }
+    // 相对路径，拼接 vault 根路径
+    return "${vaultBasePath.trimEnd('/')}/${path.trimStart('/')}"
+}
 
 /** 在原始文本中切换指定位置的任务勾选状态，返回新文本 */
 fun toggleTaskCheck(text: String, taskIndex: Int): String {
