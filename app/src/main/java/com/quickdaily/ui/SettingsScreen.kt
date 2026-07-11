@@ -63,7 +63,14 @@ fun SettingsScreen(
     val context = LocalContext.current
     val navBarColorS = MaterialTheme.colorScheme.surface.toArgb()
     SideEffect {
-        (context as? Activity)?.window?.navigationBarColor = navBarColorS
+        try {
+            val window = (context as? Activity)?.window ?: return@SideEffect
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                window.isNavigationBarContrastEnforced = false
+            }
+            window.navigationBarColor = navBarColorS
+            android.util.Log.d("QuickDaily", "Settings nav bar color set")
+        } catch (_: Exception) { }
     }
     val config by appState.config.collectAsState()
     val todayPath by appState.todayPath.collectAsState()

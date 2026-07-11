@@ -1,6 +1,7 @@
 ﻿package com.quickdaily.ui
 
 import android.app.Activity
+import android.os.Build
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -57,7 +58,14 @@ fun EditorScreen(
     val config by appState.config.collectAsState()
     val title = todayPath.substringAfterLast("/").removeSuffix(".md")
     SideEffect {
-        (context as? Activity)?.window?.navigationBarColor = navBarColor
+        try {
+            val window = (context as? Activity)?.window ?: return@SideEffect
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                window.isNavigationBarContrastEnforced = false
+            }
+            window.navigationBarColor = navBarColor
+            android.util.Log.d("QuickDaily", "Editor nav bar color set")
+        } catch (_: Exception) { }
     }
 
     var showPreview by remember { mutableStateOf(false) }
