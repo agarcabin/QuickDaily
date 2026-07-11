@@ -6,6 +6,7 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.media.MediaActionSound
 import android.os.Build
 import android.widget.RemoteViews
 import com.quickdaily.util.DateUtil
@@ -108,6 +109,10 @@ class TaskWidget : AppWidgetProvider() {
         }
 
         private fun toggleTask(context: Context, taskIndex: Int) {
+            // 完成任务播放 ding 声
+            try {
+                MediaActionSound().play(MediaActionSound.FOCUS_COMPLETE)
+            } catch (_: Exception) {}
             val prefs = context.getSharedPreferences("QuickDaily", 0)
             val vaultPath = prefs.getString("vault_path", "") ?: ""
             if (vaultPath.isBlank()) return

@@ -1,10 +1,19 @@
 ﻿package com.quickdaily.ui
 
 import android.content.Intent
+import android.content.ContentValues
+import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
 import android.provider.Settings
+import android.provider.MediaStore
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import android.graphics.Bitmap
+import androidx.compose.foundation.ExperimentalFoundationApi
+import java.io.File
+import java.io.FileOutputStream
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -42,10 +51,7 @@ import com.quickdaily.util.DateUtil
 import com.quickdaily.util.ShortcutHelper
 import com.quickdaily.util.UriUtil
 import kotlinx.coroutines.launch
-import java.io.File
-import java.io.FileOutputStream
-
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun SettingsScreen(
     appState: AppState = viewModel(),
@@ -53,6 +59,7 @@ fun SettingsScreen(
     onExternalLaunch: () -> Unit = {}
 ) {
     var showQRFull by remember { mutableStateOf(false) }
+    val qrScope = rememberCoroutineScope()
 
     val context = LocalContext.current
     val config by appState.config.collectAsState()
@@ -1074,9 +1081,46 @@ fun SettingsScreen(
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                 modifier = Modifier.padding(top = 4.dp))
             Box(
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).clickable { showQRFull = true },
-                contentAlignment = Alignment.Center
-            ) {
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).combinedClickable(
+                    onClick = { showQRFull = true },
+                    onLongClick = {
+                        try {
+                            val bitmap = BitmapFactory.decodeResource(context.resources, R.drawable.qr_donate)
+                            val filename = "QuickDaily_donate_${System.currentTimeMillis()}.jpg"
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                val values = ContentValues().apply {
+                                    put(MediaStore.Images.Media.DISPLAY_NAME, filename)
+                                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES)
+                                    put(MediaStore.Images.Media.IS_PENDING, 1)
+                                }
+                                val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                                uri?.let {
+                                    context.contentResolver.openOutputStream(it)?.use { out ->
+                                        bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                                    }
+                                    values.clear()
+                                    values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                                    context.contentResolver.update(it, values, null, null)
+                                }
+                            } else {
+                                @Suppress("DEPRECATION")
+                                val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+                                dir.mkdirs()
+                                val file = java.io.File(dir, filename)
+                                java.io.FileOutputStream(file).use { out ->
+                                    bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                                }
+                                val scanIntent = Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(file))
+                                context.sendBroadcast(scanIntent)
+                            }
+                            android.widget.Toast.makeText(context, "已保存至相册，谢谢！", android.widget.Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {
+                            android.widget.Toast.makeText(context, "保存失败: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                ),
+                contentAlignment = Alignment.Center) {
                 Image(
                     painter = painterResource(id = R.drawable.qr_donate),
                     contentDescription = "赞赏码",
@@ -1105,7 +1149,7 @@ fun SettingsScreen(
                             )
                             Spacer(Modifier.height(8.dp))
                             Text(
-                                "长按或截图保存到相册后扫码",
+                                "点击关闭 · 长按保存到相册",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                             )

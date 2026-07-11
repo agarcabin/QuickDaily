@@ -11,7 +11,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FormatBold
+import androidx.compose.material.icons.filled.FormatListBulleted
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
@@ -21,6 +25,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -97,7 +102,7 @@ class NoteEditActivity : ComponentActivity() {
                         onTextChange = { noteText = it },
                         enterToSave = noteEnterToSave,
                         onSave = {
-                    if (hasRealContent(noteText)) appendToDiary(noteText.trim())
+                    if (hasRealContent(noteText) || selectedImages.isNotEmpty()) appendToDiary(noteText.trim())
                     else finish()
                         },
                         onClose = { finish() },
@@ -112,7 +117,7 @@ class NoteEditActivity : ComponentActivity() {
 
     private fun appendToDiary(text: String) {
         // 空内容检查：只有任务标记没有实质内容时直接返回
-        if (!hasRealContent(text)) {
+        if (!hasRealContent(text) && selectedImages.isEmpty()) {
             finish()
             return
         }
@@ -192,33 +197,7 @@ class NoteEditActivity : ComponentActivity() {
                 }
             }
             val workingContent = body
-            val nc = if (anchor.isNotEmpty() && workingContent.contains(anchor) && noteTimestampOrder == "above") {
-                val idx = workingContent.indexOf(anchor) + anchor.length
-                val newBody = workingContent.substring(0, idx) + "\n" + line + workingContent.substring(idx)
-                if (parsed.hasFrontmatter) {
-                    ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, newBody)
-                } else {
-                    newBody
-                }
-            } else if (workingContent.isEmpty()) {
-                if (parsed.hasFrontmatter) {
-                    ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, "$line\n")
-                } else {
-                    "$line\n"
-                }
-            } else if (workingContent.endsWith("\n")) {
-                if (parsed.hasFrontmatter) {
-                    ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, workingContent + "$line\n")
-                } else {
-                    workingContent + "$line\n"
-                }
-            } else {
-                if (parsed.hasFrontmatter) {
-                    ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, workingContent + "\n$line\n")
-                } else {
-                    workingContent + "\n$line\n"
-                }
-            }
+            // 处理图片（移到 nc 之前，以便图片与文本行一起插入）
             val imageLinks = if (selectedImages.isNotEmpty()) {
                 val imgStoragePath = prefs.getString("image_storage_path", "") ?: ""
                 val imgNamingFormat = prefs.getString("image_naming_format", "timestamp_ext") ?: "timestamp_ext"
@@ -227,16 +206,45 @@ class NoteEditActivity : ComponentActivity() {
                 ImageUtil.processImages(this@NoteEditActivity, selectedImages.toList(), vaultPath, imgStoragePath, imgNamingFormat, imgLinkFormat, imgCustomNaming)
             } else emptyList()
 
-            val finalNc = if (imageLinks.isNotEmpty()) {
-                val imagesText = imageLinks.joinToString("\n")
-                if (nc.endsWith("\n")) "${nc}${imagesText}\n" else "${nc}\n${imagesText}\n"
-            } else nc
+            // 如果有图片链接，追加到文本行后面（Bug1: 图片与文本在同一位置插入，而非末尾）
+            val effectiveLine = if (imageLinks.isNotEmpty()) {
+                line + "\n" + imageLinks.joinToString("\n")
+            } else line
+
+            val nc = if (anchor.isNotEmpty() && workingContent.contains(anchor) && noteTimestampOrder == "above") {
+                val idx = workingContent.indexOf(anchor) + anchor.length
+                val newBody = workingContent.substring(0, idx) + "\n" + effectiveLine + workingContent.substring(idx)
+                if (parsed.hasFrontmatter) {
+                    ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, newBody)
+                } else {
+                    newBody
+                }
+            } else if (workingContent.isEmpty()) {
+                if (parsed.hasFrontmatter) {
+                    ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, "$effectiveLine\n")
+                } else {
+                    "$effectiveLine\n"
+                }
+            } else if (workingContent.endsWith("\n")) {
+                if (parsed.hasFrontmatter) {
+                    ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, workingContent + "$effectiveLine\n")
+                } else {
+                    workingContent + "$effectiveLine\n"
+                }
+            } else {
+                if (parsed.hasFrontmatter) {
+                    ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, workingContent + "\n$effectiveLine\n")
+                } else {
+                    workingContent + "\n$effectiveLine\n"
+                }
+            }
+            // 图片已合并到 effectiveLine 中，不再需要 finalNc
 
             if (selectedImages.isNotEmpty()) {
                 withContext(Dispatchers.Main) { selectedImages.clear() }
             }
 
-            FileUtil.write(path, finalNc)
+            FileUtil.write(path, nc)
             QuickDailyWidget.updateAllWidgets(this@NoteEditActivity)
             TaskWidget.refreshAllWidgets(this@NoteEditActivity)
             withContext(Dispatchers.Main) {
@@ -248,7 +256,7 @@ class NoteEditActivity : ComponentActivity() {
 
     override fun onTouchEvent(event: MotionEvent?): Boolean {
         if (event?.action == MotionEvent.ACTION_OUTSIDE) {
-            if (hasRealContent(noteText)) {
+            if (hasRealContent(noteText) || selectedImages.isNotEmpty()) {
                     appendToDiary(noteText.trim())
             } else {
                 finish()
@@ -336,27 +344,53 @@ private fun NoteEditDialog(
                 }) { Text("保存", color = Color(0xFF6EB8FF), fontSize = 13.sp) }
             }
 
-            // Image + Task buttons
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("+ [图片]",
-                    color = Color(0xFF6EB8FF),
-                    fontSize = 13.sp,
-                    modifier = Modifier
-                        .clickable(onClick = onPickImages)
-                        .padding(horizontal = 12.dp, vertical = 8.dp))
-                Spacer(Modifier.width(16.dp))
-                Text("+ [任务]",
-                    color = Color(0xFF6EB8FF),
-                    fontSize = 13.sp,
-                    modifier = Modifier
-                        .clickable {
-                            val newText = taskToggleAtCursor(tfv)
-                            tfv = TextFieldValue(newText, TextRange(newText.length))
-                            onTextChange(newText)
-                        }
-                        .padding(horizontal = 12.dp, vertical = 8.dp))
+            // ── 底部工具栏（5个按钮，平替之前的 +[图片] 和 +[任务]）──
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onPickImages, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.Image, "图片", tint = Color(0xFF6EB8FF), modifier = Modifier.size(20.dp))
+                }
+                IconButton(onClick = {
+                    val newText = taskToggleAtCursor(tfv)
+                    tfv = TextFieldValue(newText, TextRange(newText.length))
+                    onTextChange(newText)
+                }, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.CheckBoxOutlineBlank, "任务", tint = Color(0xFF6EB8FF), modifier = Modifier.size(20.dp))
+                }
+                IconButton(onClick = {
+                    val t = tfv.text; val c = tfv.selection.start
+                    val nt = t.substring(0, c) + "#" + t.substring(c)
+                    tfv = TextFieldValue(nt, TextRange(c + 1))
+                    onTextChange(nt)
+                }, modifier = Modifier.size(36.dp)) {
+                    Text("#", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color(0xFF6EB8FF))
+                }
+                IconButton(onClick = {
+                    val t = tfv.text; val c = tfv.selection.start
+                    val ls = t.lastIndexOf('\n', c - 1) + 1
+                    val cl = t.substring(ls)
+                    val (nt, nc) = if (cl.startsWith("- ")) {
+                        t.substring(0, ls) + cl.removePrefix("- ") to (c - 2).coerceAtLeast(ls)
+                    } else {
+                        t.substring(0, ls) + "- " + cl to c + 2
+                    }
+                    tfv = TextFieldValue(nt, TextRange(nc))
+                    onTextChange(nt)
+                }, modifier = Modifier.size(36.dp)) {
+                    Text("-", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color(0xFF6EB8FF))
+                }
+                IconButton(onClick = {
+                    val t = tfv.text; val c = tfv.selection.start
+                    if (c >= 2 && c + 2 <= t.length && t.substring(c - 2, c) == "**" && t.substring(c, c + 2) == "**") {
+                        val nt = t.substring(0, c - 2) + t.substring(c + 2)
+                        tfv = TextFieldValue(nt, TextRange(c - 2)); onTextChange(nt)
+                    } else {
+                        val nt = t.substring(0, c) + "****" + t.substring(c)
+                        tfv = TextFieldValue(nt, TextRange(c + 2)); onTextChange(nt)
+                    }
+                }, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.FormatBold, "加粗", tint = Color(0xFF6EB8FF), modifier = Modifier.size(20.dp))
+                }
             }
-
             // Thumbnail preview
             if (imageUris.isNotEmpty()) {
                 LazyRow(
