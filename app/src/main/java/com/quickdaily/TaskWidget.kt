@@ -27,8 +27,10 @@ class TaskWidget : AppWidgetProvider() {
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
         if (ACTION_REFRESH == intent.action) {
-            android.util.Log.d("QuickDaily", "Refresh pressed, showing toast")
-            android.widget.Toast.makeText(context, "今日任务已刷新", android.widget.Toast.LENGTH_LONG).show()
+            android.util.Log.d("QuickDaily", "Refresh pressed")
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                android.widget.Toast.makeText(context, "今日任务已刷新", android.widget.Toast.LENGTH_LONG).show()
+            }
             refreshAllWidgets(context)
         } else if (ACTION_ADD_TASK == intent.action) {
             val intent2 = Intent(context, NoteEditActivity::class.java).apply {

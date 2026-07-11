@@ -123,10 +123,10 @@ fun EditorScreen(
                     shadowElevation = 8.dp,
                     color = MaterialTheme.colorScheme.surface,
                     // 小白条上方 + 输入法上方
-                    modifier = Modifier.fillMaxWidth().navigationBarsPadding().imePadding()
+                    modifier = Modifier.fillMaxWidth().imePadding()
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+                        modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 4.dp, vertical = 2.dp),
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
