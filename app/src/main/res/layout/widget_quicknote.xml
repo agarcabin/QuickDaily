@@ -17,16 +17,13 @@
         android:scaleType="fitCenter"
         android:visibility="gone" />
 
-    <TextView
+    <ImageView
         android:id="@+id/quicknote_label"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
         android:layout_gravity="center"
-        android:gravity="center"
-        android:includeFontPadding="false"
-        android:textColor="#FFFFFF"
-        android:textSize="22sp"
-        android:textStyle="bold"
-        android:text="+" />
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_add_white"
+        android:contentDescription="@null" />
 
 </FrameLayout>

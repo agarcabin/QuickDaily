@@ -106,9 +106,9 @@ object ShortcutHelper {
                         action = Intent.ACTION_VIEW
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     })
-                putExtra(Intent.EXTRA_SHORTCUT_ICON_RESOURCE,
-                    Intent.ShortcutIconResource.fromContext(context, R.mipmap.ic_launcher))
-                putExtra("duplicate", false)
+               putExtra(Intent.EXTRA_SHORTCUT_ICON_RESOURCE,
+                    Intent.ShortcutIconResource.fromContext(context, R.drawable.ic_shortcut_add))
+               putExtra("duplicate", false)
             }
             context.sendBroadcast(addIntent)
             true
@@ -146,7 +146,7 @@ object ShortcutHelper {
                 return Icon.createWithAdaptiveBitmap(scaled)
             }
         }
-        return Icon.createWithResource(context, R.mipmap.ic_launcher)
+        return Icon.createWithResource(context, R.drawable.ic_shortcut_add)
     }
 
     private fun centerCropSquare(src: Bitmap): Bitmap {

@@ -1044,9 +1044,11 @@ fun SettingsScreen(
                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                modifier = Modifier.padding(top = 8.dp))
             Text("1.5:\n" +
-                "• 新增 Templater 插件日期格式支持 \n" +
-                "• 新增 首页 阅读视图图片显示 \n" +
                 "• 新增 首页/悬浮窗 底部工具栏 \n" +
+                "• 新增 首页 阅读视图图片显示 \n" +
+                "• 新增 对 Templater 插件日期格式支持 \n" +
+                "• 新增 安卓小部件添加页面 预览图 \n" +
+                "• 调整 快速添加（桌面图标）的默认图标样式 \n" +
                 "• 修复 悬浮窗 任务切换格式错误 \n" +
                 "• 修复 悬浮窗 空任务异常触发保存 \n" +
                 "• 修复 小部件 今日任务刷新异常 \n\n",

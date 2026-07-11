@@ -28,10 +28,8 @@ class TaskWidget : AppWidgetProvider() {
         super.onReceive(context, intent)
         if (ACTION_REFRESH == intent.action) {
             android.util.Log.d("QuickDaily", "Refresh pressed")
-            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                android.widget.Toast.makeText(context, "今日任务已刷新", android.widget.Toast.LENGTH_LONG).show()
-            }
             refreshAllWidgets(context)
+            android.widget.Toast.makeText(QuickDailyApp.instance, "已刷新", android.widget.Toast.LENGTH_SHORT).show()
         } else if (ACTION_ADD_TASK == intent.action) {
             val intent2 = Intent(context, NoteEditActivity::class.java).apply {
                 putExtra("prefill_text", "- [ ] ")
