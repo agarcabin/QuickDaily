@@ -1,5 +1,6 @@
 ﻿package com.quickdaily.ui
 
+import android.app.Activity
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -16,6 +17,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -42,15 +44,21 @@ import kotlinx.coroutines.withContext
 @Composable
 fun EditorScreen(
     appState: AppState = viewModel(),
-    onSettingsClick: () -> Unit
+    onExternalLaunch: () -> Unit = {},
+    onSettingsClick: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    // Bug2: 设置导航栏颜色与工具栏一致（提前 capture，避免 @Composable 访问问题）
+    val navBarColor = MaterialTheme.colorScheme.surface.toArgb()
     val diaryContent by appState.diaryContent.collectAsState()
     val isLoaded by appState.isLoaded.collectAsState()
     val todayPath by appState.todayPath.collectAsState()
     val config by appState.config.collectAsState()
     val title = todayPath.substringAfterLast("/").removeSuffix(".md")
+    SideEffect {
+        (context as? Activity)?.window?.navigationBarColor = navBarColor
+    }
 
     var showPreview by remember { mutableStateOf(false) }
     var textFieldValue by remember { mutableStateOf(TextFieldValue("")) }
@@ -117,7 +125,7 @@ fun EditorScreen(
                         // 图片 - 拉起安卓图片选择器
                         ToolbarIconButton(
                             icon = { Icon(Icons.Default.Image, "插入图片", modifier = Modifier.size(22.dp)) },
-                            onClick = { imagePicker.launch("image/*") }
+                            onClick = { onExternalLaunch(); imagePicker.launch("image/*") }
                         )
                         // 任务 - 三态循环
                         ToolbarIconButton(
@@ -259,3 +267,4 @@ private fun ToolbarIconButton(
         icon()
     }
 }
+

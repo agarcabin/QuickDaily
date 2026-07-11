@@ -55,7 +55,8 @@ class MainActivity : ComponentActivity() {
                 when (navigator.screen) {
                     Screen.EDITOR -> EditorScreen(
                         appState = appState,
-                        onSettingsClick = { navigator.screen = Screen.SETTINGS }
+                        onSettingsClick = { navigator.screen = Screen.SETTINGS },
+                        onExternalLaunch = { externalLaunching = true }
                     )
                     Screen.SETTINGS -> SettingsScreen(
                         appState = appState,

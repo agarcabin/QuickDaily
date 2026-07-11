@@ -1,7 +1,9 @@
 ﻿package com.quickdaily.ui
 
 import android.content.Intent
+import android.app.Activity
 import android.content.ContentValues
+import androidx.compose.ui.graphics.toArgb
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
@@ -58,10 +60,11 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onExternalLaunch: () -> Unit = {}
 ) {
-    var showQRFull by remember { mutableStateOf(false) }
-    val qrScope = rememberCoroutineScope()
-
     val context = LocalContext.current
+    val navBarColorS = MaterialTheme.colorScheme.surface.toArgb()
+    SideEffect {
+        (context as? Activity)?.window?.navigationBarColor = navBarColorS
+    }
     val config by appState.config.collectAsState()
     val todayPath by appState.todayPath.collectAsState()
 
@@ -1082,7 +1085,7 @@ fun SettingsScreen(
                 modifier = Modifier.padding(top = 4.dp))
             Box(
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp).combinedClickable(
-                    onClick = { showQRFull = true },
+                    onClick = {},
                     onLongClick = {
                         try {
                             val bitmap = BitmapFactory.decodeResource(context.resources, R.drawable.qr_donate)
@@ -1128,35 +1131,14 @@ fun SettingsScreen(
                     contentScale = ContentScale.Fit
                 )
             }
+            // 图片下方备注
+            Text(
+                "长按图片保存到相册",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp).wrapContentWidth(Alignment.CenterHorizontally)
+            )
 
-            // ── 赞赏码大图预览 Dialog ──
-            if (showQRFull) {
-                Dialog(onDismissRequest = { showQRFull = false }) {
-                    Surface(
-                        shape = MaterialTheme.shapes.large,
-                        tonalElevation = 8.dp,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Image(
-                                painter = painterResource(id = R.drawable.qr_donate),
-                                contentDescription = "赞赏码",
-                                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                                contentScale = ContentScale.Fit
-                            )
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                "点击关闭 · 长按保存到相册",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                            )
-                        }
-                    }
-                }
-            }
         }
     }
 }

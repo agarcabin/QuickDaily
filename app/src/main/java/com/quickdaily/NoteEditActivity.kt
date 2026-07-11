@@ -185,6 +185,9 @@ class NoteEditActivity : ComponentActivity() {
                     val tplContent = FileUtil.readOrNull(tplPath)
                     if (tplContent != null && tplContent.isNotEmpty()) {
                         existing = tplContent
+                        // Bug4: 重新解析模板内容，使 body 正确更新
+                        val reParsed = ContentUtil.parseFrontmatter(existing)
+                        body = if (reParsed.hasFrontmatter) reParsed.body else existing
                     }
                 }
             }
@@ -344,53 +347,10 @@ private fun NoteEditDialog(
                 }) { Text("保存", color = Color(0xFF6EB8FF), fontSize = 13.sp) }
             }
 
-            // ── 底部工具栏（5个按钮，平替之前的 +[图片] 和 +[任务]）──
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onPickImages, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.Image, "图片", tint = Color(0xFF6EB8FF), modifier = Modifier.size(20.dp))
-                }
-                IconButton(onClick = {
-                    val newText = taskToggleAtCursor(tfv)
-                    tfv = TextFieldValue(newText, TextRange(newText.length))
-                    onTextChange(newText)
-                }, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.CheckBoxOutlineBlank, "任务", tint = Color(0xFF6EB8FF), modifier = Modifier.size(20.dp))
-                }
-                IconButton(onClick = {
-                    val t = tfv.text; val c = tfv.selection.start
-                    val nt = t.substring(0, c) + "#" + t.substring(c)
-                    tfv = TextFieldValue(nt, TextRange(c + 1))
-                    onTextChange(nt)
-                }, modifier = Modifier.size(36.dp)) {
-                    Text("#", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color(0xFF6EB8FF))
-                }
-                IconButton(onClick = {
-                    val t = tfv.text; val c = tfv.selection.start
-                    val ls = t.lastIndexOf('\n', c - 1) + 1
-                    val cl = t.substring(ls)
-                    val (nt, nc) = if (cl.startsWith("- ")) {
-                        t.substring(0, ls) + cl.removePrefix("- ") to (c - 2).coerceAtLeast(ls)
-                    } else {
-                        t.substring(0, ls) + "- " + cl to c + 2
-                    }
-                    tfv = TextFieldValue(nt, TextRange(nc))
-                    onTextChange(nt)
-                }, modifier = Modifier.size(36.dp)) {
-                    Text("-", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color(0xFF6EB8FF))
-                }
-                IconButton(onClick = {
-                    val t = tfv.text; val c = tfv.selection.start
-                    if (c >= 2 && c + 2 <= t.length && t.substring(c - 2, c) == "**" && t.substring(c, c + 2) == "**") {
-                        val nt = t.substring(0, c - 2) + t.substring(c + 2)
-                        tfv = TextFieldValue(nt, TextRange(c - 2)); onTextChange(nt)
-                    } else {
-                        val nt = t.substring(0, c) + "****" + t.substring(c)
-                        tfv = TextFieldValue(nt, TextRange(c + 2)); onTextChange(nt)
-                    }
-                }, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.FormatBold, "加粗", tint = Color(0xFF6EB8FF), modifier = Modifier.size(20.dp))
-                }
-            }
+
+
+            // ── 内容区（撑满剩余空间，将工具栏推到最下方）──
+            Column(Modifier.weight(1f)) {
             // Thumbnail preview
             if (imageUris.isNotEmpty()) {
                 LazyRow(
@@ -438,7 +398,7 @@ private fun NoteEditDialog(
                     
             },
                 textStyle = TextStyle(fontSize = 15.sp, lineHeight = 22.sp, color = Color(0xFFEEEEEE)),
-                modifier = Modifier.fillMaxWidth().weight(1f).focusRequester(focusRequester),
+                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
                 singleLine = enterToSave,
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                     imeAction = if (enterToSave) androidx.compose.ui.text.input.ImeAction.Done else androidx.compose.ui.text.input.ImeAction.Default
@@ -451,6 +411,56 @@ private fun NoteEditDialog(
                 decorationBox = { inner ->
                     if (text.isEmpty()) Text("写点什么...", color = Color(0x66FFFFFF), fontSize = 14.sp)
                     inner() })
+            } // end content Column (weight)
+            // ── 底部工具栏（5个按钮，平替之前的 +[图片] 和 +[任务]）──
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start, verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onPickImages, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.Image, "图片", tint = Color(0xFF6EB8FF), modifier = Modifier.size(20.dp))
+                }
+                IconButton(onClick = {
+                    val newText = taskToggleAtCursor(tfv)
+                    tfv = TextFieldValue(newText, TextRange(newText.length))
+                    onTextChange(newText)
+                }, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.CheckBoxOutlineBlank, "任务", tint = Color(0xFF6EB8FF), modifier = Modifier.size(20.dp))
+                }
+                IconButton(onClick = {
+                    val t = tfv.text; val c = tfv.selection.start
+                    val nt = t.substring(0, c) + "#" + t.substring(c)
+                    tfv = TextFieldValue(nt, TextRange(c + 1))
+                    onTextChange(nt)
+                }, modifier = Modifier.size(36.dp)) {
+                    Text("#", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color(0xFF6EB8FF))
+                }
+                IconButton(onClick = {
+                    val t = tfv.text; val c = tfv.selection.start
+                    val ls = t.lastIndexOf('\n', c - 1) + 1
+                    val cl = t.substring(ls)
+                    val (nt, nc) = if (cl.startsWith("- ")) {
+                        t.substring(0, ls) + cl.removePrefix("- ") to (c - 2).coerceAtLeast(ls)
+                    } else {
+                        t.substring(0, ls) + "- " + cl to c + 2
+                    }
+                    tfv = TextFieldValue(nt, TextRange(nc))
+                    onTextChange(nt)
+                }, modifier = Modifier.size(36.dp)) {
+                    Text("-", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color(0xFF6EB8FF))
+                }
+                IconButton(onClick = {
+                    val t = tfv.text; val c = tfv.selection.start
+                    if (c >= 2 && c + 2 <= t.length && t.substring(c - 2, c) == "**" && t.substring(c, c + 2) == "**") {
+                        val nt = t.substring(0, c - 2) + t.substring(c + 2)
+                        tfv = TextFieldValue(nt, TextRange(c - 2)); onTextChange(nt)
+                    } else {
+                        val nt = t.substring(0, c) + "****" + t.substring(c)
+                        tfv = TextFieldValue(nt, TextRange(c + 2)); onTextChange(nt)
+                    }
+                }, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.FormatBold, "加粗", tint = Color(0xFF6EB8FF), modifier = Modifier.size(20.dp))
+                }
+            } // end toolbar Row
         }
     }
 }
+
+
