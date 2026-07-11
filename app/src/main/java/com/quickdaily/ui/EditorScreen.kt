@@ -68,6 +68,80 @@ fun EditorScreen(
                     actionIconContentColor = MaterialTheme.colorScheme.onPrimary
                 )
             )
+        },
+        bottomBar = {
+            if (!showPreview) {
+                Surface(
+                    tonalElevation = 3.dp,
+                    shadowElevation = 8.dp,
+                    color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        ToolbarIconButton(
+                            icon = { Icon(Icons.Default.Image, "插入图片", modifier = Modifier.size(22.dp)) },
+                            onClick = {
+                                val start = textFieldValue.selection.start
+                                val text = textFieldValue.text
+                                val newText = text.substring(0, start) + "![]()" + text.substring(start)
+                                textFieldValue = TextFieldValue(newText, TextRange(start + 4))
+                            }
+                        )
+                        ToolbarIconButton(
+                            icon = { Icon(Icons.Default.CheckBoxOutlineBlank, "插入任务", modifier = Modifier.size(22.dp)) },
+                            onClick = {
+                                val text = textFieldValue.text
+                                val cursor = textFieldValue.selection.start
+                                val lineStart = text.lastIndexOf('\n', cursor - 1) + 1
+                                val newText = text.substring(0, lineStart) + "- [ ] " + text.substring(lineStart)
+                                textFieldValue = TextFieldValue(newText, TextRange(cursor + 6))
+                            }
+                        )
+                        ToolbarIconButton(
+                            icon = { Text("#", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+                            onClick = {
+                                val text = textFieldValue.text
+                                val cursor = textFieldValue.selection.start
+                                val lineStart = text.lastIndexOf('\n', cursor - 1) + 1
+                                val newText = text.substring(0, lineStart) + "## " + text.substring(lineStart)
+                                textFieldValue = TextFieldValue(newText, TextRange(cursor + 3))
+                            }
+                        )
+                        ToolbarIconButton(
+                            icon = { Icon(Icons.Default.FormatListBulleted, "插入列表", modifier = Modifier.size(22.dp)) },
+                            onClick = {
+                                val text = textFieldValue.text
+                                val cursor = textFieldValue.selection.start
+                                val lineStart = text.lastIndexOf('\n', cursor - 1) + 1
+                                val newText = text.substring(0, lineStart) + "- " + text.substring(lineStart)
+                                textFieldValue = TextFieldValue(newText, TextRange(cursor + 2))
+                            }
+                        )
+                        ToolbarIconButton(
+                            icon = { Icon(Icons.Default.FormatBold, "加粗", modifier = Modifier.size(22.dp)) },
+                            onClick = {
+                                val start = textFieldValue.selection.start
+                                val end = textFieldValue.selection.end
+                                val text = textFieldValue.text
+                                if (start != end) {
+                                    val selected = text.substring(start, end)
+                                    val newText = text.substring(0, start) + "**" + selected + "**" + text.substring(end)
+                                    textFieldValue = TextFieldValue(newText, TextRange(newText.length))
+                                } else {
+                                    val newText = text.substring(0, start) + "****" + text.substring(start)
+                                    textFieldValue = TextFieldValue(newText, TextRange(start + 2))
+                                }
+                            }
+                        )
+                    }
+                }
+            }
         }
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
@@ -124,83 +198,6 @@ fun EditorScreen(
                         innerField()
                     }
                 )
-            }
-        }
-        // ── 底部工具栏（仅编辑模式显示） ──
-        if (!showPreview) {
-            Surface(
-                tonalElevation = 3.dp,
-                shadowElevation = 8.dp,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 4.dp, vertical = 2.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // 图片
-                    ToolbarIconButton(
-                        icon = { Icon(Icons.Default.Image, "插入图片", modifier = Modifier.size(22.dp)) },
-                        onClick = {
-                            val start = textFieldValue.selection.start
-                            val text = textFieldValue.text
-                            val newText = text.substring(0, start) + "![]()" + text.substring(start)
-                            textFieldValue = TextFieldValue(newText, TextRange(start + 4))
-                        }
-                    )
-                    // 任务
-                    ToolbarIconButton(
-                        icon = { Icon(Icons.Default.CheckBoxOutlineBlank, "插入任务", modifier = Modifier.size(22.dp)) },
-                        onClick = {
-                            val text = textFieldValue.text
-                            val cursor = textFieldValue.selection.start
-                            val lineStart = text.lastIndexOf('\n', cursor - 1) + 1
-                            val newText = text.substring(0, lineStart) + "- [ ] " + text.substring(lineStart)
-                            textFieldValue = TextFieldValue(newText, TextRange(cursor + 6))
-                        }
-                    )
-                    // 标题
-                    ToolbarIconButton(
-                        icon = { Text("#", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
-                        onClick = {
-                            val text = textFieldValue.text
-                            val cursor = textFieldValue.selection.start
-                            val lineStart = text.lastIndexOf('\n', cursor - 1) + 1
-                            val newText = text.substring(0, lineStart) + "## " + text.substring(lineStart)
-                            textFieldValue = TextFieldValue(newText, TextRange(cursor + 3))
-                        }
-                    )
-                    // 列表
-                    ToolbarIconButton(
-                        icon = { Icon(Icons.Default.FormatListBulleted, "插入列表", modifier = Modifier.size(22.dp)) },
-                        onClick = {
-                            val text = textFieldValue.text
-                            val cursor = textFieldValue.selection.start
-                            val lineStart = text.lastIndexOf('\n', cursor - 1) + 1
-                            val newText = text.substring(0, lineStart) + "- " + text.substring(lineStart)
-                            textFieldValue = TextFieldValue(newText, TextRange(cursor + 2))
-                        }
-                    )
-                    // 加粗
-                    ToolbarIconButton(
-                        icon = { Icon(Icons.Default.FormatBold, "加粗", modifier = Modifier.size(22.dp)) },
-                        onClick = {
-                            val start = textFieldValue.selection.start
-                            val end = textFieldValue.selection.end
-                            val text = textFieldValue.text
-                            if (start != end) {
-                                val selected = text.substring(start, end)
-                                val newText = text.substring(0, start) + "**" + selected + "**" + text.substring(end)
-                                textFieldValue = TextFieldValue(newText, TextRange(newText.length))
-                            } else {
-                                val newText = text.substring(0, start) + "****" + text.substring(start)
-                                textFieldValue = TextFieldValue(newText, TextRange(start + 2))
-                            }
-                        }
-                    )
-                }
             }
         }
         }

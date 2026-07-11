@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -19,6 +20,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material3.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.runtime.*
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -50,6 +52,8 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onExternalLaunch: () -> Unit = {}
 ) {
+    var showQRFull by remember { mutableStateOf(false) }
+
     val context = LocalContext.current
     val config by appState.config.collectAsState()
     val todayPath by appState.todayPath.collectAsState()
@@ -1069,13 +1073,45 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                 modifier = Modifier.padding(top = 4.dp))
-            Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).clickable { showQRFull = true },
+                contentAlignment = Alignment.Center
+            ) {
                 Image(
                     painter = painterResource(id = R.drawable.qr_donate),
                     contentDescription = "赞赏码",
-                    modifier = Modifier.width(200.dp).height(200.dp),
+                    modifier = Modifier.width(280.dp).height(280.dp),
                     contentScale = ContentScale.Fit
                 )
+            }
+
+            // ── 赞赏码大图预览 Dialog ──
+            if (showQRFull) {
+                Dialog(onDismissRequest = { showQRFull = false }) {
+                    Surface(
+                        shape = MaterialTheme.shapes.large,
+                        tonalElevation = 8.dp,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Image(
+                                painter = painterResource(id = R.drawable.qr_donate),
+                                contentDescription = "赞赏码",
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                contentScale = ContentScale.Fit
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "长按或截图保存到相册后扫码",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
+                    }
+                }
             }
         }
     }

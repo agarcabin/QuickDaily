@@ -6,7 +6,6 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.media.MediaActionSound
 import android.os.Build
 import android.widget.RemoteViews
 import com.quickdaily.util.DateUtil
@@ -138,11 +137,6 @@ class TaskWidget : AppWidgetProvider() {
             val oldLine = lines[foundIdx]
             lines[foundIdx] = oldLine.replaceFirst("- [ ] ", "- [x] ")
             FileUtil.write(path, lines.joinToString("\n"))
-
-            // Play ding sound
-            try {
-                MediaActionSound().play(MediaActionSound.FOCUS_COMPLETE)
-            } catch (_: Exception) {}
 
             // Refresh widget
             refreshAllWidgets(context)

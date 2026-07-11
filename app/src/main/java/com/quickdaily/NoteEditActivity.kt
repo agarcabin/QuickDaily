@@ -126,14 +126,20 @@ class NoteEditActivity : ComponentActivity() {
             val path = "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/$d.md"
             val anchor = (prefs.getString("anchor_text", "") ?: "").trim()
             // 同时识别 - [ ] 和 - [x] 前缀
-            val isTask = text.startsWith("- [ ] ") || text.startsWith("- [x] ") || text.startsWith("- [X] ")
+            // 同时识别 - [ ] 和 - [x] 前缀（含/不含尾随空格）
+            val trimmedText = text.trim()
+            val isTask = trimmedText.startsWith("- [ ] ") || trimmedText.startsWith("- [x] ") || trimmedText.startsWith("- [X] ") ||
+                trimmedText.startsWith("- [ ]") || trimmedText.startsWith("- [x]") || trimmedText.startsWith("- [X]")
             val line = if (isTask) {
-                val wasChecked = text.startsWith("- [x] ") || text.startsWith("- [X] ")
-                val taskDesc = text.trim().let { t ->
+                val wasChecked = trimmedText.startsWith("- [x] ") || trimmedText.startsWith("- [X] ") || trimmedText.startsWith("- [x]") || trimmedText.startsWith("- [X]")
+                val taskDesc = trimmedText.let { t ->
                     when {
                         t.startsWith("- [ ] ") -> t.removePrefix("- [ ] ").trim()
                         t.startsWith("- [x] ") -> t.removePrefix("- [x] ").trim()
                         t.startsWith("- [X] ") -> t.removePrefix("- [X] ").trim()
+                        t.startsWith("- [ ]") -> t.removePrefix("- [ ]").trim()
+                        t.startsWith("- [x]") -> t.removePrefix("- [x]").trim()
+                        t.startsWith("- [X]") -> t.removePrefix("- [X]").trim()
                         else -> t
                     }
                 }
@@ -260,8 +266,8 @@ class NoteEditActivity : ComponentActivity() {
 private fun hasRealContent(text: String): Boolean {
     val trimmed = text.trim()
     if (trimmed.isBlank()) return false
-    // 任务标记前缀
-    val taskPrefixes = listOf("- [ ] ", "- [x] ", "- [X] ")
+    // 任务标记前缀（同时检查有无尾随空格，因为 .trim() 会去掉末尾空格）
+    val taskPrefixes = listOf("- [ ] ", "- [x] ", "- [X] ", "- [ ]", "- [x]", "- [X]")
     for (prefix in taskPrefixes) {
         if (trimmed.startsWith(prefix)) {
             val rest = trimmed.removePrefix(prefix).trim()
@@ -271,7 +277,7 @@ private fun hasRealContent(text: String): Boolean {
     return true
 }
 
-/** 在光标所在行切换任务状态（- [ ] ↔ - [x]） */
+/** 在光标所在行切换任务状态：无标记 → - [ ] → - [x] → 无标记（三态循环） */
 private fun taskToggleAtCursor(tfv: TextFieldValue): String {
     val text = tfv.text
     val pos = tfv.selection.start
@@ -282,12 +288,17 @@ private fun taskToggleAtCursor(tfv: TextFieldValue): String {
     val taskRegex = Regex("""^\s*(-\s*\[\s*([ xX])\s*\])\s*""")
     val match = taskRegex.find(line)
     val newLine = if (match != null) {
-        val marker = match.groupValues[1]  // 例如 "- [ ]" 或 "- [x]"
         val checked = match.groupValues[2] // " " / "x" / "X"
-        val rest = line.substring(match.value.length)
-        val newMarker = if (checked.trim().isEmpty()) "- [x]" else "- [ ]"
-        "$newMarker $rest".trimStart()
+        val rest = line.substring(match.value.length).trimStart()
+        if (checked.trim().isEmpty()) {
+            // - [ ] → - [x]
+            "- [x] $rest".trimStart()
+        } else {
+            // - [x] → 去除任务标记，只保留文字
+            rest
+        }
     } else {
+        // 无标记 → - [ ]
         "- [ ] $line"
     }
     return text.substring(0, lineStart) + newLine + text.substring(lineEnd)
