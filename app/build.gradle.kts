@@ -1,4 +1,4 @@
-plugins {
+﻿plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
@@ -12,7 +12,7 @@ android {
         applicationId = "com.quickdaily"
         minSdk = 26
         targetSdk = 35
-        versionCode = 39
+        versionCode = 40
         versionName = "1.5.12-beta"
     }
 
@@ -34,15 +34,15 @@ android {
         jvmTarget = "17"
     }
 
-    // 离线构建环境跳过 lint vital 任务（避免联网下载 SDK 元数据）
+    // 绂荤嚎鏋勫缓鐜璺宠繃 lint vital 浠诲姟锛堥伩鍏嶈仈缃戜笅杞?SDK 鍏冩暟鎹級
     lint {
         abortOnError = false
         checkReleaseBuilds = false
     }
 
     signingConfigs {
-        // 使用 debug keystore 作为 release 兜底签名，便于本地打包验证；
-        // 正式上架时应替换为专用 release keystore（不要把真实 keystore 密码硬编码进仓库）
+        // 浣跨敤 debug keystore 浣滀负 release 鍏滃簳绛惧悕锛屼究浜庢湰鍦版墦鍖呴獙璇侊紱
+        // 姝ｅ紡涓婃灦鏃跺簲鏇挎崲涓轰笓鐢?release keystore锛堜笉瑕佹妸鐪熷疄 keystore 瀵嗙爜纭紪鐮佽繘浠撳簱锛?
         getByName("debug").apply {
             storeFile = rootProject.file("debug.keystore")
             storePassword = "android"
