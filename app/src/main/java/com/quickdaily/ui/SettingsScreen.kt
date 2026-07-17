@@ -51,6 +51,7 @@ import com.quickdaily.AppState
 import com.quickdaily.BuildConfig
 import com.quickdaily.DiaryConfig
 import com.quickdaily.QuickNoteWidget
+import com.quickdaily.QuickDailyReadWidget
 import com.quickdaily.TaskWidget
 import com.quickdaily.util.DateUtil
 import com.quickdaily.util.ShortcutHelper
@@ -88,8 +89,8 @@ private val timestampOptions = listOf(
 
 private data class NamingOption(val key: String, val label: String)
 private val namingOptions = listOf(
-    NamingOption("original", "原名（image.jpg）"),
-    NamingOption("timestamp_original", "时间戳+原名（2026-07-17_120820_image.jpg）"),
+    NamingOption("original", "图片原名"),
+    NamingOption("timestamp_original", "时间戳+原名"),
     NamingOption("custom", "自定义名称"),
 )
 
@@ -405,12 +406,20 @@ fun SettingsScreen(
                         onConfigChange = { newCfg -> appState.saveConfig(newCfg) },
                         onSave = { saveFull() }
                     )
-                    2 -> WidgetsTab(
-                        widgetImageUri = widgetImageUri,
-                        context = context,
-                        onPickImage = { onExternalLaunch(); imagePicker.launch("image/*") },
-                        onSave = { saveFull() }
-                    )
+                   2 -> WidgetsTab(
+                       widgetImageUri = widgetImageUri,
+                       context = context,
+                       onPickImage = { onExternalLaunch(); imagePicker.launch("image/*") },
+                        onResetImage = {
+                            widgetImageUri = ""
+                            appState.saveConfig(config.copy(widgetImageUri = ""))
+                            val f = java.io.File(context.filesDir, "widget_image.jpg")
+                            try { f.delete() } catch (_: Exception) { }
+                            QuickNoteWidget.updateAllWidgets(context)
+                            ShortcutHelper.updateAllShortcuts(context)
+                        },
+                       onSave = { saveFull() }
+                   )
                     3 -> OtherTab(
                         config = config,
                         isCheckingUpdate = isCheckingUpdate,
@@ -725,12 +734,12 @@ private fun EditorSettingsTab(
                         selected = config.timestampOrder == "above",
                         onClick = { onConfigChange(config.copy(timestampOrder = "above")) },
                         shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
-                    ) { Text("锚点上方") }
+                    ) { Text("最上方插入") }
                     SegmentedButton(
                         selected = config.timestampOrder == "below",
                         onClick = { onConfigChange(config.copy(timestampOrder = "below")) },
                         shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
-                    ) { Text("锚点下方") }
+                    ) { Text("最下方插入") }
                 }
 
                 OutlinedTextField(
@@ -766,7 +775,7 @@ private fun EditorSettingsTab(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                     )
-                    Spacer(Modifier.height(4.dp))
+                    
                     val previewText = remember(config.timestampFormat, config.addAnchorIfMissing, anchorText) {
                         val now = com.quickdaily.util.DateUtil.nowTimeStr()
                         val nowSec = com.quickdaily.util.DateUtil.nowTimeSecondsStr()
@@ -815,7 +824,7 @@ private fun EditorSettingsTab(
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                 ListItem(
                     headlineContent = { Text("过滤 Frontmatter") },
-                    supportingContent = { Text("编辑时隐藏日记文件头部元数据") },
+                    supportingContent = { Text("编辑时隐藏日记文件头部元数据。但有可能造成元数据多次写入。") },
                     trailingContent = {
                         Switch(checked = config.filterFrontmatter, onCheckedChange = {
                             onConfigChange(config.copy(filterFrontmatter = it))
@@ -853,6 +862,7 @@ private fun WidgetsTab(
     widgetImageUri: String,
     context: android.content.Context,
     onPickImage: () -> Unit,
+    onResetImage: () -> Unit,
     onSave: () -> Unit,
 ) {
     Column(
@@ -910,16 +920,35 @@ private fun WidgetsTab(
                         }
                     }
 
-                    Spacer(Modifier.width(16.dp))
+                   Spacer(Modifier.width(16.dp))
 
-                    FilledTonalButton(onClick = onPickImage) {
-                        Icon(Icons.Default.AddAPhoto, null, Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text(if (widgetImageUri.isNotEmpty()) "更换图片" else "选择图片")
+                   Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = onPickImage,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.AddAPhoto, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(if (widgetImageUri.isNotEmpty()) "更换图片" else "选择图片")
+                        }
+                        OutlinedButton(
+                            onClick = onResetImage,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Refresh, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("重置默认")
+                        }
                     }
                 }
             }
         }
+
+        Text(
+            "自定义图标同时应用于快速添加的小部件和桌面图标。如点击无反应，请给予本APP创建桌面图标的权限。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+       )
 
         ElevatedCard(
             modifier = Modifier.fillMaxWidth(),
@@ -928,7 +957,29 @@ private fun WidgetsTab(
             ),
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("添加快捷方式", style = MaterialTheme.typography.titleSmall)
+               Text("添加快捷方式", style = MaterialTheme.typography.titleSmall)
+
+                FilledTonalButton(
+                    onClick = {
+                        try {
+                            val mgr = android.appwidget.AppWidgetManager.getInstance(context)
+                            val comp = android.content.ComponentName(context, QuickDailyReadWidget::class.java)
+                            if (mgr.isRequestPinAppWidgetSupported) {
+                                val cb = android.app.PendingIntent.getBroadcast(context, 1, Intent(), android.app.PendingIntent.FLAG_IMMUTABLE)
+                                mgr.requestPinAppWidget(comp, null, cb)
+                            } else {
+                                context.startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME))
+                            }
+                        } catch (_: Exception) {
+                            context.startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME))
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Description, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("桌面便签（小部件）")
+                }
 
                 FilledTonalButton(
                     onClick = { ShortcutHelper.pinShortcutToDesktop(context) },
@@ -985,13 +1036,7 @@ private fun WidgetsTab(
             }
         }
 
-        Text(
-            "自定义图标同时应用于快速添加的小部件和桌面图标。如点击无反应，请给予本APP创建桌面图标的权限。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-        )
-
-        Spacer(Modifier.height(8.dp))
+       Spacer(Modifier.height(8.dp))
         Button(onClick = onSave, modifier = Modifier.fillMaxWidth()) {
             Icon(Icons.Default.Check, null, Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
@@ -1142,38 +1187,38 @@ private fun OtherTab(
                 Text("QuickDaily ", style = MaterialTheme.typography.titleMedium)
 
                 Text("更新内容：", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                Text("1.5:\\n" +
-                    "? 新增 首页/悬浮窗 底部工具栏 \\n" +
-                    "? 新增 首页 阅读视图图片显示 \\n" +
-                    "? 新增 对 Templater 插件日期格式支持 \\n" +
-                    "? 新增 安卓小部件添加页面 预览图 \\n" +
-                    "? 调整 快速添加（桌面图标）的默认图标样式 \\n" +
-                    "? 修复 悬浮窗 任务切换格式错误 \\n" +
-                    "? 修复 悬浮窗 空任务异常触发保存 \\n" +
-                    "? 修复 小部件 今日任务刷新异常 \\n\\n" +
-                    "1.4:\\n" +
-                    "? 新增 Frontmatter 过滤 \\n" +
-                    "? 新增 WW 等日期格式支持 \\n" +
-                    "? 新增 悬浮窗增加图片录入功能（可批量导入）\\n" +
-                    "? 新增 悬浮窗增加任务录入功能（双击切换任务状态） \\n" +
-                    "? 新增 《今日任务》桌面小部件 \\n\\n" +
-                    "1.3:\\n" +
-                    "? 新增 7种时间戳格式设置，可适配Thino/Knomo \\n" +
-                    "? 新增 时间戳文本插入顺序\\n" +
-                    "? 新增 无锚点时自动添加锚点文本\\n" +
-                    "? 修复 清空日记内容后无法重新加载模板\\n" +
-                    "? 修复 每日首次录入内容时略过日记模板\\n\\n" +
-                    "1.2:\\n" +
-                    "? 新增 快速添加（桌面图标）\\n" +
-                    "? 修复 磁贴点击后收回状态栏\\n\\n" +
-                    "1.1:\\n" +
-                    "? 新增 小部件时间戳，回车保存\\n" +
-                    "? 新增 小部件自定义图片\\n" +
-                    "? 新增 状态栏快捷磁贴\\n" +
-                    "? 新增 文本分享至本应用\\n" +
-                    "? 新增 检测更新\\n\\n" +
-                    "1.0:\\n" +
-                    "? 正式发布！APP 更名为 QuickDaily\\n" +
+                Text("1.5:\n" +
+                    "? 新增 首页/悬浮窗 底部工具栏 \n" +
+                    "? 新增 首页 阅读视图图片显示 \n" +
+                    "? 新增 对 Templater 插件日期格式支持 \n" +
+                    "? 新增 安卓小部件添加页面 预览图 \n" +
+                    "? 调整 快速添加（桌面图标）的默认图标样式 \n" +
+                    "? 修复 悬浮窗 任务切换格式错误 \n" +
+                    "? 修复 悬浮窗 空任务异常触发保存 \n" +
+                    "? 修复 小部件 今日任务刷新异常 \n\n" +
+                    "1.4:\n" +
+                    "? 新增 Frontmatter 过滤 \n" +
+                    "? 新增 WW 等日期格式支持 \n" +
+                    "? 新增 悬浮窗增加图片录入功能（可批量导入）\n" +
+                    "? 新增 悬浮窗增加任务录入功能（双击切换任务状态） \n" +
+                    "? 新增 《今日任务》桌面小部件 \n\n" +
+                    "1.3:\n" +
+                    "? 新增 7种时间戳格式设置，可适配Thino/Knomo \n" +
+                    "? 新增 时间戳文本插入顺序\n" +
+                    "? 新增 无锚点时自动添加锚点文本\n" +
+                    "? 修复 清空日记内容后无法重新加载模板\n" +
+                    "? 修复 每日首次录入内容时略过日记模板\n\n" +
+                    "1.2:\n" +
+                    "? 新增 快速添加（桌面图标）\n" +
+                    "? 修复 磁贴点击后收回状态栏\n\n" +
+                    "1.1:\n" +
+                    "? 新增 小部件时间戳，回车保存\n" +
+                    "? 新增 小部件自定义图片\n" +
+                    "? 新增 状态栏快捷磁贴\n" +
+                    "? 新增 文本分享至本应用\n" +
+                    "? 新增 检测更新\n\n" +
+                    "1.0:\n" +
+                    "? 正式发布！APP 更名为 QuickDaily\n" +
                     "? 开源发布到 GitHub",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
 
@@ -1293,5 +1338,3 @@ private fun DropdownSetting(
         }
     }
 }
-
-
