@@ -1,7 +1,9 @@
-package com.quickdaily.ui
+﻿package com.quickdaily.ui
 import android.content.Intent
 import android.app.Activity
 import android.content.ContentValues
+import android.content.ClipData
+import android.content.ClipboardManager
 import androidx.compose.ui.graphics.toArgb
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -334,6 +336,8 @@ fun SettingsScreen(
                         onDateFormatChange = { dateFormat = it },
                         onTemplatePathChange = { templatePath = it },
                         onImageStoragePathChange = { imageStoragePath = it },
+                        config = config,
+                        onConfigChange = { newCfg -> appState.saveConfig(newCfg) },
                         onReadObsidianConfig = {
                             scope.launch {
                                 val obsCfg = appState.loadObsidianConfig(vaultPath)
@@ -435,6 +439,8 @@ private fun DiaryStorageTab(
     onDateFormatChange: (String) -> Unit,
     onTemplatePathChange: (String) -> Unit,
     onImageStoragePathChange: (String) -> Unit,
+    config: DiaryConfig,
+    onConfigChange: (DiaryConfig) -> Unit,
     onReadObsidianConfig: () -> Unit,
     onPickVault: () -> Unit,
     onPickTemplate: () -> Unit,
@@ -442,6 +448,7 @@ private fun DiaryStorageTab(
     onSave: () -> Unit,
     vaultEnabled: Boolean,
 ) {
+    val context = LocalContext.current
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -474,23 +481,6 @@ private fun DiaryStorageTab(
                         color = if (obsidianDetected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall)
                 }
-
-                HorizontalDivider()
-
-                OutlinedTextField(
-                    value = imageStoragePath,
-                    onValueChange = onImageStoragePathChange,
-                    label = { Text("图片储存目录") },
-                    placeholder = { Text("assets/images（相对仓库路径）") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    leadingIcon = { Icon(Icons.Default.PhotoLibrary, null, Modifier.size(20.dp)) },
-                    trailingIcon = {
-                        IconButton(onClick = onPickImageStorage) {
-                            Icon(Icons.Default.FolderOpen, "选择文件夹")
-                        }
-                    }
-                )
             }
         }
 
@@ -530,18 +520,98 @@ private fun DiaryStorageTab(
             }
         }
 
-        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("今天的日记路径", style = MaterialTheme.typography.labelMedium)
-                Spacer(Modifier.height(4.dp))
-                Text(todayPath.ifEmpty { "(输入 vault 路径后自动计算)" },
+
+        Text("附件配置", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                DropdownSetting(
+                    label = "图片命名格式",
+                    selectedKey = config.imageNamingFormat,
+                    options = namingOptions.map { it.key to it.label },
+                    onSelect = { onConfigChange(config.copy(imageNamingFormat = it)) }
+                )
+                if (config.imageNamingFormat == "custom") {
+                    OutlinedTextField(
+                        value = config.imageCustomNamingFormat,
+                        onValueChange = { onConfigChange(config.copy(imageCustomNamingFormat = it)) },
+                        label = { Text("自定义命名格式") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        trailingIcon = {
+                            IconButton(onClick = { onConfigChange(config.copy(imageCustomNamingFormat = "yyyy-MM-dd_HHmmss_{filename}{ext}")) }) {
+                                Icon(Icons.Default.Refresh, "重置为默认")
+                            }
+                        }
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "可用占位符（点击可复制）",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+                    val tokens = listOf(
+                        "{filename}" to "原文件名（不含扩展名）",
+                        "{ext}" to "扩展名（如 .jpg、.mp3）",
+                        "yyyy" to "年份（4位）",
+                        "MM" to "月份（2位）",
+                        "dd" to "日（2位）",
+                        "HH" to "小时（24小时制）",
+                        "mm" to "分钟",
+                        "ss" to "秒钟"
+                    )
+                    Column {
+                        tokens.forEach { (token, desc) ->
+                            Text(
+                                text = "$token - $desc",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        try {
+                                            clipboard.setPrimaryClip(android.content.ClipData.newPlainText(token, token))
+                                            android.widget.Toast.makeText(context, "已复制 $token", android.widget.Toast.LENGTH_SHORT).show()
+                                        } catch (_: Exception) { }
+                                    }
+                            )
+                        }
+                    }
+                }
+                DropdownSetting(
+                    label = "图片链接格式",
+                    selectedKey = config.imageLinkFormat,
+                    options = linkOptions,
+                    onSelect = { onConfigChange(config.copy(imageLinkFormat = it)) }
+                )
+                OutlinedTextField(
+                    value = imageStoragePath,
+                    onValueChange = onImageStoragePathChange,
+                    label = { Text("附件储存目录") },
+                    placeholder = { Text("assets/images（相对仓库路径）") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Default.PhotoLibrary, null, Modifier.size(20.dp)) },
+                    trailingIcon = {
+                        IconButton(onClick = onPickImageStorage) {
+                            Icon(Icons.Default.FolderOpen, "选择文件夹")
+                        }
+                    }
+                )
+                val exampleName = when (config.imageNamingFormat) {
+                    "original" -> "image.jpg"
+                    "timestamp_original" -> com.quickdaily.util.DateUtil.nowTimeStr() + "_image.jpg"
+                    "custom" -> { val f = config.imageCustomNamingFormat.ifEmpty { "image.jpg" }; f.replace("{filename}", "image").replace("{ext}", ".jpg") }
+                    else -> "image.jpg"
+                }
+                Text(
+                    text = "附件储存路径示例：{vaultPath}/{attachmentDir}/$exampleName",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                )
             }
         }
-
         Button(onClick = onSave, modifier = Modifier.fillMaxWidth(), enabled = vaultEnabled) {
             Icon(Icons.Default.Check, null, Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
@@ -563,6 +633,7 @@ private fun EditorSettingsTab(
     onConfigChange: (DiaryConfig) -> Unit,
     onSave: () -> Unit,
 ) {
+    val context = LocalContext.current
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -684,34 +755,6 @@ private fun EditorSettingsTab(
                             onConfigChange(config.copy(tagAutocomplete = it))
                         })
                     }
-                )
-            }
-        }
-
-        Text("附件配置", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-        Text("图片设置", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                DropdownSetting(
-                    label = "图片命名格式",
-                    selectedKey = config.imageNamingFormat,
-                    options = namingOptions.map { it.key to it.label },
-                    onSelect = { onConfigChange(config.copy(imageNamingFormat = it)) }
-                )
-                if (config.imageNamingFormat == "custom") {
-                    OutlinedTextField(
-                        value = config.imageCustomNamingFormat,
-                        onValueChange = { onConfigChange(config.copy(imageCustomNamingFormat = it)) },
-                        label = { Text("自定义命名格式") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                }
-                DropdownSetting(
-                    label = "图片链接格式",
-                    selectedKey = config.imageLinkFormat,
-                    options = linkOptions,
-                    onSelect = { onConfigChange(config.copy(imageLinkFormat = it)) }
                 )
             }
         }
@@ -1134,3 +1177,5 @@ private fun DropdownSetting(
         }
     }
 }
+
+

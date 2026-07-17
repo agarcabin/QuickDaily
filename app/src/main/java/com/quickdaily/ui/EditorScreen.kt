@@ -478,6 +478,7 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
 
 @Composable
 private fun ObsidianIcon(modifier: Modifier = Modifier) {
+    val tintColor = androidx.compose.material3.LocalContentColor.current
     Canvas(modifier = modifier) {
         val w = size.width.toFloat()
         val h = size.height.toFloat()
@@ -488,8 +489,7 @@ private fun ObsidianIcon(modifier: Modifier = Modifier) {
             lineTo(0f, h * 0.45f)
             close()
         }
-        val tintColor = androidx.compose.material3.LocalContentColor.current
-        drawPath(path, tintColor, style = Fill)
+        drawPath(path, tintColor)
         
         val inner = Path().apply {
             moveTo(w / 2f, h * 0.25f)
@@ -498,7 +498,7 @@ private fun ObsidianIcon(modifier: Modifier = Modifier) {
             lineTo(w * 0.4f, h * 0.45f)
             close()
         }
-        drawPath(inner, tintColor.copy(alpha = 0.35f), style = Fill)
+        drawPath(inner, tintColor.copy(alpha = 0.35f))
     }
 }
 
@@ -517,4 +517,5 @@ private fun ToolbarIconButton(
         icon()
     }
 }
+
 
