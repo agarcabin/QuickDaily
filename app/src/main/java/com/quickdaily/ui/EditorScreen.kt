@@ -225,7 +225,9 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
                         val vaultName = config.vaultPath.trimEnd('/').substringAfterLast('/')
                         if (vaultName.isNotBlank()) {
                             try {
-                                val uri = Uri.parse("obsidian://open?vault=${Uri.encode(vaultName)}")
+                                val date = com.quickdaily.util.DateUtil.todayStr(config.dateFormat)
+                                val relativePath = Uri.encode("${config.diaryFolder.trimEnd('/')}/${date}.md")
+                                val uri = Uri.parse("obsidian://open?vault=${Uri.encode(vaultName)}&file=$relativePath")
                                 val intent = Intent(Intent.ACTION_VIEW, uri)
                                 context.startActivity(intent)
                             } catch (e: Exception) {
@@ -344,22 +346,6 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
                                 } else {
                                     val nt = t.substring(0, c) + "****" + t.substring(c)
                                     textFieldValue = TextFieldValue(nt, TextRange(c + 2)); appState.onContentChanged(nt)
-                                }
-                            }
-                        )
-                        // Obsidian 跳转
-                        ToolbarIconButton(
-                            icon = { ObsidianIcon(modifier = Modifier.size(22.dp)) },
-                            onClick = {
-                                val vaultName = config.vaultPath.trimEnd('/').substringAfterLast('/')
-                                if (vaultName.isNotBlank()) {
-                                    try {
-                                        val uri = Uri.parse("obsidian://open?vault=${Uri.encode(vaultName)}")
-                                        val intent = Intent(Intent.ACTION_VIEW, uri)
-                                        context.startActivity(intent)
-                                    } catch (e: Exception) {
-                                        Toast.makeText(context, "未安装 Obsidian", Toast.LENGTH_SHORT).show()
-                                    }
                                 }
                             }
                         )

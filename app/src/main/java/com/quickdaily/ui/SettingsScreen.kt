@@ -488,7 +488,9 @@ private fun DiaryStorageTab(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("仓库配置", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-        Card(modifier = Modifier.fillMaxWidth()) {
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     value = vaultPath,
@@ -519,7 +521,9 @@ private fun DiaryStorageTab(
         }
 
         Text("日记文件配置", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-        Card(modifier = Modifier.fillMaxWidth()) {
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     value = diaryFolder,
@@ -561,7 +565,9 @@ private fun DiaryStorageTab(
 
 
         Text("附件配置", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-        Card(modifier = Modifier.fillMaxWidth()) {
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 DropdownSetting(
                     label = "图片命名格式",
@@ -645,7 +651,7 @@ private fun DiaryStorageTab(
                     else -> "image.jpg"
                 }
                 Text(
-                    text = "附件储存路径示例：{vaultPath}/{attachmentDir}/$exampleName",
+                    text = "附件储存路径示例：$vaultPath/$imageStoragePath/$exampleName",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                 )
@@ -678,7 +684,9 @@ private fun EditorSettingsTab(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("时间戳设置", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-        Card(modifier = Modifier.fillMaxWidth()) {
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 DropdownSetting(
                     label = "时间戳格式",
@@ -764,7 +772,9 @@ private fun EditorSettingsTab(
         }
 
         Text("编辑器设置", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-        Card(modifier = Modifier.fillMaxWidth()) {
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Column(modifier = Modifier.padding(horizontal = 0.dp)) {
                 ListItem(
                     headlineContent = { Text("回车触发保存") },
@@ -824,7 +834,9 @@ private fun WidgetsTab(
     ) {
         Text("小部件与快捷方式", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
 
-        Card(modifier = Modifier.fillMaxWidth()) {
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("小部件自定义图标", style = MaterialTheme.typography.titleSmall)
                 Text("选择一张图片作为快速添加小部件和桌面图标的图标",
@@ -879,7 +891,9 @@ private fun WidgetsTab(
             }
         }
 
-        Card(modifier = Modifier.fillMaxWidth()) {
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("添加快捷方式", style = MaterialTheme.typography.titleSmall)
 
@@ -975,7 +989,9 @@ private fun OtherTab(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("更新设置", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-        Card(modifier = Modifier.fillMaxWidth()) {
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Column(modifier = Modifier.padding(horizontal = 0.dp)) {
                 ListItem(
                     headlineContent = { Text("启动时自动检查更新") },
@@ -989,7 +1005,9 @@ private fun OtherTab(
             }
         }
 
-        Card(modifier = Modifier.fillMaxWidth()) {
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onCheckUpdate, modifier = Modifier.fillMaxWidth(), enabled = !isCheckingUpdate) {
                     Icon(Icons.Default.Update, null, Modifier.size(18.dp))
@@ -1019,7 +1037,9 @@ private fun OtherTab(
         }
 
         Text("辅助服务", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-        Card(modifier = Modifier.fillMaxWidth()) {
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 val accReady = com.quickdaily.QuickAccessibilityService.isAvailable(context)
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -1041,7 +1061,9 @@ private fun OtherTab(
         }
 
         Text("日志", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-        Card(modifier = Modifier.fillMaxWidth()) {
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Column(modifier = Modifier.padding(horizontal = 0.dp)) {
                 ListItem(
                     headlineContent = { Text("记录日志") },
@@ -1065,7 +1087,9 @@ private fun OtherTab(
         }
 
         Text("关于", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-        Card(modifier = Modifier.fillMaxWidth()) {
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("QuickDaily ", style = MaterialTheme.typography.titleMedium)
 
@@ -1129,7 +1153,9 @@ private fun OtherTab(
             }
         }
 
-        Card(modifier = Modifier.fillMaxWidth()) {
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("如果您喜欢 QuickDaily，可以扫码支持：", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                 Spacer(Modifier.height(8.dp))
