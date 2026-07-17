@@ -1,6 +1,7 @@
 package com.quickdaily
 
 import android.util.Log
+import com.quickdaily.BetaLogger
 import android.content.Context
 import android.content.Intent
 import android.widget.RemoteViews
@@ -21,7 +22,18 @@ class TaskViewsFactory(private val context: Context) : RemoteViewsService.Remote
 
     override fun onCreate() { loadTasks() }
 
-    override fun onDataSetChanged() { loadTasks() }
+    override fun onDataSetChanged() { 
+        BetaLogger.log("TaskWidgetSvc", "onDataSetChanged start")
+        loadTasks()
+        if (tasks.isEmpty()) {
+            BetaLogger.log("TaskWidgetSvc", "tasks empty, 200ms retry")
+            try { Thread.sleep(200) } catch (_: Exception) {}
+            loadTasks()
+            BetaLogger.log("TaskWidgetSvc", "retry done tasks=" + tasks.size)
+            android.util.Log.d("QuickDaily", "TaskViewsFactory: retry done, tasks=" + tasks.size)
+        }
+        BetaLogger.log("TaskWidgetSvc", "onDataSetChanged complete tasks=" + tasks.size)
+    }
 
     override fun onDestroy() { tasks.clear() }
 
@@ -47,19 +59,23 @@ class TaskViewsFactory(private val context: Context) : RemoteViewsService.Remote
     override fun hasStableIds(): Boolean = false
 
     private fun loadTasks() {
+        val startMs = System.currentTimeMillis()
         tasks.clear()
-        android.util.Log.d("QuickDaily", "TaskViewsFactory.loadTasks() 开始读取任务")
+        BetaLogger.log("TaskWidgetSvc", "loadTasks start")
+        android.util.Log.d("QuickDaily", "TaskViewsFactory.loadTasks() start")
         try {
             val prefs = context.getSharedPreferences("QuickDaily", 0)
             val vaultPath = prefs.getString("vault_path", "") ?: ""
             if (vaultPath.isBlank()) {
-                android.util.Log.w("QuickDaily", "TaskViewsFactory: vaultPath 为空")
+                BetaLogger.log("TaskWidgetSvc", "loadTasks vaultPath blank")
+                android.util.Log.w("QuickDaily", "TaskViewsFactory: vaultPath blank")
                 return
             }
             val diaryFolder = prefs.getString("diary_folder", "Daily") ?: "Daily"
             val dateFormat = prefs.getString("date_format", "YYYY-MM-DD") ?: "YYYY-MM-DD"
             val date = DateUtil.todayStr(dateFormat)
             val path = "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/$date.md"
+            android.util.Log.d("QuickDaily", "TaskViewsFactory: vaultPath=" + vaultPath + " diaryFolder=" + diaryFolder + " dateFormat=" + dateFormat + " date=" + date + " path=" + path)
             val content = FileUtil.read(path)
             if (content.isEmpty()) {
                 android.util.Log.w("QuickDaily", "TaskViewsFactory: 日记内容为空，path=$path")

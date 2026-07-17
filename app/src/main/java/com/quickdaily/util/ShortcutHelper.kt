@@ -30,13 +30,8 @@ object ShortcutHelper {
         }
 
         // 清理所有旧的 quick_note 快捷方式（动态 + 固定），避免重复创建失败
-        try {
-            val pinned = shortcutManager.pinnedShortcuts
-            val oldIds = pinned.filter { it.id.startsWith(SHORTCUT_ID_PREFIX) }.map { it.id }
-            if (oldIds.isNotEmpty()) {
-                shortcutManager.disableShortcuts(oldIds)
-            }
-            // 也清理可能残存的动态快捷方式
+       try {
+           // 也清理可能残存的动态快捷方式
             val dynamic = shortcutManager.dynamicShortcuts
             val dynamicOldIds = dynamic.filter { it.id.startsWith(SHORTCUT_ID_PREFIX) }.map { it.id }
             if (dynamicOldIds.isNotEmpty()) {

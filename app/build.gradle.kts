@@ -12,8 +12,8 @@ android {
         applicationId = "com.quickdaily"
         minSdk = 26
         targetSdk = 35
-        versionCode = 28
-        versionName = "1.5"
+        versionCode = 39
+        versionName = "1.5.12-beta"
     }
 
     buildFeatures {

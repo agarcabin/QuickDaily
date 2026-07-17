@@ -1,5 +1,6 @@
 ﻿package com.quickdaily
 
+import android.app.Activity
 import android.os.Bundle
 import android.view.Gravity
 import android.view.WindowManager
@@ -12,8 +13,12 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FormatBold
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Redo
+import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material.icons.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.runtime.*
@@ -30,6 +35,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
+import com.quickdaily.BetaLogger
 import com.quickdaily.util.DateUtil
 import com.quickdaily.util.ContentUtil
 import com.quickdaily.util.ImageUtil
@@ -37,17 +43,19 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.Image
 import androidx.compose.runtime.snapshots.SnapshotStateList
+import com.quickdaily.ui.theme.*
+import android.view.MotionEvent
+import android.view.inputmethod.InputMethodManager
+import android.widget.Toast
 import android.net.Uri
 import com.quickdaily.util.FileUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import android.view.MotionEvent
-import android.widget.Toast
-
 class NoteEditActivity : ComponentActivity() {
     private var noteText by mutableStateOf("")
     private val selectedImages = mutableStateListOf<Uri>()
@@ -67,6 +75,13 @@ class NoteEditActivity : ComponentActivity() {
         val prefillTxt = intent.getStringExtra("prefill_text") ?: ""
         if (prefillTxt.isNotBlank()) noteText = prefillTxt
         val prefs = getSharedPreferences("QuickDaily", 0)
+        // Scan existing tags for autocomplete
+        val vaultPath = prefs.getString("vault_path", "") ?: ""
+        if (vaultPath.isNotBlank()) {
+            lifecycleScope.launch(Dispatchers.IO) {
+                com.quickdaily.util.TagScanner.getTags(vaultPath)
+            }
+        }
         noteTimestampFormat = prefs.getString("timestamp_format", "list_time") ?: "list_time"
         noteAddAnchorIfMissing = prefs.getBoolean("add_anchor_if_missing", true)
         noteTimestampOrder = prefs.getString("timestamp_order", "above") ?: "above"
@@ -89,15 +104,13 @@ class NoteEditActivity : ComponentActivity() {
         }
 
         setContent {
-            MaterialTheme(colorScheme = lightColorScheme(
-                background = Color.Transparent,
-                surface = Color.Transparent
-            )) {
+            QuickDailyTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = Color.Transparent
                 ) {
-                    NoteEditDialog(
+                    CompositionLocalProvider(LocalFloaterColors provides FloaterColors()) {
+                        NoteEditDialog(
                         text = noteText,
                         onTextChange = { noteText = it },
                         enterToSave = noteEnterToSave,
@@ -107,9 +120,12 @@ class NoteEditActivity : ComponentActivity() {
                         },
                         onClose = { finish() },
                         imageUris = selectedImages,
-                        onPickImages = { imagePicker.launch("image/*") },
+                        onPickImages = {
+                imagePicker.launch("image/*")
+            },
                         onRemoveImage = { index -> selectedImages.removeAt(index) }
-                    )
+                        )
+                    }
                 }
             }
         }
@@ -173,11 +189,11 @@ class NoteEditActivity : ComponentActivity() {
             }
 
             var existing = FileUtil.read(path)
-            val parsed = ContentUtil.parseFrontmatter(existing)
+            var parsed = ContentUtil.parseFrontmatter(existing)
             var body = if (parsed.hasFrontmatter) parsed.body else existing
 
-            // 今日文件不存在或为空时，从模板加载
-            if (existing.isEmpty()) {
+            // 文件不存在、为空、或仅有frontmatter（无正文）时，从模板加载
+            if (existing.isEmpty() || (parsed.hasFrontmatter && parsed.body.isBlank())) {
                 val tplPathPref = prefs.getString("template_path", "") ?: ""
                 if (tplPathPref.isNotBlank()) {
                     val tplPath = if (tplPathPref.startsWith("/")) tplPathPref
@@ -188,6 +204,7 @@ class NoteEditActivity : ComponentActivity() {
                         // Bug4: 重新解析模板内容，使 body 正确更新
                         val reParsed = ContentUtil.parseFrontmatter(existing)
                         body = if (reParsed.hasFrontmatter) reParsed.body else existing
+                        parsed = reParsed
                     }
                 }
             }
@@ -214,7 +231,45 @@ class NoteEditActivity : ComponentActivity() {
                 line + "\n" + imageLinks.joinToString("\n")
             } else line
 
-            val nc = if (anchor.isNotEmpty() && workingContent.contains(anchor) && noteTimestampOrder == "above") {
+            val nc = if (noteTimestampOrder == "below" && anchor.isNotEmpty()) {
+                val bodyLines = workingContent.lines().toMutableList()
+                val anchorIdx = bodyLines.indexOfFirst { it.trim().contains(anchor.trim()) }
+                if (anchorIdx >= 0) {
+                    var endIdx = bodyLines.size
+                    for (i in (anchorIdx + 1) until bodyLines.size) {
+                        val tl = bodyLines[i].trimStart()
+                        if (tl.startsWith("# ") || tl.startsWith("## ") || tl.startsWith("### ")) {
+                            endIdx = i
+                            break
+                        }
+                    }
+                    var lastDash = -1
+                    for (i in (anchorIdx + 1) until endIdx) {
+                        if (bodyLines[i].trimStart().startsWith("- ")) lastDash = i
+                    }
+                    val insAt = if (lastDash >= 0) lastDash + 1 else anchorIdx + 1
+                    bodyLines.add(insAt, effectiveLine)
+                    val nb = bodyLines.joinToString("\n")
+                    if (parsed.hasFrontmatter) ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, nb) else nb
+                } else {
+                    val allLines = workingContent.lines().toMutableList()
+                    var lastDashAll = -1
+                    for (i in allLines.indices) {
+                        if (allLines[i].trimStart().startsWith("- ")) lastDashAll = i
+                    }
+                    if (lastDashAll >= 0) {
+                        allLines.add(lastDashAll + 1, effectiveLine)
+                        val nb = allLines.joinToString("\n")
+                        if (parsed.hasFrontmatter) ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, nb) else nb
+                    } else {
+                        if (workingContent.endsWith("\n")) {
+                            if (parsed.hasFrontmatter) ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, workingContent + "$effectiveLine\n") else workingContent + "$effectiveLine\n"
+                        } else {
+                            if (parsed.hasFrontmatter) ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, workingContent + "\n$effectiveLine\n") else workingContent + "\n$effectiveLine\n"
+                        }
+                    }
+                }
+            } else if (anchor.isNotEmpty() && workingContent.contains(anchor) && noteTimestampOrder == "above") {
                 val idx = workingContent.indexOf(anchor) + anchor.length
                 val newBody = workingContent.substring(0, idx) + "\n" + effectiveLine + workingContent.substring(idx)
                 if (parsed.hasFrontmatter) {
@@ -248,8 +303,7 @@ class NoteEditActivity : ComponentActivity() {
             }
 
             FileUtil.write(path, nc)
-            QuickDailyWidget.updateAllWidgets(this@NoteEditActivity)
-            TaskWidget.refreshAllWidgets(this@NoteEditActivity)
+            WidgetRefreshHelper.refreshAll(this@NoteEditActivity)
             withContext(Dispatchers.Main) {
                 Toast.makeText(this@NoteEditActivity, "已保存", Toast.LENGTH_SHORT).show()
                 finish()
@@ -274,6 +328,26 @@ class NoteEditActivity : ComponentActivity() {
  * 判断文本是否有实质内容（去除任务标记后仍有内容）。
  * 用于防止仅含 "- [ ] " 前缀的空任务被保存。
  */
+private fun cycleHeading(tfv: TextFieldValue): TextFieldValue {
+    val text = tfv.text
+    val pos = tfv.selection.start
+    val lineStart = text.lastIndexOf("\n", pos - 1) + 1
+    val lineEnd = text.indexOf("\n", pos).let { if (it < 0) text.length else it }
+    val line = text.substring(lineStart, lineEnd)
+    val trimmed = line.trimStart()
+    val newTrimmed = when {
+        trimmed.startsWith("### ") -> trimmed.removePrefix("### ")
+        trimmed.startsWith("## ") -> "### " + trimmed.removePrefix("## ")
+        trimmed.startsWith("# ") -> "## " + trimmed.removePrefix("# ")
+        else -> "# " + trimmed
+    }
+    val indent = line.substring(0, line.length - trimmed.length)
+    val newLine = indent + newTrimmed
+    val newText = text.substring(0, lineStart) + newLine + text.substring(lineEnd)
+    val cursorPos = lineStart + newLine.length
+    return TextFieldValue(newText, TextRange(cursorPos))
+}
+
 private fun hasRealContent(text: String): Boolean {
     val trimmed = text.trim()
     if (trimmed.isBlank()) return false
@@ -326,25 +400,30 @@ private fun NoteEditDialog(
     onPickImages: () -> Unit,
     onRemoveImage: (Int) -> Unit
 ) {
-
+    val floater = LocalFloaterColors.current
+    val dim = LocalAppDimensions.current
     val focusRequester = remember { FocusRequester() }
     var tfv by remember { mutableStateOf(TextFieldValue(text, TextRange(text.length))) }
+    val localUndoStack = remember { mutableStateListOf<String>() }
+    val localRedoStack = remember { mutableStateListOf<String>() }
+    var lastUndoTime by remember { mutableLongStateOf(0L) }
+    val neCtx = LocalContext.current
+    val neView = LocalView.current
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
     LaunchedEffect(text) { if (text != tfv.text) tfv = TextFieldValue(text, TextRange(text.length)) }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = Color(0xEE1B1B2B),
-        shape = RoundedCornerShape(20.dp),
+        color = floater.background,
+        shape = RoundedCornerShape(dim.radiusXl),
         shadowElevation = 0.dp
     ) {
         Column(Modifier.fillMaxSize().padding(10.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                TextButton(onClick = onClose) { Text("取消", color = Color(0xFFAAAAAA), fontSize = 13.sp) }
-                Text("速记", fontSize = 14.sp, color = Color(0xFFCCCCCC))
+                    Box(Modifier.fillMaxWidth()) {
+                Text("速记", style = MaterialTheme.typography.labelMedium, color = floater.onSurfaceVariant, modifier = Modifier.align(Alignment.Center))
                 TextButton(onClick = {
-                    if (text.isNotBlank()) onSave() else onClose()
-                }) { Text("保存", color = Color(0xFF6EB8FF), fontSize = 13.sp) }
+                    onClose()
+                }, modifier = Modifier.align(Alignment.CenterEnd)) { Text("关闭", color = floater.onBackgroundVariant, style = MaterialTheme.typography.labelSmall) }
             }
 
 
@@ -389,48 +468,146 @@ private fun NoteEditDialog(
 
             BasicTextField(value = tfv, onValueChange = { newTfv ->
                     if (enterToSave) {
-                        tfv = TextFieldValue(newTfv.text.replace("\n", ""), TextRange(newTfv.text.replace("\n", "").length))
-                        onTextChange(newTfv.text.replace("\n", ""))
+                        val oldText = tfv.text
+                        val newText = newTfv.text
+                        val insertedNewlines = newText.count { it == '\n' } - oldText.count { it == '\n' }
+                        val lengthDiff = newText.length - oldText.length
+                        if (insertedNewlines > 0 && lengthDiff == 1) {
+                           onTextChange(oldText)
+                           if (oldText.isNotBlank() || imageUris.isNotEmpty()) onSave() else onClose()
+                        } else {
+                            val now = System.currentTimeMillis()
+                            if (now - lastUndoTime > 1500 && oldText != newTfv.text) {
+                                localUndoStack.add(oldText)
+                                if (localUndoStack.size > 50) localUndoStack.removeAt(0)
+                                localRedoStack.clear()
+                                lastUndoTime = now
+                            }
+                            tfv = newTfv
+                            onTextChange(newText)
+                        }
                     } else {
+                        val oldTextNot = tfv.text
+                        val now = System.currentTimeMillis()
+                        if (now - lastUndoTime > 1500 && oldTextNot != newTfv.text) {
+                            localUndoStack.add(oldTextNot)
+                            if (localUndoStack.size > 50) localUndoStack.removeAt(0)
+                            localRedoStack.clear()
+                            lastUndoTime = now
+                        }
                         tfv = newTfv
                         onTextChange(newTfv.text)
                     }
                     
             },
-                textStyle = TextStyle(fontSize = 15.sp, lineHeight = 22.sp, color = Color(0xFFEEEEEE)),
+                textStyle = TextStyle(fontSize = 15.sp, lineHeight = 22.sp, color = floater.onBackground),
                 modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
-                singleLine = enterToSave,
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                    imeAction = if (enterToSave) androidx.compose.ui.text.input.ImeAction.Done else androidx.compose.ui.text.input.ImeAction.Default
-                ),
-                keyboardActions = androidx.compose.foundation.text.KeyboardActions(
-                    onDone = {
-                        if (enterToSave && text.isNotBlank()) onSave()
-                    }
-                ),
                 decorationBox = { inner ->
-                    if (text.isEmpty()) Text("写点什么...", color = Color(0x66FFFFFF), fontSize = 14.sp)
+                    if (text.isEmpty()) Text("写点什么...", color = floater.onBackgroundDim, fontSize = MaterialTheme.typography.bodyMedium.fontSize)
                     inner() })
             } // end content Column (weight)
+            var noteTagList by remember { mutableStateOf(emptyList<String>()) }
+            LaunchedEffect(Unit) {
+                withContext(Dispatchers.IO) {
+                    val vp = neCtx.getSharedPreferences("QuickDaily", 0).getString("vault_path", "") ?: ""
+                    if (vp.isNotBlank()) {
+                        noteTagList = com.quickdaily.util.TagScanner.getTags(vp)
+                    }
+                }
+            }
+
+            val tagCompletion = remember(tfv) {
+                val text = tfv.text
+                val cursor = tfv.selection.start
+                if (cursor > 0 && cursor <= text.length) {
+                    val before = text.substring(0, cursor)
+                    val hi = before.lastIndexOf('#')
+                    if (hi >= 0) {
+                        val after = before.substring(hi + 1)
+                        if (after.isNotEmpty() && after[0] != ' ' && !after.all { it == '#' }) {
+                            val p = after.takeWhile { it.isLetterOrDigit() || it == '_' || it == '/' || it == '-' }
+                            val wordBefore = hi > 0 && (text[hi - 1].isLetterOrDigit() || text[hi - 1] == '_')
+                            if (!wordBefore) {
+                                val tagFinished2 = p in noteTagList && (after.length == p.length || after.length > p.length && (!after[p.length].isLetterOrDigit() && after[p.length] != '#'))
+                                if (!tagFinished2) {
+                                    return@remember Triple(true, p, hi)
+                                }
+                            }
+                        }
+                    }
+                }
+                Triple(false, "", 0)
+            }
+
+            val (tagActive2, tagPrefix2, tagHashPos2) = tagCompletion
+
+
+
+            val noteMatchingTags = remember(tagActive2, tagPrefix2, noteTagList) {
+                if (!tagActive2) emptyList()
+                else {
+                    val p = tagPrefix2
+                    if (p.isEmpty()) noteTagList.take(8)
+                    else noteTagList.filter { it.contains(p as CharSequence, ignoreCase = true) }.take(8)
+                }
+            }
+
+            val noteSelectTag: (String) -> Unit = remember(tagHashPos2) {
+                { tag ->
+                    val text = tfv.text
+                    val cursor = tfv.selection.start
+                    val hp = tagHashPos2
+                    val needSpaceBefore2 = hp > 0 && text[hp - 1] != ' ' && text[hp - 1] != '\n'
+                    val prefix = if (needSpaceBefore2) " #" else "#"
+                    val newText = text.substring(0, hp) + prefix + tag + " " + text.substring(cursor)
+                    val newCursor = hp + prefix.length + tag.length + 1
+                    tfv = TextFieldValue(newText, TextRange(newCursor))
+                    onTextChange(newText)
+                }
+            }
+
+            // ── Tag autocomplete dropdown ──
+            if (tagActive2 && noteMatchingTags.isNotEmpty()) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 180.dp),
+                    shadowElevation = 4.dp,
+                    tonalElevation = 2.dp,
+                    color = MaterialTheme.colorScheme.surfaceVariant
+                ) {
+                    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                        noteMatchingTags.forEach { tag ->
+                            TextButton(
+                                onClick = { noteSelectTag(tag) },
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 36.dp)
+                            ) {
+                                Text(
+                                    "#$tag",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.padding(horizontal = 8.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             // ── 底部工具栏（5个按钮，平替之前的 +[图片] 和 +[任务]）──
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start, verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onPickImages, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.Image, "图片", tint = Color(0xFF6EB8FF), modifier = Modifier.size(20.dp))
+                    Icon(Icons.Default.Image, "图片", tint = floater.primary, modifier = Modifier.size(20.dp))
                 }
                 IconButton(onClick = {
                     val newText = taskToggleAtCursor(tfv)
                     tfv = TextFieldValue(newText, TextRange(newText.length))
                     onTextChange(newText)
                 }, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.CheckBoxOutlineBlank, "任务", tint = Color(0xFF6EB8FF), modifier = Modifier.size(20.dp))
+                    Icon(Icons.Default.CheckBoxOutlineBlank, "任务", tint = floater.primary, modifier = Modifier.size(20.dp))
                 }
                 IconButton(onClick = {
-                    val t = tfv.text; val c = tfv.selection.start
-                    val nt = t.substring(0, c) + "#" + t.substring(c)
-                    tfv = TextFieldValue(nt, TextRange(c + 1))
-                    onTextChange(nt)
-                }, modifier = Modifier.size(36.dp)) {
-                    Text("#", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color(0xFF6EB8FF))
+                    tfv = cycleHeading(tfv)
+                    onTextChange(tfv.text)
+                }, modifier = Modifier.size(dim.iconXl)) {
+                    Text("#", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = floater.primary)
                 }
                 IconButton(onClick = {
                     val t = tfv.text; val c = tfv.selection.start
@@ -456,7 +633,55 @@ private fun NoteEditDialog(
                         tfv = TextFieldValue(nt, TextRange(c + 2)); onTextChange(nt)
                     }
                 }, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.FormatBold, "加粗", tint = Color(0xFF6EB8FF), modifier = Modifier.size(20.dp))
+                    Icon(Icons.Default.FormatBold, "加粗", tint = floater.primary, modifier = Modifier.size(20.dp))
+                }
+                // 撤销
+                IconButton(
+                    onClick = {
+                        if (localUndoStack.isNotEmpty()) {
+                            val cur = tfv.text
+                            localRedoStack.add(cur)
+                            if (localRedoStack.size > 50) localRedoStack.removeAt(0)
+                            val prev = localUndoStack.removeAt(localUndoStack.lastIndex)
+                            tfv = TextFieldValue(prev, TextRange(prev.length))
+                            onTextChange(prev)
+                            BetaLogger.log("Toolbar", "undo")
+                        }
+                    },
+                    modifier = Modifier.size(36.dp),
+                    enabled = localUndoStack.isNotEmpty()
+                ) {
+                    Icon(Icons.Default.Undo, "撤销", tint = floater.primary, modifier = Modifier.size(20.dp))
+                }
+                // 重做
+                IconButton(
+                    onClick = {
+                        if (localRedoStack.isNotEmpty()) {
+                            val cur = tfv.text
+                            localUndoStack.add(cur)
+                            if (localUndoStack.size > 50) localUndoStack.removeAt(0)
+                            val next = localRedoStack.removeAt(localRedoStack.lastIndex)
+                            tfv = TextFieldValue(next, TextRange(next.length))
+                            onTextChange(next)
+                            BetaLogger.log("Toolbar", "redo")
+                        }
+                    },
+                    modifier = Modifier.size(36.dp),
+                    enabled = localRedoStack.isNotEmpty()
+                ) {
+                    Icon(Icons.Default.Redo, "重做", tint = floater.primary, modifier = Modifier.size(20.dp))
+                }
+                // 关闭键盘
+                Spacer(Modifier.weight(1f))
+                IconButton(
+                    onClick = {
+                        val t = tfv.text
+                        if (t.isNotBlank() || imageUris.isNotEmpty()) onSave() else onClose()
+                        BetaLogger.log("Toolbar", "save")
+                    },
+                    modifier = Modifier.size(dim.iconXl)
+                ) {
+                    Icon(Icons.Default.Check, "保存", tint = floater.primary, modifier = Modifier.size(dim.iconMd))
                 }
             } // end toolbar Row
         }

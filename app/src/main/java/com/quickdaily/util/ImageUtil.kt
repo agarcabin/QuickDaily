@@ -11,7 +11,7 @@ import java.time.format.DateTimeFormatter
 /** 图片处理工具 */
 object ImageUtil {
 
-    private val TIMESTAMP_FMT = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")
+    private val TIMESTAMP_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd_HHmmss")
 
     /**
      * 根据命名格式生成图片文件名。
@@ -70,7 +70,8 @@ object ImageUtil {
     fun markdownLink(relativePath: String, format: String): String {
         return when (format) {
             "bare" -> "![]($relativePath)"
-            "described" -> "![${relativePath.substringAfterLast("/").substringBeforeLast(".")}]($relativePath)"
+           "described" -> "![${relativePath.substringAfterLast("/").substringBeforeLast(".")}]($relativePath)"
+            "obsidian_wikilink" -> "![[${relativePath.substringAfterLast("/")}]]"
             else -> "![]($relativePath)"
         }
     }
@@ -79,13 +80,40 @@ object ImageUtil {
      * 从 content URI 获取文件扩展名。
      */
     fun getExtension(context: Context, uri: Uri): String {
-        val mimeType = context.contentResolver.getType(uri) ?: "image/jpeg"
+        var name: String? = null
+        try {
+            val cursor = context.contentResolver.query(uri, null, null, null, null)
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    val idx = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0) { name = it.getString(idx) }
+                }
+            }
+        } catch (_: Exception) {}
+        val n = name
+        if (n != null && n.contains(".")) {
+            return "." + n.substringAfterLast(".")
+        }
+        val mimeType = context.contentResolver.getType(uri) ?: return ".bin"
         return when {
             mimeType.contains("png") -> ".png"
             mimeType.contains("gif") -> ".gif"
             mimeType.contains("webp") -> ".webp"
             mimeType.contains("bmp") -> ".bmp"
-            else -> ".jpg"
+            mimeType.contains("jpeg") || mimeType.contains("jpg") -> ".jpg"
+            mimeType.contains("pdf") -> ".pdf"
+            mimeType.contains("msword") || mimeType.contains("word") -> ".doc"
+            mimeType.contains("spreadsheet") || mimeType.contains("excel") || mimeType.contains("sheet") -> ".xls"
+            mimeType.contains("presentation") || mimeType.contains("powerpoint") || mimeType.contains("ppt") -> ".ppt"
+            mimeType.contains("text") -> ".txt"
+            mimeType.contains("html") -> ".html"
+            mimeType.contains("json") -> ".json"
+            mimeType.contains("zip") -> ".zip"
+            mimeType.contains("rar") -> ".rar"
+            mimeType.contains("octet-stream") -> ".bin"
+            mimeType.contains("video") -> ".mp4"
+            mimeType.contains("audio") -> ".mp3"
+            else -> ".bin"
         }
     }
 

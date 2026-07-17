@@ -33,24 +33,22 @@ data class DiaryConfig(
     val imageStoragePath: String = "",
     val imageNamingFormat: String = "timestamp_original",
     val imageLinkFormat: String = "described",
-    val imageCustomNamingFormat: String = ""
+    val imageCustomNamingFormat: String = "yyyy-MM-dd_HHmmss_{filename}{ext}",
+    val tagAutocomplete: Boolean = true,
+    val loggingEnabled: Boolean = false
 )
 
 
 /** Obsidian 应用配置（来自 .obsidian/app.json） */
 data class ObsidianAppConfig(
-    val attachmentFolderPath: String = "/"
+    val attachmentFolderPath: String = "/",
+    val useMarkdownLinks: Boolean = false
 )
 
 class AppState(application: Application) : AndroidViewModel(application) {
 
     private val app: Application = application
 
-    /**
-     * 应用级协程作用域 — 用于必须在 Activity 销毁后仍需完成的 IO 操作（如 saveNow）。
-     * 使用 SupervisorJob：单个子协程失败不会取消其他子协程。
-     * viewModelScope 在 Activity finish 后会被取消，导致写入中断；改用此作用域避免数据丢失。
-     */
     private val appScope: CoroutineScope =
         CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -63,6 +61,9 @@ class AppState(application: Application) : AndroidViewModel(application) {
     private val _diaryContent = MutableStateFlow("")
     val diaryContent: StateFlow<String> = _diaryContent.asStateFlow()
 
+    private val _tags = MutableStateFlow<List<String>>(emptyList())
+    val tags: StateFlow<List<String>> = _tags.asStateFlow()
+
     private val _frontmatter = MutableStateFlow("")
     val frontmatter: StateFlow<String> = _frontmatter.asStateFlow()
 
@@ -74,8 +75,16 @@ class AppState(application: Application) : AndroidViewModel(application) {
 
     private var autoSave: Debounce? = null
 
-    /** 上次从磁盘加载文件时的 mtime，用于 onResume 时判断是否需要重读 */
     private var _lastLoadedMtime: Long = 0L
+
+    // ── Undo/Redo ────────────────────────────────────────
+    private val _undoStack = mutableListOf<String>()
+    private val _redoStack = mutableListOf<String>()
+    private var _lastUndoPushTime = 0L
+    private val _canUndo = MutableStateFlow(false)
+    val canUndo: StateFlow<Boolean> = _canUndo.asStateFlow()
+    private val _canRedo = MutableStateFlow(false)
+    val canRedo: StateFlow<Boolean> = _canRedo.asStateFlow()
 
     // ── Config ──────────────────────────────────────────
 
@@ -96,18 +105,19 @@ class AppState(application: Application) : AndroidViewModel(application) {
             imageStoragePath = prefs.getString("image_storage_path", "") ?: "",
             imageNamingFormat = prefs.getString("image_naming_format", "timestamp_original") ?: "timestamp_original",
             imageLinkFormat = prefs.getString("image_link_format", "described") ?: "described",
-            imageCustomNamingFormat = prefs.getString("image_custom_naming_format", "") ?: ""
+            imageCustomNamingFormat = prefs.getString("image_custom_naming_format", "yyyy-MM-dd_HHmmss_{filename}{ext}") ?: "yyyy-MM-dd_HHmmss_{filename}{ext}",
+            tagAutocomplete = prefs.getBoolean("tag_autocomplete", true),
+            loggingEnabled = prefs.getBoolean("logging_enabled", false)
         )
     }
 
     fun saveConfig(raw: DiaryConfig) {
-        // trim + 空白字段用默认值兜底
         val config = DiaryConfig(
             vaultPath = raw.vaultPath.trim(),
             diaryFolder = raw.diaryFolder.trim().ifBlank { "Daily" },
             dateFormat = raw.dateFormat.trim().ifBlank { "YYYY-MM-DD" },
             templatePath = raw.templatePath.trim(),
-            anchorText = raw.anchorText.trim(),
+        anchorText = raw.anchorText,
             timestampFormat = raw.timestampFormat,
             addAnchorIfMissing = raw.addAnchorIfMissing,
             timestampOrder = raw.timestampOrder,
@@ -118,7 +128,9 @@ class AppState(application: Application) : AndroidViewModel(application) {
             imageStoragePath = raw.imageStoragePath,
             imageNamingFormat = raw.imageNamingFormat,
             imageLinkFormat = raw.imageLinkFormat,
-            imageCustomNamingFormat = raw.imageCustomNamingFormat
+            imageCustomNamingFormat = raw.imageCustomNamingFormat,
+            tagAutocomplete = raw.tagAutocomplete,
+            loggingEnabled = raw.loggingEnabled
         )
         prefs.edit()
             .putString("vault_path", config.vaultPath)
@@ -137,21 +149,24 @@ class AppState(application: Application) : AndroidViewModel(application) {
             .putString("image_naming_format", config.imageNamingFormat)
             .putString("image_link_format", config.imageLinkFormat)
             .putString("image_custom_naming_format", config.imageCustomNamingFormat)
-            .commit()  // 同步写入，防止进程被杀时配置丢失
+            .putBoolean("tag_autocomplete", config.tagAutocomplete)
+            .putBoolean("logging_enabled", config.loggingEnabled)
+            .commit()
         _config.value = config
-        // 保存后重新加载日记，确保立即生效
         loadToday()
     }
 
-    /** 从 Obsidian 的 .obsidian/daily-notes.json 读取配置（异步，避免主线程 IO 崩溃） */
+    fun setLoggingEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("logging_enabled", enabled).commit()
+        _config.value = _config.value.copy(loggingEnabled = enabled)
+    }
+
     suspend fun loadObsidianConfig(vaultPath: String): DiaryConfig? {
         return kotlinx.coroutines.withContext(Dispatchers.IO) {
             val cleanPath = vaultPath.trimEnd('/')
             val jsonPath = "$cleanPath/.obsidian/daily-notes.json"
             val raw = FileUtil.readOrNull(jsonPath) ?: return@withContext null
             try {
-                // 使用 kotlinx-serialization-json 的 JsonObject 解析，
-                // 替代原正则方案——正则无法处理 JSON 转义字符（如路径中的反斜杠）
                 val json = kotlinx.serialization.json.Json {
                     ignoreUnknownKeys = true
                     isLenient = true
@@ -165,7 +180,6 @@ class AppState(application: Application) : AndroidViewModel(application) {
                 val folder = field("folder") ?: "Daily"
                 val format = DateUtil.convertObsidianFormat(field("format") ?: "YYYY-MM-DD")
                 var template = field("template") ?: ""
-                // 模板路径没有 .md 后缀时自动补上
                 if (template.isNotBlank() && !template.endsWith(".md", ignoreCase = true)) {
                     template += ".md"
                 }
@@ -176,10 +190,6 @@ class AppState(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    
-    /**
-     * 从 Obsidian 的 .obsidian/app.json 读取附件配置。
-     */
     suspend fun loadObsidianAppConfig(vaultPath: String): ObsidianAppConfig? {
         return kotlinx.coroutines.withContext(Dispatchers.IO) {
             val cleanPath = vaultPath.trimEnd('/')
@@ -190,9 +200,10 @@ class AppState(application: Application) : AndroidViewModel(application) {
                     ignoreUnknownKeys = true
                     isLenient = true
                 }
-                val obj = json.parseToJsonElement(raw) as? kotlinx.serialization.json.JsonObject ?: return@withContext null
+               val obj = json.parseToJsonElement(raw) as? kotlinx.serialization.json.JsonObject ?: return@withContext null
                 val folder = (obj["attachmentFolderPath"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "/"
-                ObsidianAppConfig(attachmentFolderPath = folder)
+                val useMarkdown = (obj["useMarkdownLinks"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: false
+                ObsidianAppConfig(attachmentFolderPath = folder, useMarkdownLinks = useMarkdown)
             } catch (_: Exception) {
                 null
             }
@@ -201,18 +212,14 @@ class AppState(application: Application) : AndroidViewModel(application) {
 
 // ── Diary ───────────────────────────────────────────
 
-    /** 根据配置拼出今天的日记完整路径 */
     fun todayFilePath(): String {
         val cfg = _config.value
-        // 始终转换 Obsidian 格式 → Java 格式，避免 DD=day-of-year 问题
         val date = DateUtil.todayStr(cfg.dateFormat)
         val base = cfg.vaultPath.trimEnd('/')
         return "$base/${cfg.diaryFolder.trimEnd('/')}/${date}.md"
     }
 
-    /** 加载今天的日记 */
     fun loadToday() {
-        // 仓库路径未设置时直接跳过
         if (_config.value.vaultPath.isBlank()) {
             _isLoaded.value = true
             return
@@ -221,42 +228,57 @@ class AppState(application: Application) : AndroidViewModel(application) {
             val path = todayFilePath()
             _todayPath.value = path
             _lastLoadedMtime = FileUtil.lastModified(path)
+            BetaLogger.log("LoadToday", "path=$path | mtime=$_lastLoadedMtime")
 
             val content = when (val result = FileUtil.readResult(path)) {
                 is ReadResult.Success -> result.content
-                is ReadResult.NotFound -> {
-                    // 不立即创建空文件——Obsidian 不会自动创建空日记，
-                    // 此处仅加载模板内容到内存，真正写入推迟到用户首次编辑后的防抖保存
-                    null
-                }
+                is ReadResult.NotFound -> null
                 is ReadResult.Error -> {
                     android.util.Log.e("QuickDaily", "读取日记失败: $path", result.exception)
+                    BetaLogger.log("LoadToday", "read_error: ${result.exception.message}")
                     null
                 }
             }
-            val rawContent = if (content != null && content.isNotEmpty()) content else loadTemplate()
-            // 解析 frontmatter（无论是否开启过滤，始终记录 frontmatter）
+            BetaLogger.log("LoadToday", "file_exists=" + (content != null) + " content_len=" + (content?.length ?: 0))
+        // If file exists with only frontmatter (empty body), still try template
+        val rawContent: String
+        var contentSource = "template"
+        if (content != null && content.isNotEmpty()) {
+            val pc = ContentUtil.parseFrontmatter(content)
+            if (pc.hasFrontmatter && pc.body.isBlank() && config.value.templatePath.isNotBlank()) {
+                val tpl = loadTemplate()
+                if (tpl.isNotEmpty()) {
+                    rawContent = tpl
+                    contentSource = "template(fm-file)"
+                } else {
+                    rawContent = content
+                    contentSource = "file(fm-only,no-tpl)"
+                }
+            } else {
+                rawContent = content
+                contentSource = "file"
+            }
+        } else {
+            rawContent = loadTemplate()  // loadTemplate() returns "" if no template set
+            contentSource = if (rawContent.isNotEmpty()) "template" else "empty"
+        }
+        BetaLogger.log("LoadToday", "rawContent from=" + contentSource + " raw_len=" + rawContent.length)
             val parsed = ContentUtil.parseFrontmatter(rawContent)
             _frontmatter.value = parsed.frontmatter
-            // 根据 filterFrontmatter 决定显示内容
             if (parsed.hasFrontmatter && config.value.filterFrontmatter) {
                 _diaryContent.value = parsed.body
             } else {
                 _diaryContent.value = rawContent
             }
+            BetaLogger.log("LoadToday", "frontmatter_len=${parsed.frontmatter.length} body_len=${parsed.body.length} has_fm=${parsed.hasFrontmatter} filtering=${config.value.filterFrontmatter}")
+            scanTags()
 
             _isLoaded.value = true
-
-            // 取消旧的防抖再创建新的
             autoSave?.cancel()
             autoSave = Debounce(scope = viewModelScope, onFire = { saveNow() })
         }
     }
 
-    /**
-     * 仅当磁盘上的日记文件比上次加载时更新（例如 Obsidian 同步覆盖、外部修改）才重新加载。
-     * 避免每次 onResume 都盲目重读，覆盖掉用户尚未保存到磁盘的编辑。
-     */
     fun reloadIfNewerOnDisk() {
         if (_config.value.vaultPath.isBlank()) return
         viewModelScope.launch(Dispatchers.IO) {
@@ -265,65 +287,140 @@ class AppState(application: Application) : AndroidViewModel(application) {
                 loadToday()
                 return@launch
             }
+            val oldMtime = _lastLoadedMtime
             val mtime = FileUtil.lastModified(path)
+            BetaLogger.log("ReloadIfNewer", "old_mtime=$oldMtime new_mtime=$mtime")
             if (mtime > _lastLoadedMtime) {
                 _lastLoadedMtime = mtime
                 val content = when (val result = FileUtil.readResult(path)) {
                     is ReadResult.Success -> result.content
-                    else -> return@launch
+                    else -> { BetaLogger.log("ReloadIfNewer", "read_failed"); return@launch }
                 }
-                _diaryContent.value =
-                    if (content.isNotEmpty()) content else loadTemplate()
+                val parsed = ContentUtil.parseFrontmatter(content)
+                _frontmatter.value = parsed.frontmatter
+                // If file has only frontmatter (empty body), try loading template
+                val effectiveContent = if (parsed.hasFrontmatter && parsed.body.isBlank()) {
+                    val tpl = loadTemplate()
+                    if (tpl.isNotEmpty()) tpl else content
+                } else {
+                    content
+                }
+                val effectiveParsed = ContentUtil.parseFrontmatter(effectiveContent)
+                _frontmatter.value = effectiveParsed.frontmatter
+                if (effectiveParsed.hasFrontmatter && _config.value.filterFrontmatter) {
+                    _diaryContent.value = effectiveParsed.body
+                } else {
+                    _diaryContent.value = effectiveContent
+                }
+                BetaLogger.log("ReloadIfNewer", "RELOADED | frontmatter_len=${parsed.frontmatter.length} body_len=${parsed.body.length} filtered=${_config.value.filterFrontmatter && parsed.hasFrontmatter}")
             }
         }
     }
 
     private fun loadTemplate(): String {
         val cfg = _config.value
-        if (cfg.templatePath.isBlank()) return ""
+        if (cfg.templatePath.isBlank()) {
+            BetaLogger.log("LoadTemplate", "templatePath empty in config")
+            return ""
+        }
         val tplPath = if (cfg.templatePath.startsWith("/")) {
             cfg.templatePath
         } else {
             "${cfg.vaultPath.trimEnd('/')}/${cfg.templatePath}"
         }
-        // 用 readOrNull 区分"模板不存在"与"读取失败"，避免吞异常返回空串
-        return FileUtil.readOrNull(tplPath) ?: ""
+        val tplContent = FileUtil.readOrNull(tplPath) ?: ""
+        if (tplContent.isEmpty()) {
+            BetaLogger.log("LoadTemplate", "template file empty or not found path=" + tplPath)
+        } else {
+            BetaLogger.log("LoadTemplate", "loaded len=" + tplContent.length + " path=" + tplPath)
+        }
+        return tplContent
     }
 
-    /** 编辑时调用：更新内容 + 触发防抖保存 */
     fun onContentChanged(newContent: String) {
+        saveUndoPoint()
         _diaryContent.value = newContent
         autoSave?.trigger()
+        BetaLogger.log("Edit", "content_len=${newContent.length}")
     }
 
-    /**
-     * 立即保存（切后台/离开 Activity 时调用）。
-     *
-     * 关键修复：使用 [appScope] 而非 viewModelScope。
-     * MainActivity.onUserLeaveHint 会在 saveNow 后立即 finishAffinity，
-     * viewModelScope 随之取消，可能导致写入中途被切断、文件损坏。
-     * appScope 生命周期与 Application 绑定，可保证协程完整执行后再进程退出。
-     */
+    // ── Undo/Redo helpers ──────────────────────────────────
+
+    fun saveUndoPoint() {
+        val now = System.currentTimeMillis()
+        if (now - _lastUndoPushTime < 1500) return
+        _lastUndoPushTime = now
+        _undoStack.add(_diaryContent.value)
+        if (_undoStack.size > 50) _undoStack.removeAt(0)
+        _redoStack.clear()
+        _canUndo.value = _undoStack.isNotEmpty()
+        _canRedo.value = false
+    }
+
+    fun undo() {
+        if (_undoStack.isEmpty()) return
+        val currentContent = _diaryContent.value
+        _redoStack.add(currentContent)
+        if (_redoStack.size > 50) _redoStack.removeAt(0)
+        val prevContent = _undoStack.removeAt(_undoStack.lastIndex)
+        _diaryContent.value = prevContent
+        _canUndo.value = _undoStack.isNotEmpty()
+        _canRedo.value = _redoStack.isNotEmpty()
+        BetaLogger.log("Undo", "restored_len=${prevContent.length} remaining=${_undoStack.size}")
+    }
+
+    fun redo() {
+        if (_redoStack.isEmpty()) return
+        val currentContent = _diaryContent.value
+        _undoStack.add(currentContent)
+        if (_undoStack.size > 50) _undoStack.removeAt(0)
+        val nextContent = _redoStack.removeAt(_redoStack.lastIndex)
+        _diaryContent.value = nextContent
+        _canUndo.value = _undoStack.isNotEmpty()
+        _canRedo.value = _redoStack.isNotEmpty()
+        BetaLogger.log("Redo", "restored_len=${nextContent.length} remaining=${_redoStack.size}")
+    }
+
+    fun scanTags() {
+        val path = _config.value.vaultPath
+        if (path.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = com.quickdaily.util.TagScanner.getTags(path)
+            _tags.value = result
+            BetaLogger.log("ScanTags", "found ${result.size} tags")
+        }
+    }
+
+    fun refreshTags() {
+        com.quickdaily.util.TagScanner.invalidateCache()
+        scanTags()
+    }
+
     fun saveNow() {
         val path = _todayPath.value
         val content = _diaryContent.value
-        // 如果开启了 frontmatter 过滤且有 frontmatter，需要重组
-        val saveContent = if (_frontmatter.value.isNotEmpty() && config.value.filterFrontmatter) {
+        // don't create empty file if diary hasn't been loaded yet
+        if (content.isEmpty() && path.isNotEmpty() && !java.io.File(path).exists()) {
+            BetaLogger.log("SaveNow", "skip saving empty content for new file")
+            return
+        }
+        val hasFm = _frontmatter.value.isNotEmpty() && config.value.filterFrontmatter
+        val saveContent = if (hasFm) {
             ContentUtil.reconstructWithFrontmatter(_frontmatter.value, content)
         } else {
             content
         }
+        BetaLogger.log("SaveNow", "body_len=${content.length} frontmatter_len=${_frontmatter.value.length} has_fm=$hasFm saving_len=${saveContent.length}")
         if (path.isNotEmpty()) {
             appScope.launch(Dispatchers.IO) {
                 FileUtil.write(path, saveContent)
-                QuickDailyWidget.updateAllWidgets(app)
-                TaskWidget.refreshAllWidgets(app)
+                WidgetRefreshHelper.refreshAll(app)
+                BetaLogger.log("SaveNow", "written_ok")
             }
         }
     }
 }
 
-/** 把 JsonPrimitive 转为 String，空白视为 null（便于默认值兜底） */
 private fun kotlinx.serialization.json.JsonPrimitive.contentOrNullBlank(): String? =
     if (this.isString) {
         content.takeIf { it.isNotBlank() }

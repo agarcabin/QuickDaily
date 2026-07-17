@@ -1,6 +1,7 @@
 package com.quickdaily
 
 import android.app.PendingIntent
+import android.app.AlarmManager
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
@@ -10,6 +11,8 @@ import android.media.MediaActionSound
 import android.os.Build
 import android.widget.RemoteViews
 import com.quickdaily.util.DateUtil
+import com.quickdaily.util.ContentUtil
+import com.quickdaily.BetaLogger
 import com.quickdaily.util.FileUtil
 
 class TaskWidget : AppWidgetProvider() {
@@ -41,6 +44,8 @@ class TaskWidget : AppWidgetProvider() {
             if (taskIdx >= 0) {
                 toggleTask(context, taskIdx)
             }
+        } else if (ACTION_MIDNIGHT_REFRESH == intent.action) {
+            refreshAllWidgets(context)
         }
     }
 
@@ -48,7 +53,23 @@ class TaskWidget : AppWidgetProvider() {
         private const val ACTION_TOGGLE_TASK = "com.quickdaily.TOGGLE_TASK"
         private const val ACTION_REFRESH = "com.quickdaily.REFRESH_TASKS"
         private const val ACTION_ADD_TASK = "com.quickdaily.ADD_TASK"
+        private const val ACTION_MIDNIGHT_REFRESH = "com.quickdaily.TASK_MIDNIGHT_REFRESH"
         private const val EXTRA_TASK_INDEX = "task_index"
+
+        fun scheduleMidnightRefresh(context: Context) {
+            try {
+                val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+                val intent = Intent(context, TaskWidget::class.java).apply { action = ACTION_MIDNIGHT_REFRESH }
+                val pi = PendingIntent.getBroadcast(context, 888, intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                val calendar = java.util.Calendar.getInstance().apply {
+                    add(java.util.Calendar.DAY_OF_YEAR, 1)
+                    set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 1)
+                    set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
+                }
+                alarmManager.setRepeating(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, AlarmManager.INTERVAL_DAY, pi)
+            } catch (_: Exception) { }
+        }
 
         fun updateWidget(
             context: Context,
@@ -104,6 +125,7 @@ class TaskWidget : AppWidgetProvider() {
         }
 
         fun refreshAllWidgets(context: Context) {
+            BetaLogger.log("TaskWidget", "refreshAllWidgets")
             android.util.Log.d("QuickDaily", "TaskWidget.refreshAllWidgets")
             val manager = AppWidgetManager.getInstance(context)
             val component = ComponentName(context, TaskWidget::class.java)
@@ -126,7 +148,9 @@ class TaskWidget : AppWidgetProvider() {
             val content = FileUtil.read(path)
             if (content.isEmpty()) return
 
-            val lines = content.lines().toMutableList()
+            val parsed = ContentUtil.parseFrontmatter(content)
+            val body = if (parsed.hasFrontmatter) parsed.body else content
+            val lines = body.lines().toMutableList()
             var foundIdx = -1
             var taskLineIdx = 0
             for (i in lines.indices) {
@@ -143,10 +167,17 @@ class TaskWidget : AppWidgetProvider() {
             // Change - [ ] to - [x]
             val oldLine = lines[foundIdx]
             lines[foundIdx] = oldLine.replaceFirst("- [ ] ", "- [x] ")
-            FileUtil.write(path, lines.joinToString("\n"))
+            val newBody = lines.joinToString("\n")
+            val saveContent = if (parsed.hasFrontmatter) {
+                ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, newBody)
+            } else {
+                newBody
+            }
+            FileUtil.write(path, saveContent)
 
-            // Refresh widget
+            // Refresh all widgets
             refreshAllWidgets(context)
+            QuickDailyReadWidget.refreshAllWidgets(context)
         }
     }
 }

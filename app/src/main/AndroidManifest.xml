@@ -2,6 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <queries>
+        <package android:name="md.obsidian" />
+    </queries>
+
     <!-- 网络权限（检查更新、GitHub API 所必需） -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -71,19 +75,16 @@
             android:taskAffinity=""
             android:launchMode="singleInstance" />
 
-        <!-- 磁贴中转 Activity 已废弃，改用 AccessibilityService 方案 -->
+        <!-- Markdown 开关中转 Activity -->
+        <activity
+            android:name=".ToggleMarkdownActivity"
+            android:exported="false"
+            android:theme="@style/Theme.QuickDaily.Transparent"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:launchMode="singleInstance" />
 
-        <receiver
-            android:name=".QuickDailyWidget"
-            android:exported="true"
-            android:label="桌面便签">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/quickdaily_widget_info" />
-        </receiver>
+        <!-- 磁贴中转 Activity 已废弃，改用 AccessibilityService 方案 -->
 
         <receiver
             android:name=".QuickNoteWidget"
@@ -134,10 +135,35 @@
                 android:resource="@xml/task_widget_info" />
         </receiver>
 
-        <service
-            android:name=".TaskWidgetService"
-            android:exported="false" />
+       <service
+           android:name=".TaskWidgetService"
+            android:exported="true" />
 
+        <receiver
+            android:name=".QuickDailyReadWidget"
+            android:exported="true"
+            android:label="桌面便签（阅读模式）">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/quickdaily_read_widget_info" />
+        </receiver>
+
+        <service
+            android:name=".QuickDailyReadWidgetService"
+            android:exported="true" />
+
+                <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

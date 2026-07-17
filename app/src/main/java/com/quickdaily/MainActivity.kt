@@ -23,6 +23,7 @@ import com.quickdaily.ui.EditorScreen
 import com.quickdaily.ui.SettingsScreen
 import com.quickdaily.ui.theme.QuickDailyTheme
 import com.quickdaily.util.ImageUtil
+import com.quickdaily.BetaLogger
 import com.quickdaily.TaskWidget
 import kotlinx.coroutines.launch
 
@@ -41,7 +42,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        BetaLogger.init(this)
 
+        BetaLogger.log("Lifecycle", "onCreate")
         appState = ViewModelProvider(this)[AppState::class.java]
         val firstLaunch = appState.config.value.vaultPath.isBlank()
 
@@ -103,6 +106,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        BetaLogger.log("Lifecycle", "onNewIntent: ${intent.action}")
         handleShareIntent(intent)
     }
 
@@ -165,11 +169,11 @@ class MainActivity : ComponentActivity() {
         var existing = com.quickdaily.util.FileUtil.read(path)
 
         // parse frontmatter, work on body only
-        val parsed = com.quickdaily.util.ContentUtil.parseFrontmatter(existing)
+        var parsed = com.quickdaily.util.ContentUtil.parseFrontmatter(existing)
         var body = if (parsed.hasFrontmatter) parsed.body else existing
 
         // 今日文件不存在或为空时，从模板加载
-        if (existing.isEmpty()) {
+        if (existing.isEmpty() || (parsed.hasFrontmatter && parsed.body.isBlank())) {
             val tplPathPref = prefs.getString("template_path", "") ?: ""
             if (tplPathPref.isNotBlank()) {
                 val tplPath = if (tplPathPref.startsWith("/")) tplPathPref
@@ -227,8 +231,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
             com.quickdaily.util.FileUtil.write(path, nc)
-        com.quickdaily.QuickDailyWidget.updateAllWidgets(this)
-        com.quickdaily.TaskWidget.refreshAllWidgets(this)
+        WidgetRefreshHelper.refreshAll(this)
 
         // 刷新编辑器内容，让用户立即看到新加入的分享内容
         if (::appState.isInitialized) {
@@ -269,7 +272,7 @@ class MainActivity : ComponentActivity() {
 
         // 将图片引用插入日记（带 frontmatter 保护）
         var existing = com.quickdaily.util.FileUtil.read(path)
-        val parsed = com.quickdaily.util.ContentUtil.parseFrontmatter(existing)
+        var parsed = com.quickdaily.util.ContentUtil.parseFrontmatter(existing)
         var body = if (parsed.hasFrontmatter) parsed.body else existing
 
         val anchor = textAnchor
@@ -300,8 +303,7 @@ class MainActivity : ComponentActivity() {
             newBody
         }
         com.quickdaily.util.FileUtil.write(path, saveContent)
-        com.quickdaily.QuickDailyWidget.updateAllWidgets(this)
-        com.quickdaily.TaskWidget.refreshAllWidgets(this)
+        WidgetRefreshHelper.refreshAll(this)
 
         android.widget.Toast.makeText(this, "已保存 ${links.size} 张图片到日记", android.widget.Toast.LENGTH_SHORT).show()
     }
@@ -330,19 +332,25 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        BetaLogger.log("Lifecycle", "onResume")
+        com.quickdaily.QuickDailyReadWidget.scheduleMidnightRefresh(this)
+        com.quickdaily.TaskWidget.scheduleMidnightRefresh(this)
         externalLaunching = false
-        if (::appState.isInitialized) {
-            // 仅当文件比内存新时才重读，避免覆盖用户未保存的编辑
-            // （saveNow 异步执行，可能尚未完成；盲目 loadToday 会丢失编辑）
-            appState.reloadIfNewerOnDisk()
-        }
+       if (::appState.isInitialized) {
+           // 仅当文件比内存新时才重读，避免覆盖用户未保存的编辑
+           // （saveNow 异步执行，可能尚未完成；盲目 loadToday 会丢失编辑）
+           appState.reloadIfNewerOnDisk()
+            // 刷新所有小部件确保最新内容
+            WidgetRefreshHelper.refreshAll(this)
+       }
     }
 
     override fun onPause() {
         super.onPause()
-        if (::appState.isInitialized) {
-            appState.saveNow()
-        }
+        BetaLogger.log("Lifecycle", "onPause")
+       if (::appState.isInitialized) {
+            WidgetRefreshHelper.refreshAll(this)
+       }
     }
 
     override fun onUserLeaveHint() {

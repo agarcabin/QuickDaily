@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_background"
+    android:orientation="vertical"
+    android:padding="10dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/widget_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:text="QuickDaily" />
+
+        <ImageButton
+            android:id="@+id/btn_eye"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:src="@drawable/ic_eye_on_white"
+            android:background="@null"
+            android:scaleType="centerInside" />
+
+        <ImageButton
+            android:id="@+id/btn_home"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:src="@drawable/ic_home_white"
+            android:background="@null"
+            android:scaleType="centerInside" />
+
+        <ImageButton
+            android:id="@+id/btn_add"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:src="@drawable/ic_add_white"
+            android:background="@null"
+            android:scaleType="centerInside" />
+    </LinearLayout>
+
+    <ListView
+        android:id="@+id/content_list"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_marginTop="4dp"
+        android:divider="@null"
+        android:dividerHeight="0dp" />
+
+    <TextView
+        android:id="@+id/empty_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:textColor="#888888"
+        android:textSize="12sp"
+        android:layout_marginTop="4dp"
+        android:text="Loading..." />
+</LinearLayout>

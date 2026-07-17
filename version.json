@@ -1,5 +1,5 @@
 ﻿{
-  "version": "1.5",
-  "url": "https://github.com/agarcabin/QuickDaily/releases/latest",
-  "body": "QuickDaily 1.5\n- Templater 插件日期格式支持\n- 首页 阅读视图图片显示\n- 首页/悬浮窗 底部工具栏\n- 修复: 悬浮窗 任务切换格式错误\n- 修复: 悬浮窗 空任务异常触发保存\n- 修复: 小部件 今日任务刷新异常"
+    "version": "1.5.12-beta",
+    "url": "https://github.com/agarcabin/QuickDaily/releases/latest",
+    "body": "QuickDaily 1.5.12-beta\n- 设置页 UI 优化：4标签页布局、命名/链接格式标签优化、锚点重置按钮、时间戳示例\n- 图片存储目录独立选择（SAF 文件夹选择器）\n- 更新检查器（多镜像源自动切换）\n- 标签自动补全（TagScanner + 光标附近 Popup）\n- 撤销/重做（主界面 + 悬浮窗）\n- 附件选择器（工具栏 AttachFile 按钮）\n- 关闭键盘按钮\n- BetaLogger 日志系统\n- 阅读模式小部件取代旧桌面便签\n- Markdown 渲染切换（ToggleMarkdownActivity）\n- 首页渲染支持 ![[wikilink]] 格式图片\n- 悬浮窗主题化（FloaterColors）\n- 设计 Token 系统（AppDimensions/AppTypography）\n- Obsidian app.json 读取 useMarkdownLinks"
 }

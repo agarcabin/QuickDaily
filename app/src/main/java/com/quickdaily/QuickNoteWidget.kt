@@ -3,6 +3,7 @@ package com.quickdaily
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -30,14 +31,15 @@ class QuickNoteWidget : AppWidgetProvider() {
     companion object {
         private const val CORNER_RADIUS_DP = 16f
         private const val WIDGET_IMAGE_FILE = "widget_image.jpg"
+        private const val IMAGE_TEMPLATE_FILE = "widget_image.jpg"
         private const val IMAGE_SIZE = 300
 
         fun updateAllWidgets(context: Context) {
             val appWidgetManager = AppWidgetManager.getInstance(context)
-            val component = android.content.ComponentName(context, QuickNoteWidget::class.java)
+            val component = ComponentName(context, QuickNoteWidget::class.java)
             val widgetIds = appWidgetManager.getAppWidgetIds(component)
-            for (widgetId in widgetIds) {
-                updateWidget(context, appWidgetManager, widgetId)
+            for (id in widgetIds) {
+                updateWidget(context, appWidgetManager, id)
             }
         }
 
@@ -51,14 +53,16 @@ class QuickNoteWidget : AppWidgetProvider() {
             )
             views.setOnClickPendingIntent(R.id.quicknote_root, pendingIntent)
 
-            // 尝试从私有目录读取图片（保存时用 file:// 前缀存到 config）
-            val prefs = context.getSharedPreferences("QuickDaily", 0)
-            val imageUriStr = prefs.getString("widget_image_uri", "") ?: ""
-            val hasCustomImage = imageUriStr.isNotEmpty()
+            val hasCustomImage = context.getSharedPreferences("QuickDaily", 0)
+                .getString("widget_image_uri", "")?.isNotEmpty() == true
 
             if (hasCustomImage) {
-                // 从 App 私有 filesDir 读取图片（不需要跨进程 URI 权限）
-                val imageFile = File(context.filesDir, WIDGET_IMAGE_FILE)
+                val templateFile = File(context.filesDir, IMAGE_TEMPLATE_FILE)
+                val perWidgetFile = File(context.filesDir, "widget_image_${widgetId}.jpg")
+                if (!perWidgetFile.exists() && templateFile.exists()) {
+                    try { templateFile.copyTo(perWidgetFile, overwrite = false) } catch (_: Exception) { }
+                }
+                val imageFile = if (perWidgetFile.exists()) perWidgetFile else File(context.filesDir, WIDGET_IMAGE_FILE)
                 if (imageFile.exists()) {
                     try {
                         val bitmap: Bitmap? = BitmapFactory.decodeFile(imageFile.absolutePath)
@@ -70,13 +74,12 @@ class QuickNoteWidget : AppWidgetProvider() {
                             views.setImageViewBitmap(R.id.quicknote_image, rounded)
                             views.setViewVisibility(R.id.quicknote_image, android.view.View.VISIBLE)
                             views.setViewVisibility(R.id.quicknote_label, android.view.View.GONE)
-                            // 有自定义图片时，去掉灰色背景，只显示图片（用透明背景）
                             views.setInt(R.id.quicknote_root, "setBackgroundResource", R.drawable.widget_transparent)
                         } else {
                             resetToDefault(views)
                         }
                     } catch (e: Exception) {
-                        android.util.Log.e("QuickDaily", "小部件图片加载失败: ${e.message}")
+                        android.util.Log.e("QuickDaily", "小部件图片加载失败: " + e.message)
                         resetToDefault(views)
                     }
                 } else {
@@ -92,11 +95,9 @@ class QuickNoteWidget : AppWidgetProvider() {
         private fun resetToDefault(views: RemoteViews) {
             views.setViewVisibility(R.id.quicknote_image, android.view.View.GONE)
             views.setViewVisibility(R.id.quicknote_label, android.view.View.VISIBLE)
-            // 恢复默认深色背景（快速添加小部件）
             views.setInt(R.id.quicknote_root, "setBackgroundResource", R.drawable.widget_background)
         }
 
-        // 居中裁剪为正方形
         private fun centerCropSquare(src: Bitmap): Bitmap {
             val size = minOf(src.width, src.height)
             val x = (src.width - size) / 2
@@ -104,7 +105,6 @@ class QuickNoteWidget : AppWidgetProvider() {
             return Bitmap.createBitmap(src, x, y, size, size)
         }
 
-        // 给 bitmap 加圆角
         private fun getRoundedBitmap(bitmap: Bitmap, radiusPx: Int): Bitmap {
             val output = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(output)

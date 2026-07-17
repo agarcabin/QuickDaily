@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.sp
 fun MdRenderer(
     text: String,
     vaultBasePath: String? = null,
+    imageStoragePath: String? = null,
     onToggleCheckbox: ((Int) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -97,12 +98,17 @@ fun MdRenderer(
                     }
                 }
                 is MdLine.Image -> {
-                    val fullPath = remember(line.path, vaultBasePath) {
-                        resolveImagePath(line.path, vaultBasePath)
+                    val paths = remember(line.path, vaultBasePath, imageStoragePath) {
+                        val primary = resolveImagePath(line.path, vaultBasePath)
+                        val fallback = if (imageStoragePath != null && !line.path.startsWith("/")) {
+                            resolveImagePath("${imageStoragePath.trimEnd('/')}/${line.path.trimStart('/')}", vaultBasePath)
+                        } else null
+                        Pair(primary, fallback)
                     }
-                    val bitmap = remember(fullPath) {
+                    val bitmap = remember(paths) {
                         try {
-                            BitmapFactory.decodeFile(fullPath)
+                            BitmapFactory.decodeFile(paths.first)
+                                ?: paths.second?.let { BitmapFactory.decodeFile(it) }
                         } catch (_: Exception) { null }
                     }
                     if (bitmap != null) {
@@ -217,6 +223,7 @@ sealed class MdLine {
 private val ORDERED_LIST_RE = Regex("^\\d+\\.\\s.*")
 private val IMAGE_INLINE_RE = Regex("""^!\[([^\]]*)\]\(([^)]+)\)\s*$""")
 private val TOGGLE_CHECK_RE = Regex("- \\[x\\]", RegexOption.IGNORE_CASE)
+private val IMAGE_WIKI_RE = Regex("""^!\[\[([^\]|]+)(?:\|([^\]]*))?\]\]\s*$""")
 
 fun parseLines(markdown: String): List<MdLine> {
     val lines = markdown.split("\n")
@@ -232,8 +239,15 @@ fun parseLines(markdown: String): List<MdLine> {
                 val match = IMAGE_INLINE_RE.find(trimmed)!!
                 result.add(MdLine.Image(match.groupValues[2], match.groupValues[1]))
             }
+            // ![[filename]] wikilink 图片格式
+            trimmed.matches(IMAGE_WIKI_RE) -> {
+                val match = IMAGE_WIKI_RE.find(trimmed)!!
+                val path = match.groupValues[1]
+                val alt = match.groupValues.getOrElse(2) { "" }
+                result.add(MdLine.Image(path, alt))
+            }
             // 标题
-            trimmed.startsWith("#") -> {
+            trimmed.matches(Regex("^#{1,6} .*")) -> {
                 val level = trimmed.takeWhile { it == '#' }.length
                 val text = trimmed.drop(level).trimStart()
                 result.add(MdLine.Heading(level.coerceIn(1, 6), text))
