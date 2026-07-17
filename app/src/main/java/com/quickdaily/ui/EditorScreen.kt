@@ -220,6 +220,24 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
             TopAppBar(
                 title = { Text(title.ifEmpty { "QuickDaily" }, style = MaterialTheme.typography.titleMedium) },
                 actions = {
+
+                    TextButton(onClick = {
+                        val vaultName = config.vaultPath.trimEnd('/').substringAfterLast('/')
+                        if (vaultName.isNotBlank()) {
+                            try {
+                                val uri = Uri.parse("obsidian://open?vault=${Uri.encode(vaultName)}")
+                                val intent = Intent(Intent.ACTION_VIEW, uri)
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "未安装 Obsidian", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }) {
+                        Text("打开Obsidian",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimary)
+                    }
+
                     IconButton(onClick = { showPreview = !showPreview }) {
                         Icon(if (showPreview) Icons.Default.Edit else Icons.Default.Visibility, null)
                     }

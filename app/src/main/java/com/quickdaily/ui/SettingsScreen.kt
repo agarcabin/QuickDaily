@@ -218,6 +218,36 @@ fun SettingsScreen(
         }
     }
 
+
+
+    val diaryFolderPicker = rememberLauncherForActivityResult(
+
+        ActivityResultContracts.OpenDocumentTree()
+
+    ) { uri: Uri? ->
+
+        uri?.let {
+
+            val path = com.quickdaily.util.UriUtil.treeUriToPath(it)
+
+            if (path != null) {
+
+                diaryFolder = if (vaultPath.isNotBlank() && path.startsWith(vaultPath)) {
+
+                    path.removePrefix(vaultPath).trimStart('/')
+
+                } else {
+
+                    path
+
+                }
+
+            }
+
+        }
+
+    }
+
     val templatePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -363,6 +393,8 @@ fun SettingsScreen(
                         onPickVault = { onExternalLaunch(); vaultPicker.launch(null) },
                         onPickTemplate = { onExternalLaunch(); templatePicker.launch(arrayOf("text/markdown", "text/plain", "*/*")) },
                         onPickImageStorage = { onExternalLaunch(); imageStoragePicker.launch(null) },
+
+                        onPickDiaryFolder = { onExternalLaunch(); diaryFolderPicker.launch(null) },
                         onSave = { saveFull(); onBack() },
                         vaultEnabled = vaultPath.isNotBlank()
                     )
@@ -445,6 +477,8 @@ private fun DiaryStorageTab(
     onPickVault: () -> Unit,
     onPickTemplate: () -> Unit,
     onPickImageStorage: () -> Unit,
+
+    onPickDiaryFolder: () -> Unit,
     onSave: () -> Unit,
     vaultEnabled: Boolean,
 ) {
@@ -490,10 +524,15 @@ private fun DiaryStorageTab(
                 OutlinedTextField(
                     value = diaryFolder,
                     onValueChange = onDiaryFolderChange,
-                    label = { Text("日记文件夹") },
+                    label = { Text("日记文件夹路径") },
                     placeholder = { Text("Daily") },
                     modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
+                    singleLine = true,
+                    trailingIcon = {
+                        IconButton(onClick = onPickDiaryFolder) {
+                            Icon(Icons.Default.FolderOpen, "选择文件夹")
+                        }
+                    }
                 )
                 OutlinedTextField(
                     value = dateFormat,
@@ -688,8 +727,8 @@ private fun EditorSettingsTab(
                     })
                 }
 
-                if (config.addAnchorIfMissing || config.timestampFormat != "none") {
-                    Spacer(Modifier.height(4.dp))
+                if (config.timestampFormat != "none") {
+
                     Text(
                         "时间戳示例：",
                         style = MaterialTheme.typography.labelSmall,
