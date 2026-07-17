@@ -304,7 +304,7 @@ fun SettingsScreen(
                     "${context.packageName}.fileprovider",
                     cropFile
                 )
-                val cropIntent = Intent("com.android.camera.action.CROP").apply {
+                val cropIntent = Intent(Intent.ACTION_EDIT).apply {
                     setDataAndType(srcUri, "image/*")
                     putExtra("crop", "true")
                     putExtra("aspectX", 1)
@@ -724,7 +724,7 @@ private fun DiaryStorageTab(
                 )
                 val exampleName = when (config.imageNamingFormat) {
                     "original" -> "image.jpg"
-                    "timestamp_original" -> (if (config.timestampFormat.contains("seconds")) com.quickdaily.util.DateUtil.nowTimeSecondsStr() else com.quickdaily.util.DateUtil.nowTimeStr()) + "_image.jpg"
+                    "timestamp_original" -> com.quickdaily.util.DateUtil.todayStr("YYYY-MM-DD") + "_" + (if (config.timestampFormat.contains("seconds")) com.quickdaily.util.DateUtil.nowTimeSecondsStr() else com.quickdaily.util.DateUtil.nowTimeStr()) + "_image.jpg"
                     "custom" -> { val f = config.imageCustomNamingFormat.ifEmpty { "image.jpg" }; f.replace("{filename}", "image").replace("{ext}", ".jpg") }
                     else -> "image.jpg"
                 }
@@ -859,7 +859,7 @@ private fun EditorSettingsTab(
                 containerColor = MaterialTheme.colorScheme.surfaceContainerLow
             ),
         ) {
-            Column(modifier = Modifier.padding(horizontal = 0.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
                 ListItem(
                     headlineContent = { Text("回车触发保存") },
                     supportingContent = { Text("在悬浮窗中按回车键即触发保存。开启后悬浮窗无法多行输入。") },
@@ -1121,7 +1121,7 @@ private fun OtherTab(
                 containerColor = MaterialTheme.colorScheme.surfaceContainerLow
             ),
         ) {
-            Column(modifier = Modifier.padding(horizontal = 0.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
                 ListItem(
                     headlineContent = { Text("启动时自动检查更新") },
                     supportingContent = { Text("每次启动应用时自动检测 GitHub 最新版本") },
@@ -1131,16 +1131,8 @@ private fun OtherTab(
                         })
                     }
                 )
-            }
-        }
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
 
-        ElevatedCard(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-            ),
-        ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onCheckUpdate, modifier = Modifier.fillMaxWidth(), enabled = !isCheckingUpdate) {
                     Icon(Icons.Default.Update, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
@@ -1202,7 +1194,7 @@ private fun OtherTab(
                 containerColor = MaterialTheme.colorScheme.surfaceContainerLow
             ),
         ) {
-            Column(modifier = Modifier.padding(horizontal = 0.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
                 ListItem(
                     headlineContent = { Text("记录日志") },
                     supportingContent = { Text("开启后记录日志到根目录，非记录BUG无需开启。") },

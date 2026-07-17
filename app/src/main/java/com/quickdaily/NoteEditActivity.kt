@@ -21,6 +21,8 @@ import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material.icons.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
@@ -59,6 +61,7 @@ import kotlinx.coroutines.withContext
 class NoteEditActivity : ComponentActivity() {
     private var noteText by mutableStateOf("")
     private val selectedImages = mutableStateListOf<Uri>()
+    private var pendingAttachmentUri by mutableStateOf<Uri?>(null)
     private var noteTimestampFormat by mutableStateOf("list_time")
     private var noteAddAnchorIfMissing by mutableStateOf(true)
     private var noteTimestampOrder by mutableStateOf("above")
@@ -68,6 +71,12 @@ class NoteEditActivity : ComponentActivity() {
         ActivityResultContracts.GetMultipleContents()
     ) { uris: List<Uri> ->
         selectedImages.addAll(uris)
+    }
+
+    private val attachmentPicker = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        pendingAttachmentUri = uri
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
