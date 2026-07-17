@@ -13,7 +13,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 44
-        versionName = "1.5.14-beta"
+        versionName = "1.5.13-beta"
     }
 
     buildFeatures {
