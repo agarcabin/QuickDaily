@@ -132,7 +132,8 @@ fun SettingsScreen(
     var obsidianDetected by remember { mutableStateOf(false) }
     var obsidianMsg by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
-    var widgetImageUri by remember { mutableStateOf(config.widgetImageUri) }
+   var widgetImageUri by remember { mutableStateOf(config.widgetImageUri) }
+    var pendingImageUri by remember { mutableStateOf<Uri?>(null) }
 
     // ── Update check state ──
     var isCheckingUpdate by remember { mutableStateOf(false) }
@@ -264,31 +265,78 @@ fun SettingsScreen(
         }
     }
 
+   
+   // Crop result handler
+    val cropImageLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            pendingImageUri?.let { cropUri ->
+                try {
+                    val destFile = File(context.filesDir, "widget_image.jpg")
+                    context.contentResolver.openInputStream(cropUri)?.use { input ->
+                        FileOutputStream(destFile).use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    val savedPath = destFile.absolutePath
+                    widgetImageUri = savedPath
+                    appState.saveConfig(config.copy(widgetImageUri = "file://"))
+                    QuickNoteWidget.updateAllWidgets(context)
+                    ShortcutHelper.updateAllShortcuts(context)
+                } catch (e: Exception) {
+                    android.util.Log.e("QuickDaily", "保存裁剪图片失败: ")
+                }
+            }
+        }
+   }
+
+   // ── Helper ──
+    
     val imagePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let { srcUri ->
             try {
-                val destFile = File(context.filesDir, "widget_image.jpg")
-                val inputStream = context.contentResolver.openInputStream(srcUri)
-                val outputStream = FileOutputStream(destFile)
-                inputStream?.use { input ->
-                    outputStream.use { output ->
-                        input.copyTo(output)
-                    }
+                val cropFile = File(context.cacheDir, "crop_widget_temp.jpg")
+                val cropUri = androidx.core.content.FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.fileprovider",
+                    cropFile
+                )
+                val cropIntent = Intent("com.android.camera.action.CROP").apply {
+                    setDataAndType(srcUri, "image/*")
+                    putExtra("crop", "true")
+                    putExtra("aspectX", 1)
+                    putExtra("aspectY", 1)
+                    putExtra("outputX", 512)
+                    putExtra("outputY", 512)
+                    putExtra("return-data", false)
+                    putExtra(MediaStore.EXTRA_OUTPUT, cropUri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
                 }
-                val savedPath = destFile.absolutePath
-                widgetImageUri = savedPath
-                appState.saveConfig(config.copy(widgetImageUri = "file://"))
-                QuickNoteWidget.updateAllWidgets(context)
-                ShortcutHelper.updateAllShortcuts(context)
+                pendingImageUri = cropUri
+                try {
+                    cropImageLauncher.launch(cropIntent)
+                } catch (_: Exception) {
+                    val destFile = File(context.filesDir, "widget_image.jpg")
+                    context.contentResolver.openInputStream(srcUri)?.use { input ->
+                        FileOutputStream(destFile).use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    val savedPath = destFile.absolutePath
+                    widgetImageUri = savedPath
+                    appState.saveConfig(config.copy(widgetImageUri = "file://"))
+                    QuickNoteWidget.updateAllWidgets(context)
+                    ShortcutHelper.updateAllShortcuts(context)
+                }
             } catch (e: Exception) {
                 android.util.Log.e("QuickDaily", "保存小部件图片失败: ")
             }
         }
     }
-
-    // ── Helper ──
     fun buildConfig(): DiaryConfig = DiaryConfig(
         vaultPath = vaultPath.trim(),
         diaryFolder = diaryFolder.trim().ifBlank { "Daily" },
@@ -676,7 +724,7 @@ private fun DiaryStorageTab(
                 )
                 val exampleName = when (config.imageNamingFormat) {
                     "original" -> "image.jpg"
-                    "timestamp_original" -> com.quickdaily.util.DateUtil.nowTimeStr() + "_image.jpg"
+                    "timestamp_original" -> (if (config.timestampFormat.contains("seconds")) com.quickdaily.util.DateUtil.nowTimeSecondsStr() else com.quickdaily.util.DateUtil.nowTimeStr()) + "_image.jpg"
                     "custom" -> { val f = config.imageCustomNamingFormat.ifEmpty { "image.jpg" }; f.replace("{filename}", "image").replace("{ext}", ".jpg") }
                     else -> "image.jpg"
                 }
@@ -745,7 +793,7 @@ private fun EditorSettingsTab(
                 OutlinedTextField(
                     value = anchorText,
                     onValueChange = onAnchorTextChange,
-                    label = { Text("锚点文本") },
+                    label = { Text("锚点文本（支持换行）") },
                     placeholder = { Text("## 今日速记") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = false,
@@ -785,12 +833,12 @@ private fun EditorSettingsTab(
                             }
                             when (config.timestampFormat) {
                                 "none" -> append("- 这是一段文本")
-                                "time_only" -> append(" 这是一段文本")
-                                "time_only_seconds" -> append(" 这是一段文本")
+                                "time_only" -> append("$now 这是一段文本")
+                                "time_only_seconds" -> append("$nowSec 这是一段文本")
                                 "list" -> append("- 这是一段文本")
                                 "ordered" -> append("1. 这是一段文本")
-                                "list_time" -> append("-  这是一段文本")
-                                "list_time_seconds" -> append("-  这是一段文本")
+                                "list_time" -> append("- $now 这是一段文本")
+                                "list_time_seconds" -> append("- $nowSec 这是一段文本")
                                 else -> append("- 这是一段文本")
                             }
                         }
@@ -1007,7 +1055,7 @@ private fun WidgetsTab(
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(Icons.Default.Widgets, null, Modifier.size(18.dp))
+                    Icon(Icons.Default.Shortcut, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("快速添加（小部件）")
                 }
@@ -1157,7 +1205,7 @@ private fun OtherTab(
             Column(modifier = Modifier.padding(horizontal = 0.dp)) {
                 ListItem(
                     headlineContent = { Text("记录日志") },
-                    supportingContent = { Text("日志保存到 Document/QuickDaily_log_日期.txt") },
+                    supportingContent = { Text("开启后记录日志到根目录，非记录BUG无需开启。") },
                     trailingContent = {
                         Switch(checked = config.loggingEnabled, onCheckedChange = {
                             onConfigChange(config.copy(loggingEnabled = it))
@@ -1188,37 +1236,37 @@ private fun OtherTab(
 
                 Text("更新内容：", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
                 Text("1.5:\n" +
-                    "? 新增 首页/悬浮窗 底部工具栏 \n" +
-                    "? 新增 首页 阅读视图图片显示 \n" +
-                    "? 新增 对 Templater 插件日期格式支持 \n" +
-                    "? 新增 安卓小部件添加页面 预览图 \n" +
-                    "? 调整 快速添加（桌面图标）的默认图标样式 \n" +
-                    "? 修复 悬浮窗 任务切换格式错误 \n" +
-                    "? 修复 悬浮窗 空任务异常触发保存 \n" +
-                    "? 修复 小部件 今日任务刷新异常 \n\n" +
+                    "• 新增 首页/悬浮窗 底部工具栏 \n" +
+                    "• 新增 首页 阅读视图图片显示 \n" +
+                    "• 新增 对 Templater 插件日期格式支持 \n" +
+                    "• 新增 安卓小部件添加页面 预览图 \n" +
+                    "• 调整 快速添加（桌面图标）的默认图标样式 \n" +
+                    "• 修复 悬浮窗 任务切换格式错误 \n" +
+                    "• 修复 悬浮窗 空任务异常触发保存 \n" +
+                    "• 修复 小部件 今日任务刷新异常 \n\n" +
                     "1.4:\n" +
-                    "? 新增 Frontmatter 过滤 \n" +
-                    "? 新增 WW 等日期格式支持 \n" +
-                    "? 新增 悬浮窗增加图片录入功能（可批量导入）\n" +
-                    "? 新增 悬浮窗增加任务录入功能（双击切换任务状态） \n" +
-                    "? 新增 《今日任务》桌面小部件 \n\n" +
+                    "• 新增 Frontmatter 过滤 \n" +
+                    "• 新增 WW 等日期格式支持 \n" +
+                    "• 新增 悬浮窗增加图片录入功能（可批量导入）\n" +
+                    "• 新增 悬浮窗增加任务录入功能（双击切换任务状态） \n" +
+                    "• 新增 《今日任务》桌面小部件 \n\n" +
                     "1.3:\n" +
-                    "? 新增 7种时间戳格式设置，可适配Thino/Knomo \n" +
-                    "? 新增 时间戳文本插入顺序\n" +
-                    "? 新增 无锚点时自动添加锚点文本\n" +
-                    "? 修复 清空日记内容后无法重新加载模板\n" +
-                    "? 修复 每日首次录入内容时略过日记模板\n\n" +
+                    "• 新增 7种时间戳格式设置，可适配Thino/Knomo \n" +
+                    "• 新增 时间戳文本插入顺序\n" +
+                    "• 新增 无锚点时自动添加锚点文本\n" +
+                    "• 修复 清空日记内容后无法重新加载模板\n" +
+                    "• 修复 每日首次录入内容时略过日记模板\n\n" +
                     "1.2:\n" +
-                    "? 新增 快速添加（桌面图标）\n" +
-                    "? 修复 磁贴点击后收回状态栏\n\n" +
+                    "• 新增 快速添加（桌面图标）\n" +
+                    "• 修复 磁贴点击后收回状态栏\n\n" +
                     "1.1:\n" +
-                    "? 新增 小部件时间戳，回车保存\n" +
-                    "? 新增 小部件自定义图片\n" +
-                    "? 新增 状态栏快捷磁贴\n" +
-                    "? 新增 文本分享至本应用\n" +
-                    "? 新增 检测更新\n\n" +
+                    "• 新增 小部件时间戳，回车保存\n" +
+                    "• 新增 小部件自定义图片\n" +
+                    "• 新增 状态栏快捷磁贴\n" +
+                    "• 新增 文本分享至本应用\n" +
+                    "• 新增 检测更新\n\n" +
                     "1.0:\n" +
-                    "? 正式发布！APP 更名为 QuickDaily\n" +
+                    "• 正式发布！APP 更名为 QuickDaily\n" +
                     "? 开源发布到 GitHub",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
 
@@ -1246,6 +1294,8 @@ private fun OtherTab(
             }
         }
 
+
+        Text("支持", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
         ElevatedCard(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
