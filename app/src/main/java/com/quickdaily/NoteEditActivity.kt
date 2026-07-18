@@ -61,7 +61,7 @@ import kotlinx.coroutines.withContext
 class NoteEditActivity : ComponentActivity() {
     private var noteText by mutableStateOf("")
     private val selectedImages = mutableStateListOf<Uri>()
-    private var pendingAttachmentUri by mutableStateOf<Uri?>(null)
+    private val pendingAttachments = mutableStateListOf<Uri>()
     private var noteTimestampFormat by mutableStateOf("list_time")
     private var noteAddAnchorIfMissing by mutableStateOf(true)
     private var noteTimestampOrder by mutableStateOf("above")
@@ -76,7 +76,16 @@ class NoteEditActivity : ComponentActivity() {
     private val attachmentPicker = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
-        pendingAttachmentUri = uri
+        uri?.let {
+            try {
+                val fileName = java.net.URLDecoder.decode(it.lastPathSegment ?: "", "UTF-8")
+                noteText += "\n[$fileName]($it)"
+                pendingAttachments.add(it)
+            } catch (_: Exception) {
+                noteText += "\n[attachment]($it)"
+                pendingAttachments.add(it)
+            }
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -132,6 +141,10 @@ class NoteEditActivity : ComponentActivity() {
                         onPickImages = {
                 imagePicker.launch("image/*")
             },
+                       onPickAttachment = {
+               attachmentPicker.launch("*/*")
+           },
+
                         onRemoveImage = { index -> selectedImages.removeAt(index) }
                         )
                     }
@@ -226,6 +239,26 @@ class NoteEditActivity : ComponentActivity() {
                 }
             }
             val workingContent = body
+            // 处理附件（将 content URI 替换为 vault 相对路径）
+            var resolvedLine = line
+            if (pendingAttachments.isNotEmpty()) {
+                val attachStoragePath = prefs.getString("image_storage_path", "") ?: ""
+                val attachNamingFormat = prefs.getString("image_naming_format", "timestamp_ext") ?: "timestamp_ext"
+                val attachCustomNaming = prefs.getString("image_custom_naming_format", "") ?: ""
+                pendingAttachments.toList().forEach { uri ->
+                    try {
+                        val relPath = com.quickdaily.util.ImageUtil.copyToVault(
+                            this@NoteEditActivity, uri, vaultPath,
+                            attachStoragePath, attachNamingFormat,
+                            "described", attachCustomNaming)
+                        if (relPath != null) {
+                            resolvedLine = resolvedLine.replace(uri.toString(), relPath)
+                        }
+                    } catch (_: Exception) { }
+                }
+                withContext(Dispatchers.Main) { pendingAttachments.clear() }
+            }
+
             // 处理图片（移到 nc 之前，以便图片与文本行一起插入）
             val imageLinks = if (selectedImages.isNotEmpty()) {
                 val imgStoragePath = prefs.getString("image_storage_path", "") ?: ""
@@ -237,8 +270,8 @@ class NoteEditActivity : ComponentActivity() {
 
             // 如果有图片链接，追加到文本行后面（Bug1: 图片与文本在同一位置插入，而非末尾）
             val effectiveLine = if (imageLinks.isNotEmpty()) {
-                line + "\n" + imageLinks.joinToString("\n")
-            } else line
+                resolvedLine + "\n" + imageLinks.joinToString("\n")
+            } else resolvedLine
 
             val nc = if (noteTimestampOrder == "below" && anchor.isNotEmpty()) {
                 val bodyLines = workingContent.lines().toMutableList()
@@ -305,7 +338,7 @@ class NoteEditActivity : ComponentActivity() {
                     workingContent + "\n$effectiveLine\n"
                 }
             }
-            // 图片已合并到 effectiveLine 中，不再需要 finalNc
+            // 图片已合并到 resolvedLine-based effectiveLine 中，不再需要 finalNc
 
             if (selectedImages.isNotEmpty()) {
                 withContext(Dispatchers.Main) { selectedImages.clear() }
@@ -407,6 +440,7 @@ private fun NoteEditDialog(
     onClose: () -> Unit,
     imageUris: SnapshotStateList<Uri>,
     onPickImages: () -> Unit,
+    onPickAttachment: () -> Unit,
     onRemoveImage: (Int) -> Unit
 ) {
     val floater = LocalFloaterColors.current

@@ -1,5 +1,5 @@
-{
-    "version": "1.5.13-beta",
+﻿{
+    "version": "1.5.14-beta",
     "url": "https://github.com/agarcabin/QuickDaily/releases/latest",
-    "body": "QuickDaily 1.5.13-beta build 46\n- 设置界面优化：卡片颜色统一、图片命名格式简化为中文\n- 时间戳插入顺序改为最上方/最下方插入\n- 时间戳示例区移除多余空行\n- Frontmatter 注释补充说明\n- 小部件区新增桌面便签快捷添加\n- 小部件自定义图标支持重置默认按钮\n- 权限提示文字移至自定义图标板块下方\n- 更新内容换行显示修复\n- 已知问题修复与 UI 细节优化\n- 支持系统图片裁剪（方形）\n- 时间戳预览显示实际时间值\n- 附件路径示例包含日期\n- 小部件图标统一为 Shortcut\n- 嵌入式遍历用于图片裁剪的基础设施"
+    "body": "QuickDaily 1.5.14-beta build 51\n- 修复 自定义图片预览不更新\n- 修复 悬浮窗附件直接写入Markdown并移动至ob附件目录\n- 修复 自定义图片选择后未拉起裁剪"
 }
