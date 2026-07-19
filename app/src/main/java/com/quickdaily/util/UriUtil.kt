@@ -37,6 +37,9 @@ object UriUtil {
     }
 
     private fun docIdToPath(docId: String): String? {
+        if (docId.startsWith("raw:", ignoreCase = true)) {
+            return docId.substringAfter(':').takeIf { it.isNotBlank() }
+        }
         val split = docId.split(":", limit = 2)
         if (split.size != 2) return null
 

@@ -106,7 +106,7 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
                 val imagesText = links.joinToString("\n")
                 val newText = text.substring(0, cursor) + imagesText + "\n" + text.substring(cursor)
                 textFieldValue = TextFieldValue(newText, TextRange(cursor + imagesText.length + 1))
-                appState.onContentChanged(newText)
+                appState.onContentChanged(newText, forceUndoPoint = true)
             }
         }
     }
@@ -150,7 +150,7 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
                 val cursor = textFieldValue.selection.start
                 val newText = text.substring(0, cursor) + link + "\n" + text.substring(cursor)
                 textFieldValue = TextFieldValue(newText, TextRange(cursor + link.length + 1))
-                appState.onContentChanged(newText)
+                appState.onContentChanged(newText, forceUndoPoint = true)
             }
         }
     }
@@ -208,7 +208,7 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
             val newText = text.substring(0, hp) + prefix + tag + " " + text.substring(cursor)
             val newCursor = hp + prefix.length + tag.length + 1
             textFieldValue = TextFieldValue(newText, TextRange(newCursor))
-            appState.onContentChanged(newText)
+            appState.onContentChanged(newText, forceUndoPoint = true)
             com.quickdaily.util.RecentTags.record(context, tag)
         }
     }
@@ -297,7 +297,7 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
                                     t.substring(0, ls) + "- [ ] $line" + t.substring(le) to (ls + 6)
                                 }
                                 textFieldValue = TextFieldValue(nt, TextRange(nc))
-                                appState.onContentChanged(nt)
+                                appState.onContentChanged(nt, forceUndoPoint = true)
                             }
                         )
                         // #号 - 标题循环
@@ -321,7 +321,7 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
                                 val nt = text.substring(0, lineStart) + newLine + text.substring(lineEnd)
                                 val nc = lineStart + newLine.length
                                 textFieldValue = TextFieldValue(nt, TextRange(nc))
-                                appState.onContentChanged(nt)
+                                appState.onContentChanged(nt, forceUndoPoint = true)
                             }
                         )
                         // -号 - 行首切换-
@@ -337,7 +337,7 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
                                     t.substring(0, ls) + "- " + cl to c + 2
                                 }
                                 textFieldValue = TextFieldValue(nt, TextRange(nc))
-                                appState.onContentChanged(nt)
+                                appState.onContentChanged(nt, forceUndoPoint = true)
                             }
                         )
                         // 加粗 - 切换****
@@ -347,10 +347,10 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
                                 val t = textFieldValue.text; val c = textFieldValue.selection.start
                                 if (c >= 2 && c + 2 <= t.length && t.substring(c - 2, c) == "**" && t.substring(c, c + 2) == "**") {
                                     val nt = t.substring(0, c - 2) + t.substring(c + 2)
-                                    textFieldValue = TextFieldValue(nt, TextRange(c - 2)); appState.onContentChanged(nt)
+                                    textFieldValue = TextFieldValue(nt, TextRange(c - 2)); appState.onContentChanged(nt, forceUndoPoint = true)
                                 } else {
                                     val nt = t.substring(0, c) + "****" + t.substring(c)
-                                    textFieldValue = TextFieldValue(nt, TextRange(c + 2)); appState.onContentChanged(nt)
+                                    textFieldValue = TextFieldValue(nt, TextRange(c + 2)); appState.onContentChanged(nt, forceUndoPoint = true)
                                 }
                             }
                         )
@@ -394,7 +394,7 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
         } else if (showPreview) {
             Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
                 MdRenderer(text = diaryContent, vaultBasePath = config.vaultPath, imageStoragePath = config.imageStoragePath.takeIf { it.isNotBlank() }, onToggleCheckbox = { index ->
-                    appState.onContentChanged(toggleTaskCheck(diaryContent, index))
+                    appState.onContentChanged(toggleTaskCheck(diaryContent, index), forceUndoPoint = true)
                 })
             }
         } else {

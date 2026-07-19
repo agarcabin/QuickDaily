@@ -87,15 +87,11 @@ object DateUtil {
             .replace("YY", "yy")
     }
 
-    /** 用给定格式获取日期字符串（支持 Templater 格式） */
-    fun todayStr(format: String): String {
+    /** 用给定格式获取日期字符串（支持 Templater 格式和日期偏移） */
+    fun dateStr(format: String, daysOffset: Long = 0L): String {
         val parsed = parseTemplaterFormat(format)
         val javaFormat = convertObsidianFormat(parsed.format)
-        val baseDate = if (parsed.dayOffset == 0L) {
-            LocalDate.now()
-        } else {
-            LocalDate.now().plusDays(parsed.dayOffset)
-        }
+        val baseDate = LocalDate.now().plusDays(parsed.dayOffset + daysOffset)
         return try {
             baseDate.format(DateTimeFormatter.ofPattern(javaFormat))
         } catch (_: IllegalArgumentException) {
@@ -103,6 +99,9 @@ object DateUtil {
             baseDate.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
         }
     }
+
+    /** 用给定格式获取今天日期字符串（支持 Templater 格式） */
+    fun todayStr(format: String): String = dateStr(format)
 
     /** 获取当前时间字符串 (HH:mm) */
    fun nowTimeStr(): String {

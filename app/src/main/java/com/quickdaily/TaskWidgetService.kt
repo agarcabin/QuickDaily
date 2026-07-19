@@ -80,15 +80,10 @@ class TaskViewsFactory(private val context: Context) : RemoteViewsService.Remote
                 "month" -> 30
                 else -> 1
             }
-            val javaFormat = dateFormat.replace("YYYY", "yyyy").replace("YY", "yy").replace("DD", "dd")
             for (i in 0 until daysToLoad) {
-                val d = java.time.LocalDate.now().minusDays(i.toLong())
-                val dateStr = try {
-                    d.format(java.time.format.DateTimeFormatter.ofPattern(javaFormat))
-                } catch (_: Exception) {
-                    d.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
-                }
+                val dateStr = DateUtil.dateStr(dateFormat, -i.toLong())
                 val path = "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/$dateStr.md"
+                BetaLogger.log("TaskWidgetSvc", "checking path=$path")
                 val fileContent = FileUtil.read(path)
                 if (fileContent.isEmpty()) continue
 

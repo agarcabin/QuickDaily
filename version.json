@@ -1,5 +1,5 @@
 ﻿{
-    "version": "1.6",
+    "version": "1.7",
     "url": "https://github.com/agarcabin/QuickDaily/releases/latest",
-    "body": "QuickDaily 1.6\n• 新增 小部件可靠性、标签补全与蓝色标签渲染\n• 新增 任务周期、跨日勾选、小部件外观与图片裁剪\n• 修复 悬浮窗附件、任务刷新、桌面组件读取与裁剪返回问题"
+    "body": "QuickDaily 1.7\n• 修复 日记模板路径选择器选择异常\n• 修复 撤销按钮对md符号失效\n• 修复 设置界面多余的横线\n• 修复 日志保存位置异常"
 }

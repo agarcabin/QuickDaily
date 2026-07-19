@@ -10,6 +10,8 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.provider.DocumentsContract
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.provider.MediaStore
 import androidx.compose.foundation.Image
@@ -82,6 +84,50 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 
 private data class TimestampOption(val key: String, val label: String)
+
+private const val EXTERNAL_STORAGE_DOCUMENTS_AUTHORITY = "com.android.externalstorage.documents"
+
+private fun vaultInitialDocumentUri(vaultPath: String): Uri? {
+    val normalized = vaultPath.replace('\\', '/').trimEnd('/')
+    val externalRoot = "/storage/emulated/0/"
+    if (!normalized.startsWith(externalRoot, ignoreCase = true)) return null
+    val relativePath = normalized.substring(externalRoot.length).trimStart('/')
+    if (relativePath.isBlank()) return null
+    return DocumentsContract.buildDocumentUri(
+        EXTERNAL_STORAGE_DOCUMENTS_AUTHORITY,
+        "primary:$relativePath"
+    )
+}
+
+private fun templatePathRelativeToVault(vaultPath: String, selectedPath: String): String {
+    val vault = vaultPath.replace('\\', '/').trimEnd('/')
+    val selected = selectedPath.replace('\\', '/').trim()
+    if (vault.isNotBlank()) {
+        if (selected.equals(vault, ignoreCase = true)) return ""
+        val vaultPrefix = "$vault/"
+        if (selected.startsWith(vaultPrefix, ignoreCase = true)) {
+            return selected.substring(vaultPrefix.length)
+        }
+    }
+    return selected
+}
+
+private fun documentDisplayName(context: android.content.Context, uri: Uri): String? {
+    return try {
+        context.contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0) else null
+        }
+    } catch (_: Exception) {
+        null
+    }
+}
+
 private val timestampOptions = listOf(
     TimestampOption("none", "无时间戳"),
     TimestampOption("time_only", "仅时间"),
@@ -262,17 +308,25 @@ fun SettingsScreen(
     }
 
     val templatePicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        uri?.let {
-            val path = UriUtil.documentUriToPath(it)
-            if (path != null) {
-                templatePath = if (vaultPath.isNotBlank() && path.startsWith(vaultPath)) {
-                    path.removePrefix(vaultPath).trimStart('/')
-                } else {
-                    path
-                }
-            }
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode != Activity.RESULT_OK) return@rememberLauncherForActivityResult
+        val resultIntent = result.data ?: return@rememberLauncherForActivityResult
+        val uri = resultIntent.data
+            ?: resultIntent.clipData?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.uri
+            ?: return@rememberLauncherForActivityResult
+        try {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        } catch (_: Exception) { }
+
+        val path = UriUtil.documentUriToPath(uri)
+        templatePath = if (path != null) {
+            templatePathRelativeToVault(vaultPath, path)
+        } else {
+            documentDisplayName(context, uri) ?: uri.toString()
         }
     }
 
@@ -415,7 +469,18 @@ fun SettingsScreen(
                             }
                         },
                         onPickVault = { onExternalLaunch(); vaultPicker.launch(null) },
-                        onPickTemplate = { onExternalLaunch(); templatePicker.launch(arrayOf("text/markdown", "text/plain", "*/*")) },
+                        onPickTemplate = {
+                            onExternalLaunch()
+                            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                                addCategory(Intent.CATEGORY_OPENABLE)
+                                type = "*/*"
+                                putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("*/*"))
+                                vaultInitialDocumentUri(vaultPath)?.let {
+                                    putExtra(DocumentsContract.EXTRA_INITIAL_URI, it)
+                                }
+                            }
+                            templatePicker.launch(intent)
+                        },
                         onPickImageStorage = { onExternalLaunch(); imageStoragePicker.launch(null) },
 
                         onPickDiaryFolder = { onExternalLaunch(); diaryFolderPicker.launch(null) },
@@ -1209,8 +1274,6 @@ private fun OtherTab(
                         })
                     }
                 )
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-
                 Button(onClick = onCheckUpdate, modifier = Modifier.fillMaxWidth(), enabled = !isCheckingUpdate) {
                     Icon(Icons.Default.Update, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
@@ -1227,7 +1290,7 @@ private fun OtherTab(
                     }
                 }
                 if (isLatest) {
-                    Text("当前已是最新版本（）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                    Text("当前已是最新版本（${BuildConfig.VERSION_NAME}）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                 }
                 if (updateErrors.isNotEmpty()) {
                     Text("检查更新失败，已尝试  个镜像源：", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
@@ -1302,10 +1365,15 @@ private fun OtherTab(
             ),
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("QuickDaily ", style = MaterialTheme.typography.titleMedium)
+                Text("QuickDaily 1.7", style = MaterialTheme.typography.titleMedium)
 
                 Text("更新内容：", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                Text("1.6:\n" +
+                Text("1.7:\n" +
+                    "• 修复 日记模板路径选择器选择异常\n" +
+                    "• 修复 撤销按钮对md符号失效\n" +
+                    "• 修复 设置界面多余的横线\n" +
+                    "• 修复 日志保存位置异常\n\n" +
+                    "1.6:\n" +
                     "• 新增 首页/小部件 标签自动补全（拉取Obsidian已有标签）\n" +
                     "• 新增 首页/小部件 标签渲染为蓝色\n" +
                     "• 新增 首页/小部件 标题#按钮切换逻辑：# ，## ，### ，无格式\n" +
@@ -1318,9 +1386,9 @@ private fun OtherTab(
                     "• 新增 设置 小部件背景色以及透明度开发自定义\n" +
                     "• 新增 设置 图片Markdow链接 新增格式 ![[filename]]\n" +
                     "• 新增 设置 锚点文本支持换行\n" +
-                    "• 新增 每日凌晨自动刷新桌面小部件内容\n\n" +
+                    "• 新增 每日凌晨自动刷新桌面小部件内容\n" +
                     "• 调整 设置 界面 UI 分类\n" +
-                    "• 调整 悬浮窗 图片选择器样式同部位工具栏样式\n\n" +
+                    "• 调整 悬浮窗 图片选择器样式同部位工具栏样式\n" +
                     "• 修复 工具栏小白条颜色适配\n" +
                     "• 修复 本周/本月任务小部件无法勾选任务\n" +
                     "• 修复 图片文件夹选择保存路径导致ob库路径异常\n" +

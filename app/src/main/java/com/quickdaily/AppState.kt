@@ -357,8 +357,9 @@ class AppState(application: Application) : AndroidViewModel(application) {
         return tplContent
     }
 
-    fun onContentChanged(newContent: String) {
-        saveUndoPoint()
+    fun onContentChanged(newContent: String, forceUndoPoint: Boolean = false) {
+        if (newContent == _diaryContent.value) return
+        saveUndoPoint(forceUndoPoint)
         _diaryContent.value = newContent
         autoSave?.trigger()
         BetaLogger.log("Edit", "content_len=${newContent.length}")
@@ -366,10 +367,14 @@ class AppState(application: Application) : AndroidViewModel(application) {
 
     // ── Undo/Redo helpers ──────────────────────────────────
 
-    fun saveUndoPoint() {
+    fun saveUndoPoint(force: Boolean = false) {
         val now = System.currentTimeMillis()
-        if (now - _lastUndoPushTime < 1500) return
-        _lastUndoPushTime = now
+        if (!force && now - _lastUndoPushTime < 1500) {
+            _redoStack.clear()
+            _canRedo.value = false
+            return
+        }
+        _lastUndoPushTime = if (force) 0L else now
         _undoStack.add(_diaryContent.value)
         if (_undoStack.size > 50) _undoStack.removeAt(0)
         _redoStack.clear()
@@ -386,6 +391,8 @@ class AppState(application: Application) : AndroidViewModel(application) {
         _diaryContent.value = prevContent
         _canUndo.value = _undoStack.isNotEmpty()
         _canRedo.value = _redoStack.isNotEmpty()
+        _lastUndoPushTime = 0L
+        autoSave?.trigger()
         BetaLogger.log("Undo", "restored_len=${prevContent.length} remaining=${_undoStack.size}")
     }
 
@@ -398,6 +405,8 @@ class AppState(application: Application) : AndroidViewModel(application) {
         _diaryContent.value = nextContent
         _canUndo.value = _undoStack.isNotEmpty()
         _canRedo.value = _redoStack.isNotEmpty()
+        _lastUndoPushTime = 0L
+        autoSave?.trigger()
         BetaLogger.log("Redo", "restored_len=${nextContent.length} remaining=${_redoStack.size}")
     }
 

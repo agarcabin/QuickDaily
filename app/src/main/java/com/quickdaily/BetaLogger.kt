@@ -24,7 +24,7 @@ object BetaLogger {
             val extEnabled = prefs.getBoolean("logging_enabled", false)
             if (extEnabled) {
                 val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-                val docsDir = File(Environment.getExternalStorageDirectory(), "Document")
+                val docsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
                 if (!docsDir.exists()) docsDir.mkdirs()
                 logFile = File(docsDir, "QuickDaily_log_" + date + ".txt")
                 enabled = true
@@ -61,7 +61,7 @@ object BetaLogger {
         try {
             if (enabled && useExternal) {
                 val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-                val docsDir = File(Environment.getExternalStorageDirectory(), "Document")
+                val docsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
                 if (!docsDir.exists()) docsDir.mkdirs()
                 logFile = File(docsDir, "QuickDaily_log_" + date + ".txt")
             } else if (enabled) {

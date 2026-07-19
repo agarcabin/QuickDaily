@@ -474,6 +474,28 @@ private fun NoteEditDialog(
     var lastUndoTime by remember { mutableLongStateOf(0L) }
     val neCtx = LocalContext.current
     val neView = LocalView.current
+
+    fun recordUndo(previousText: String, force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        localRedoStack.clear()
+        if (force || now - lastUndoTime > 1500) {
+            localUndoStack.add(previousText)
+            if (localUndoStack.size > 50) localUndoStack.removeAt(0)
+            lastUndoTime = if (force) 0L else now
+        }
+    }
+
+    fun applyTextChange(newValue: TextFieldValue, forceUndo: Boolean = false) {
+        val oldText = tfv.text
+        if (oldText == newValue.text) {
+            tfv = newValue
+            return
+        }
+        recordUndo(oldText, forceUndo)
+        tfv = newValue
+        onTextChange(newValue.text)
+    }
+
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
     LaunchedEffect(text) { if (text != tfv.text) tfv = TextFieldValue(text, TextRange(text.length)) }
     val tagVaultPath = neCtx.getSharedPreferences("QuickDaily", 0).getString("vault_path", "") ?: ""
@@ -516,8 +538,7 @@ private fun NoteEditDialog(
             val prefix = if (needSpaceBefore) " #" else "#"
             val newText = currentText.substring(0, tagHashPos2) + prefix + tag + " " + currentText.substring(cursor)
             val newCursor = tagHashPos2 + prefix.length + tag.length + 1
-            tfv = TextFieldValue(newText, TextRange(newCursor))
-            onTextChange(newText)
+            applyTextChange(TextFieldValue(newText, TextRange(newCursor)), forceUndo = true)
             com.quickdaily.util.RecentTags.record(neCtx, tag)
         }
     }
@@ -608,25 +629,13 @@ private fun NoteEditDialog(
                                if (oldText.isNotBlank() || imageUris.isNotEmpty() || hasAttachments) onSave() else onClose()
                            }
                         } else {
-                            val now = System.currentTimeMillis()
-                            if (now - lastUndoTime > 1500 && oldText != newTfv.text) {
-                                localUndoStack.add(oldText)
-                                if (localUndoStack.size > 50) localUndoStack.removeAt(0)
-                                localRedoStack.clear()
-                                lastUndoTime = now
-                            }
+                            if (oldText != newText) recordUndo(oldText)
                             tfv = newTfv
                             onTextChange(newText)
                         }
                     } else {
                         val oldTextNot = tfv.text
-                        val now = System.currentTimeMillis()
-                        if (now - lastUndoTime > 1500 && oldTextNot != newTfv.text) {
-                            localUndoStack.add(oldTextNot)
-                            if (localUndoStack.size > 50) localUndoStack.removeAt(0)
-                            localRedoStack.clear()
-                            lastUndoTime = now
-                        }
+                        if (oldTextNot != newTfv.text) recordUndo(oldTextNot)
                         tfv = newTfv
                         onTextChange(newTfv.text)
                     }
@@ -664,14 +673,12 @@ private fun NoteEditDialog(
                 }
                 IconButton(onClick = {
                     val newText = taskToggleAtCursor(tfv)
-                    tfv = TextFieldValue(newText, TextRange(newText.length))
-                    onTextChange(newText)
+                    applyTextChange(TextFieldValue(newText, TextRange(newText.length)), forceUndo = true)
                 }, modifier = Modifier.size(36.dp)) {
                     Icon(Icons.Default.CheckBoxOutlineBlank, "任务", tint = floater.primary, modifier = Modifier.size(20.dp))
                 }
                 IconButton(onClick = {
-                    tfv = cycleHeading(tfv)
-                    onTextChange(tfv.text)
+                    applyTextChange(cycleHeading(tfv), forceUndo = true)
                 }, modifier = Modifier.size(dim.iconXl)) {
                     Text("#", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = floater.primary)
                 }
@@ -684,8 +691,7 @@ private fun NoteEditDialog(
                     } else {
                         t.substring(0, ls) + "- " + cl to c + 2
                     }
-                    tfv = TextFieldValue(nt, TextRange(nc))
-                    onTextChange(nt)
+                    applyTextChange(TextFieldValue(nt, TextRange(nc)), forceUndo = true)
                 }, modifier = Modifier.size(36.dp)) {
                     Text("-", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color(0xFF6EB8FF))
                 }
@@ -693,10 +699,10 @@ private fun NoteEditDialog(
                     val t = tfv.text; val c = tfv.selection.start
                     if (c >= 2 && c + 2 <= t.length && t.substring(c - 2, c) == "**" && t.substring(c, c + 2) == "**") {
                         val nt = t.substring(0, c - 2) + t.substring(c + 2)
-                        tfv = TextFieldValue(nt, TextRange(c - 2)); onTextChange(nt)
+                        applyTextChange(TextFieldValue(nt, TextRange(c - 2)), forceUndo = true)
                     } else {
                         val nt = t.substring(0, c) + "****" + t.substring(c)
-                        tfv = TextFieldValue(nt, TextRange(c + 2)); onTextChange(nt)
+                        applyTextChange(TextFieldValue(nt, TextRange(c + 2)), forceUndo = true)
                     }
                 }, modifier = Modifier.size(36.dp)) {
                     Icon(Icons.Default.FormatBold, "加粗", tint = floater.primary, modifier = Modifier.size(20.dp))
@@ -715,6 +721,7 @@ private fun NoteEditDialog(
                             val prev = localUndoStack.removeAt(localUndoStack.lastIndex)
                             tfv = TextFieldValue(prev, TextRange(prev.length))
                             onTextChange(prev)
+                            lastUndoTime = 0L
                             BetaLogger.log("Toolbar", "undo")
                         }
                     },
@@ -733,6 +740,7 @@ private fun NoteEditDialog(
                             val next = localRedoStack.removeAt(localRedoStack.lastIndex)
                             tfv = TextFieldValue(next, TextRange(next.length))
                             onTextChange(next)
+                            lastUndoTime = 0L
                             BetaLogger.log("Toolbar", "redo")
                         }
                     },
