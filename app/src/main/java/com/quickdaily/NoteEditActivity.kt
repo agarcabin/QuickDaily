@@ -1,6 +1,7 @@
 ﻿package com.quickdaily
 
 import android.app.Activity
+import android.content.Intent
 import android.os.Bundle
 import android.view.Gravity
 import android.view.WindowManager
@@ -8,8 +9,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
@@ -74,16 +77,19 @@ class NoteEditActivity : ComponentActivity() {
     }
 
     private val attachmentPicker = registerForActivityResult(
-        ActivityResultContracts.GetContent()
+        ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let {
             try {
-                val fileName = java.net.URLDecoder.decode(it.lastPathSegment ?: "", "UTF-8")
-                noteText += "\n[$fileName]($it)"
+                contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                val fileName = ImageUtil.getDisplayName(this, it).ifBlank { "attachment" }
+                noteText += "\n![[${it}]]"
                 pendingAttachments.add(it)
+                BetaLogger.log("NoteEdit", "attachment selected name=$fileName uri=$it count=${pendingAttachments.size}")
             } catch (_: Exception) {
-                noteText += "\n[attachment]($it)"
+                noteText += "\n![[${it}]]"
                 pendingAttachments.add(it)
+                BetaLogger.log("NoteEdit", "attachment selected without persisted permission uri=$it count=${pendingAttachments.size}")
             }
         }
     }
@@ -133,16 +139,18 @@ class NoteEditActivity : ComponentActivity() {
                         onTextChange = { noteText = it },
                         enterToSave = noteEnterToSave,
                         onSave = {
-                    if (hasRealContent(noteText) || selectedImages.isNotEmpty()) appendToDiary(noteText.trim())
+                    if (hasRealContent(noteText) || selectedImages.isNotEmpty() || pendingAttachments.isNotEmpty()) appendToDiary(noteText.trim())
                     else finish()
                         },
                         onClose = { finish() },
                         imageUris = selectedImages,
+                        hasAttachments = pendingAttachments.isNotEmpty(),
+                        attachmentUris = pendingAttachments,
                         onPickImages = {
                 imagePicker.launch("image/*")
             },
                        onPickAttachment = {
-               attachmentPicker.launch("*/*")
+               attachmentPicker.launch(arrayOf("*/*"))
            },
 
                         onRemoveImage = { index -> selectedImages.removeAt(index) }
@@ -155,7 +163,7 @@ class NoteEditActivity : ComponentActivity() {
 
     private fun appendToDiary(text: String) {
         // 空内容检查：只有任务标记没有实质内容时直接返回
-        if (!hasRealContent(text) && selectedImages.isEmpty()) {
+        if (!hasRealContent(text) && selectedImages.isEmpty() && pendingAttachments.isEmpty()) {
             finish()
             return
         }
@@ -243,18 +251,29 @@ class NoteEditActivity : ComponentActivity() {
             var resolvedLine = line
             if (pendingAttachments.isNotEmpty()) {
                 val attachStoragePath = prefs.getString("image_storage_path", "") ?: ""
-                val attachNamingFormat = prefs.getString("image_naming_format", "timestamp_ext") ?: "timestamp_ext"
-                val attachCustomNaming = prefs.getString("image_custom_naming_format", "") ?: ""
+                var attachmentCopyFailed = false
                 pendingAttachments.toList().forEach { uri ->
                     try {
                         val relPath = com.quickdaily.util.ImageUtil.copyToVault(
                             this@NoteEditActivity, uri, vaultPath,
-                            attachStoragePath, attachNamingFormat,
-                            "described", attachCustomNaming)
+                            attachStoragePath, "original",
+                            "obsidian_wikilink")
                         if (relPath != null) {
                             resolvedLine = resolvedLine.replace(uri.toString(), relPath)
+                        } else {
+                            attachmentCopyFailed = true
+                            BetaLogger.log("NoteEdit", "attachment copy returned null uri=$uri")
                         }
-                    } catch (_: Exception) { }
+                    } catch (e: Exception) {
+                        attachmentCopyFailed = true
+                        BetaLogger.log("NoteEdit", "attachment copy failed uri=$uri exception=${e.javaClass.simpleName}")
+                    }
+                }
+                if (attachmentCopyFailed) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(this@NoteEditActivity, "附件保存失败，请检查存储路径权限", Toast.LENGTH_LONG).show()
+                    }
+                    return@launch
                 }
                 withContext(Dispatchers.Main) { pendingAttachments.clear() }
             }
@@ -345,6 +364,7 @@ class NoteEditActivity : ComponentActivity() {
             }
 
             FileUtil.write(path, nc)
+            com.quickdaily.util.RecentTags.recordFromText(this@NoteEditActivity, text)
             WidgetRefreshHelper.refreshAll(this@NoteEditActivity)
             withContext(Dispatchers.Main) {
                 Toast.makeText(this@NoteEditActivity, "已保存", Toast.LENGTH_SHORT).show()
@@ -355,7 +375,7 @@ class NoteEditActivity : ComponentActivity() {
 
     override fun onTouchEvent(event: MotionEvent?): Boolean {
         if (event?.action == MotionEvent.ACTION_OUTSIDE) {
-            if (hasRealContent(noteText) || selectedImages.isNotEmpty()) {
+            if (hasRealContent(noteText) || selectedImages.isNotEmpty() || pendingAttachments.isNotEmpty()) {
                     appendToDiary(noteText.trim())
             } else {
                 finish()
@@ -439,6 +459,8 @@ private fun NoteEditDialog(
     onSave: () -> Unit,
     onClose: () -> Unit,
     imageUris: SnapshotStateList<Uri>,
+    hasAttachments: Boolean,
+    attachmentUris: SnapshotStateList<Uri>,
     onPickImages: () -> Unit,
     onPickAttachment: () -> Unit,
     onRemoveImage: (Int) -> Unit
@@ -454,6 +476,51 @@ private fun NoteEditDialog(
     val neView = LocalView.current
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
     LaunchedEffect(text) { if (text != tfv.text) tfv = TextFieldValue(text, TextRange(text.length)) }
+    val tagVaultPath = neCtx.getSharedPreferences("QuickDaily", 0).getString("vault_path", "") ?: ""
+    var noteTagList by remember(tagVaultPath) { mutableStateOf(emptyList<String>()) }
+    LaunchedEffect(tagVaultPath) {
+        noteTagList = if (tagVaultPath.isBlank()) emptyList() else withContext(Dispatchers.IO) {
+            com.quickdaily.util.TagScanner.getTags(tagVaultPath)
+        }
+    }
+    val tagCompletion = remember(tfv.text, tfv.selection, noteTagList) {
+        val currentText = tfv.text
+        val cursor = tfv.selection.start
+        if (cursor > 0 && cursor <= currentText.length) {
+            val before = currentText.substring(0, cursor)
+            val hashPos = before.lastIndexOf('#')
+            if (hashPos >= 0) {
+                val after = before.substring(hashPos + 1)
+                val wordBefore = hashPos > 0 && (currentText[hashPos - 1].isLetterOrDigit() || currentText[hashPos - 1] == '_')
+                if (!wordBefore && (after.isEmpty() || (after[0] != ' ' && !after.all { it == '#' }))) {
+                    val prefix = after.takeWhile { it.isLetterOrDigit() || it == '_' || it == '/' || it == '-' }
+                    val finished = prefix in noteTagList && (after.length == prefix.length || after.length > prefix.length && (!after[prefix.length].isLetterOrDigit() && after[prefix.length] != '#'))
+                    if (!finished) return@remember Triple(true, prefix, hashPos)
+                }
+            }
+        }
+        Triple(false, "", 0)
+    }
+    val (tagActive2, tagPrefix2, tagHashPos2) = tagCompletion
+    val noteMatchingTags = remember(tagActive2, tagPrefix2, noteTagList) {
+        if (!tagActive2) emptyList() else if (tagPrefix2.isEmpty()) {
+            val recent = com.quickdaily.util.RecentTags.get(neCtx)
+            (recent + noteTagList.filterNot { it in recent }).take(3)
+        } else noteTagList.filter { it.contains(tagPrefix2, ignoreCase = true) }.take(8)
+    }
+    val noteSelectTag: (String) -> Unit = remember(tagHashPos2) {
+        { tag ->
+            val currentText = tfv.text
+            val cursor = tfv.selection.start
+            val needSpaceBefore = tagHashPos2 > 0 && currentText[tagHashPos2 - 1] != ' ' && currentText[tagHashPos2 - 1] != '\n'
+            val prefix = if (needSpaceBefore) " #" else "#"
+            val newText = currentText.substring(0, tagHashPos2) + prefix + tag + " " + currentText.substring(cursor)
+            val newCursor = tagHashPos2 + prefix.length + tag.length + 1
+            tfv = TextFieldValue(newText, TextRange(newCursor))
+            onTextChange(newText)
+            com.quickdaily.util.RecentTags.record(neCtx, tag)
+        }
+    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -463,6 +530,16 @@ private fun NoteEditDialog(
     ) {
         Column(Modifier.fillMaxSize().padding(10.dp)) {
                     Box(Modifier.fillMaxWidth()) {
+                TextButton(
+                    onClick = {
+                        neCtx.startActivity(android.content.Intent(neCtx, com.quickdaily.MainActivity::class.java).apply {
+                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        })
+                    },
+                    modifier = Modifier.align(Alignment.CenterStart)
+                ) {
+                    Text("首页", color = floater.primary, style = MaterialTheme.typography.labelSmall)
+                }
                 Text("速记", style = MaterialTheme.typography.labelMedium, color = floater.onSurfaceVariant, modifier = Modifier.align(Alignment.Center))
                 TextButton(onClick = {
                     onClose()
@@ -508,6 +585,14 @@ private fun NoteEditDialog(
                     }
                 }
             }
+            if (attachmentUris.isNotEmpty()) {
+                Text(
+                    text = "已添加附件：${attachmentUris.size} 个",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = floater.primary,
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+            }
 
             BasicTextField(value = tfv, onValueChange = { newTfv ->
                     if (enterToSave) {
@@ -516,8 +601,12 @@ private fun NoteEditDialog(
                         val insertedNewlines = newText.count { it == '\n' } - oldText.count { it == '\n' }
                         val lengthDiff = newText.length - oldText.length
                         if (insertedNewlines > 0 && lengthDiff == 1) {
-                           onTextChange(oldText)
-                           if (oldText.isNotBlank() || imageUris.isNotEmpty()) onSave() else onClose()
+                           if (noteMatchingTags.isNotEmpty()) {
+                               noteSelectTag(noteMatchingTags.first())
+                           } else {
+                               onTextChange(oldText)
+                               if (oldText.isNotBlank() || imageUris.isNotEmpty() || hasAttachments) onSave() else onClose()
+                           }
                         } else {
                             val now = System.currentTimeMillis()
                             if (now - lastUndoTime > 1500 && oldText != newTfv.text) {
@@ -549,86 +638,20 @@ private fun NoteEditDialog(
                     if (text.isEmpty()) Text("写点什么...", color = floater.onBackgroundDim, fontSize = MaterialTheme.typography.bodyMedium.fontSize)
                     inner() })
             } // end content Column (weight)
-            var noteTagList by remember { mutableStateOf(emptyList<String>()) }
-            LaunchedEffect(Unit) {
-                withContext(Dispatchers.IO) {
-                    val vp = neCtx.getSharedPreferences("QuickDaily", 0).getString("vault_path", "") ?: ""
-                    if (vp.isNotBlank()) {
-                        noteTagList = com.quickdaily.util.TagScanner.getTags(vp)
-                    }
-                }
-            }
-
-            val tagCompletion = remember(tfv) {
-                val text = tfv.text
-                val cursor = tfv.selection.start
-                if (cursor > 0 && cursor <= text.length) {
-                    val before = text.substring(0, cursor)
-                    val hi = before.lastIndexOf('#')
-                    if (hi >= 0) {
-                        val after = before.substring(hi + 1)
-                        if (after.isNotEmpty() && after[0] != ' ' && !after.all { it == '#' }) {
-                            val p = after.takeWhile { it.isLetterOrDigit() || it == '_' || it == '/' || it == '-' }
-                            val wordBefore = hi > 0 && (text[hi - 1].isLetterOrDigit() || text[hi - 1] == '_')
-                            if (!wordBefore) {
-                                val tagFinished2 = p in noteTagList && (after.length == p.length || after.length > p.length && (!after[p.length].isLetterOrDigit() && after[p.length] != '#'))
-                                if (!tagFinished2) {
-                                    return@remember Triple(true, p, hi)
-                                }
-                            }
-                        }
-                    }
-                }
-                Triple(false, "", 0)
-            }
-
-            val (tagActive2, tagPrefix2, tagHashPos2) = tagCompletion
-
-
-
-            val noteMatchingTags = remember(tagActive2, tagPrefix2, noteTagList) {
-                if (!tagActive2) emptyList()
-                else {
-                    val p = tagPrefix2
-                    if (p.isEmpty()) noteTagList.take(8)
-                    else noteTagList.filter { it.contains(p as CharSequence, ignoreCase = true) }.take(8)
-                }
-            }
-
-            val noteSelectTag: (String) -> Unit = remember(tagHashPos2) {
-                { tag ->
-                    val text = tfv.text
-                    val cursor = tfv.selection.start
-                    val hp = tagHashPos2
-                    val needSpaceBefore2 = hp > 0 && text[hp - 1] != ' ' && text[hp - 1] != '\n'
-                    val prefix = if (needSpaceBefore2) " #" else "#"
-                    val newText = text.substring(0, hp) + prefix + tag + " " + text.substring(cursor)
-                    val newCursor = hp + prefix.length + tag.length + 1
-                    tfv = TextFieldValue(newText, TextRange(newCursor))
-                    onTextChange(newText)
-                }
-            }
-
-            // ── Tag autocomplete dropdown ──
+            // ── Tag autocomplete row ──
             if (tagActive2 && noteMatchingTags.isNotEmpty()) {
-                Surface(
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 180.dp),
-                    shadowElevation = 4.dp,
-                    tonalElevation = 2.dp,
-                    color = MaterialTheme.colorScheme.surfaceVariant
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth().height(36.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                        noteMatchingTags.forEach { tag ->
-                            TextButton(
-                                onClick = { noteSelectTag(tag) },
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 36.dp)
-                            ) {
-                                Text(
-                                    "#$tag",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    modifier = Modifier.padding(horizontal = 8.dp)
-                                )
-                            }
+                    itemsIndexed(noteMatchingTags, key = { _, tag -> tag }) { _, tag ->
+                        TextButton(
+                            onClick = { noteSelectTag(tag) },
+                            modifier = Modifier.height(36.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                        ) {
+                            Text("#$tag", style = MaterialTheme.typography.bodySmall, color = floater.primary)
                         }
                     }
                 }
@@ -678,6 +701,10 @@ private fun NoteEditDialog(
                 }, modifier = Modifier.size(36.dp)) {
                     Icon(Icons.Default.FormatBold, "加粗", tint = floater.primary, modifier = Modifier.size(20.dp))
                 }
+                // 附件
+                IconButton(onClick = onPickAttachment, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.AttachFile, "附件", tint = floater.primary, modifier = Modifier.size(20.dp))
+                }
                 // 撤销
                 IconButton(
                     onClick = {
@@ -719,7 +746,7 @@ private fun NoteEditDialog(
                 IconButton(
                     onClick = {
                         val t = tfv.text
-                        if (t.isNotBlank() || imageUris.isNotEmpty()) onSave() else onClose()
+                        if (t.isNotBlank() || imageUris.isNotEmpty() || hasAttachments) onSave() else onClose()
                         BetaLogger.log("Toolbar", "save")
                     },
                     modifier = Modifier.size(dim.iconXl)

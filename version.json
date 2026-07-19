@@ -1,5 +1,5 @@
 ﻿{
-    "version": "1.5.14-beta",
+    "version": "1.6",
     "url": "https://github.com/agarcabin/QuickDaily/releases/latest",
-    "body": "QuickDaily 1.5.14-beta build 51\n- 修复 自定义图片预览不更新\n- 修复 悬浮窗附件直接写入Markdown并移动至ob附件目录\n- 修复 自定义图片选择后未拉起裁剪"
+    "body": "QuickDaily 1.6\n• 新增 小部件可靠性、标签补全与蓝色标签渲染\n• 新增 任务周期、跨日勾选、小部件外观与图片裁剪\n• 修复 悬浮窗附件、任务刷新、桌面组件读取与裁剪返回问题"
 }

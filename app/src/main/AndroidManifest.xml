@@ -66,6 +66,11 @@
             android:taskAffinity=""
             android:launchMode="singleInstance" />
 
+        <activity
+            android:name=".WidgetImageCropActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
         <!-- 桌面快捷方式中转 Activity：点击后立即跳转到速记悬浮窗 -->
         <activity
             android:name=".QuickShortcutActivity"
@@ -74,6 +79,10 @@
             android:excludeFromRecents="true"
             android:taskAffinity=""
             android:launchMode="singleInstance" />
+
+        <receiver
+            android:name=".ShortcutPinResultReceiver"
+            android:exported="false" />
 
         <!-- Markdown 开关中转 Activity -->
         <activity
@@ -123,10 +132,10 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
-            <receiver
+        <receiver
             android:name=".TaskWidget"
             android:exported="true"
-            android:label="今日任务">
+            android:label="任务小部件">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
@@ -142,7 +151,7 @@
         <receiver
             android:name=".QuickDailyReadWidget"
             android:exported="true"
-            android:label="桌面便签（阅读模式）">
+            android:label="便签小部件">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>

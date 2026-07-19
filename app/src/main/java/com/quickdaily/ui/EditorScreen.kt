@@ -166,7 +166,8 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
             val hi = before.lastIndexOf('#')
             if (hi >= 0) {
                 val after = before.substring(hi + 1)
-                if (after.isNotEmpty() && after[0] != ' ' && !after.all { it == '#' }) {
+                // A lone # is a valid completion prefix: show recent tags immediately.
+                if (after.isEmpty() || (after[0] != ' ' && !after.all { it == '#' })) {
                     val p = after.takeWhile { it.isLetterOrDigit() || it == '_' || it == '/' || it == '-' }
                     val wordBefore = hi > 0 && (text[hi - 1].isLetterOrDigit() || text[hi - 1] == '_')
                     if (!wordBefore) {
@@ -187,7 +188,10 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
         if (!tagActive) emptyList()
         else {
             val p = tagPrefix
-            if (p.isEmpty()) allTags.take(8)
+            if (p.isEmpty()) {
+                val recent = com.quickdaily.util.RecentTags.get(context)
+                (recent + allTags.filterNot { it in recent }).take(3)
+            }
             else {
                 allTags.filter { it.contains(p as CharSequence, ignoreCase = true) }.take(8)
             }
@@ -205,6 +209,7 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
             val newCursor = hp + prefix.length + tag.length + 1
             textFieldValue = TextFieldValue(newText, TextRange(newCursor))
             appState.onContentChanged(newText)
+            com.quickdaily.util.RecentTags.record(context, tag)
         }
     }
 

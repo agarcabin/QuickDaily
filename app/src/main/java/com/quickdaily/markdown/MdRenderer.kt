@@ -145,6 +145,17 @@ private fun buildAnnotated(raw: String): AnnotatedString {
         var i = 0
         while (i < raw.length) {
             when {
+                // #tag / #tag/subtag
+                raw[i] == '#' && (i == 0 || (!raw[i - 1].isLetterOrDigit() && raw[i - 1] != '_')) -> {
+                    var end = i + 1
+                    while (end < raw.length && (raw[end].isLetterOrDigit() || raw[end] == '_' || raw[end] == '/' || raw[end] == '-')) end++
+                    if (end > i + 1) {
+                        withStyle(SpanStyle(color = Color(0xFF1E88E5))) { append(raw.substring(i, end)) }
+                        i = end
+                    } else {
+                        append(raw[i]); i++
+                    }
+                }
                 // **粗体**
                 raw.startsWith("**", i) -> {
                     val end = raw.indexOf("**", i + 2)

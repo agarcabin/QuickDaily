@@ -55,6 +55,9 @@ import com.quickdaily.DiaryConfig
 import com.quickdaily.QuickNoteWidget
 import com.quickdaily.QuickDailyReadWidget
 import com.quickdaily.TaskWidget
+import com.quickdaily.ShortcutPinResultReceiver
+import com.quickdaily.WidgetImageCropActivity
+import com.quickdaily.WidgetRefreshCoordinator
 import com.quickdaily.util.DateUtil
 import com.quickdaily.util.ShortcutHelper
 import com.quickdaily.util.UriUtil
@@ -191,6 +194,12 @@ fun SettingsScreen(
                             imageNamingFormat = config.imageNamingFormat,
                             imageLinkFormat = if (appCfg?.useMarkdownLinks == true) "described" else config.imageLinkFormat,
                             tagAutocomplete = config.tagAutocomplete,
+                            imageCustomNamingFormat = config.imageCustomNamingFormat,
+                            loggingEnabled = config.loggingEnabled,
+                            taskPeriod = config.taskPeriod,
+                            widgetStyle = config.widgetStyle,
+                            widgetBackgroundColor = config.widgetBackgroundColor,
+                            widgetOpacity = config.widgetOpacity,
                         ))
                     } else {
                         obsidianDetected = false
@@ -267,45 +276,17 @@ fun SettingsScreen(
         }
     }
 
-  // ── Crop result handler ──
-   val cropImageLauncher = rememberLauncherForActivityResult(
+   val internalCropLauncher = rememberLauncherForActivityResult(
        ActivityResultContracts.StartActivityForResult()
    ) { result ->
+       com.quickdaily.BetaLogger.log("WidgetCrop", "resultCode=${result.resultCode} resultPath=${result.data?.getStringExtra(WidgetImageCropActivity.EXTRA_RESULT_PATH)}")
        if (result.resultCode == Activity.RESULT_OK) {
-           pendingImageUri?.let { cropUri ->
-               try {
-                   val destFile = File(context.filesDir, "widget_image.jpg")
-                   context.contentResolver.openInputStream(cropUri)?.use { input ->
-                       FileOutputStream(destFile).use { output ->
-                           input.copyTo(output)
-                       }
-                   }
-                   val savedPath = destFile.absolutePath
-                   widgetImageUri = savedPath
-                   appState.saveConfig(config.copy(widgetImageUri = "file://$savedPath"))
-                   QuickNoteWidget.updateAllWidgets(context)
-                   ShortcutHelper.updateAllShortcuts(context)
-               } catch (e: Exception) {
-                   android.util.Log.e("QuickDaily", "保存裁剪图片失败: ${e.message}")
-               }
-           } ?: run {
-               result.data?.data?.let { dataUri ->
-                   try {
-                       val destFile = File(context.filesDir, "widget_image.jpg")
-                       context.contentResolver.openInputStream(dataUri)?.use { input ->
-                           FileOutputStream(destFile).use { output ->
-                               input.copyTo(output)
-                           }
-                       }
-                       val savedPath = destFile.absolutePath
-                       widgetImageUri = savedPath
-                       appState.saveConfig(config.copy(widgetImageUri = "file://$savedPath"))
-                       QuickNoteWidget.updateAllWidgets(context)
-                       ShortcutHelper.updateAllShortcuts(context)
-                   } catch (e: Exception) {
-                       android.util.Log.e("QuickDaily", "保存裁剪图片失败: ${e.message}")
-                   }
-               }
+           val savedPath = result.data?.getStringExtra(WidgetImageCropActivity.EXTRA_RESULT_PATH)
+           if (savedPath != null && File(savedPath).isFile) {
+           widgetImageUri = "file://$savedPath"
+           appState.saveConfig(config.copy(widgetImageUri = widgetImageUri))
+           QuickNoteWidget.updateAllWidgets(context)
+           ShortcutHelper.updateAllShortcuts(context)
            }
        }
    }
@@ -314,78 +295,16 @@ fun SettingsScreen(
        ActivityResultContracts.GetContent()
    ) { uri: Uri? ->
        uri?.let { srcUri ->
-           try {
-               // 1. 先直接保存原图（保证即使裁剪失败也有底图）
-               val destFile = File(context.filesDir, "widget_image.jpg")
-               context.contentResolver.openInputStream(srcUri)?.use { input ->
-                   FileOutputStream(destFile).use { output ->
-                       input.copyTo(output)
-                   }
-               }
-               val savedPath = destFile.absolutePath
-               widgetImageUri = savedPath
-               appState.saveConfig(config.copy(widgetImageUri = "file://$savedPath"))
-               QuickNoteWidget.updateAllWidgets(context)
-               ShortcutHelper.updateAllShortcuts(context)
-
-               // 2. 再尝试拉起裁剪（依次尝试多个方法）
-               try {
-                   val cropFile = File(context.cacheDir, "crop_widget_temp.jpg")
-                   val cropUri = androidx.core.content.FileProvider.getUriForFile(
-                       context,
-                       "${context.packageName}.fileprovider",
-                       cropFile
-                   )
-                   pendingImageUri = cropUri
-
-                   // 方法1: ACTION_EDIT + crop extras
-                   val editIntent = Intent(Intent.ACTION_EDIT).apply {
-                       setDataAndType(srcUri, "image/*")
-                       putExtra("crop", "true")
-                       putExtra("aspectX", 1)
-                       putExtra("aspectY", 1)
-                       putExtra("outputX", 512)
-                       putExtra("outputY", 512)
-                       putExtra("return-data", false)
-                       putExtra(MediaStore.EXTRA_OUTPUT, cropUri)
-                       addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                       addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                   }
-
-                   // 方法2: com.android.camera.action.CROP（已弃用但广泛支持）
-                   val cameraCropIntent = Intent("com.android.camera.action.CROP").apply {
-                       setDataAndType(srcUri, "image/*")
-                       putExtra("crop", "true")
-                       putExtra("aspectX", 1)
-                       putExtra("aspectY", 1)
-                       putExtra("outputX", 512)
-                       putExtra("outputY", 512)
-                       putExtra("return-data", false)
-                       putExtra(MediaStore.EXTRA_OUTPUT, cropUri)
-                       addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                       addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                   }
-
-                   var cropLaunched = false
-                   try {
-                       cropImageLauncher.launch(editIntent)
-                       cropLaunched = true
-                   } catch (_: Exception) {
-                       try {
-                           cropImageLauncher.launch(cameraCropIntent)
-                           cropLaunched = true
-                       } catch (_: Exception) { }
-                   }
-
-                   if (!cropLaunched) {
-                       android.util.Log.d("QuickDaily", "没有可用的裁剪应用")
-                   }
-               } catch (e: Exception) {
-                   android.util.Log.e("QuickDaily", "尝试裁剪失败: ${e.message}")
-               }
-           } catch (e: Exception) {
-               android.util.Log.e("QuickDaily", "保存小部件图片失败: ${e.message}")
-           }
+           // The document picker has resumed MainActivity and cleared its external-launch
+           // guard. Set it again before opening our crop Activity so onUserLeaveHint()
+           // does not finish the entire task and send the user back to the launcher.
+           onExternalLaunch()
+           com.quickdaily.BetaLogger.log("WidgetCrop", "launch crop uri=$srcUri")
+           internalCropLauncher.launch(
+               Intent(context, WidgetImageCropActivity::class.java)
+                   .setData(srcUri)
+                   .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+           )
        }
    }
    
@@ -408,7 +327,10 @@ fun SettingsScreen(
         imageCustomNamingFormat = config.imageCustomNamingFormat,
         tagAutocomplete = config.tagAutocomplete,
         loggingEnabled = config.loggingEnabled,
-        taskPeriod = config.taskPeriod
+        taskPeriod = config.taskPeriod,
+        widgetStyle = config.widgetStyle,
+        widgetBackgroundColor = config.widgetBackgroundColor,
+        widgetOpacity = config.widgetOpacity
     )
 
     fun saveFull() {
@@ -505,13 +427,17 @@ fun SettingsScreen(
                         anchorText = anchorText,
                         onAnchorTextChange = { anchorText = it },
                         onConfigChange = { newCfg -> appState.saveConfig(newCfg) },
-                        onSave = { saveFull() }
+                        onSave = { saveFull(); onBack() }
                    )
                    2 -> key(widgetImageUri) {
                        WidgetsTab(
                            widgetImageUri = widgetImageUri,
                            config = config,
-                           onConfigChange = { newCfg -> appState.saveConfig(newCfg) },
+                           onConfigChange = { newCfg ->
+                               appState.saveConfig(newCfg)
+                               QuickNoteWidget.updateAllWidgets(context)
+                               WidgetRefreshCoordinator.refreshAll(context)
+                           },
                            context = context,
                            onPickImage = { onExternalLaunch(); imagePicker.launch("image/*") },
                            onResetImage = {
@@ -522,7 +448,7 @@ fun SettingsScreen(
                                QuickNoteWidget.updateAllWidgets(context)
                                ShortcutHelper.updateAllShortcuts(context)
                            },
-                           onSave = { saveFull() }
+                           onSave = { saveFull(); onBack() }
                        )
                    }
                     3 -> OtherTab(
@@ -972,6 +898,16 @@ private fun WidgetsTab(
     onResetImage: () -> Unit,
     onSave: () -> Unit,
 ) {
+    var appearanceStyle by remember(config.widgetStyle) { mutableStateOf(config.widgetStyle) }
+    var appearanceColor by remember(config.widgetBackgroundColor) { mutableLongStateOf(config.widgetBackgroundColor) }
+    var appearanceOpacity by remember(config.widgetOpacity) { mutableIntStateOf(config.widgetOpacity) }
+    fun commitAppearance() {
+        onConfigChange(config.copy(
+            widgetStyle = appearanceStyle,
+            widgetBackgroundColor = appearanceColor,
+            widgetOpacity = appearanceOpacity
+        ))
+    }
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -1072,7 +1008,9 @@ private fun WidgetsTab(
                             val mgr = android.appwidget.AppWidgetManager.getInstance(context)
                             val comp = android.content.ComponentName(context, QuickDailyReadWidget::class.java)
                             if (mgr.isRequestPinAppWidgetSupported) {
-                                val cb = android.app.PendingIntent.getBroadcast(context, 1, Intent(), android.app.PendingIntent.FLAG_IMMUTABLE)
+                                val cb = android.app.PendingIntent.getBroadcast(context, 1,
+                                    Intent(context, ShortcutPinResultReceiver::class.java).setAction(ShortcutPinResultReceiver.ACTION_PIN_SUCCEEDED),
+                                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)
                                 mgr.requestPinAppWidget(comp, null, cb)
                             } else {
                                 context.startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME))
@@ -1103,7 +1041,9 @@ private fun WidgetsTab(
                             val mgr = android.appwidget.AppWidgetManager.getInstance(context)
                             val comp = android.content.ComponentName(context, QuickNoteWidget::class.java)
                             if (mgr.isRequestPinAppWidgetSupported) {
-                                val cb = android.app.PendingIntent.getBroadcast(context, 2, Intent(), android.app.PendingIntent.FLAG_IMMUTABLE)
+                                val cb = android.app.PendingIntent.getBroadcast(context, 2,
+                                    Intent(context, ShortcutPinResultReceiver::class.java).setAction(ShortcutPinResultReceiver.ACTION_PIN_SUCCEEDED),
+                                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)
                                 mgr.requestPinAppWidget(comp, null, cb)
                             } else {
                                 context.startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME))
@@ -1125,7 +1065,9 @@ private fun WidgetsTab(
                             val mgr = android.appwidget.AppWidgetManager.getInstance(context)
                             val comp = android.content.ComponentName(context, TaskWidget::class.java)
                             if (mgr.isRequestPinAppWidgetSupported) {
-                                val cb = android.app.PendingIntent.getBroadcast(context, 3, Intent(), android.app.PendingIntent.FLAG_IMMUTABLE)
+                                val cb = android.app.PendingIntent.getBroadcast(context, 3,
+                                    Intent(context, ShortcutPinResultReceiver::class.java).setAction(ShortcutPinResultReceiver.ACTION_PIN_SUCCEEDED),
+                                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)
                                 mgr.requestPinAppWidget(comp, null, cb)
                             } else {
                                 context.startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME))
@@ -1179,6 +1121,44 @@ private fun WidgetsTab(
                         }
                     }
                 }
+            }
+        }
+
+        Text("桌面小部件外观", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("颜色与透明度", style = MaterialTheme.typography.titleSmall)
+                Text("应用于速记、阅读和任务小部件；自定义图片仍优先显示。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalButton(onClick = { appearanceStyle = "light"; appearanceColor = 0xFFFFFFFFL; commitAppearance() }) { Text("白底黑字") }
+                    FilledTonalButton(onClick = { appearanceStyle = "dark"; appearanceColor = 0xFF202124L; commitAppearance() }) { Text("黑底白字") }
+                    FilledTonalButton(onClick = { appearanceStyle = "custom"; commitAppearance() }) { Text("自定义") }
+                }
+                val color = appearanceColor.toInt()
+                if (appearanceStyle == "custom") {
+                    Text("红色 ${color shr 16 and 0xFF}", style = MaterialTheme.typography.labelMedium)
+                    Slider(value = ((color shr 16) and 0xFF) / 255f, onValueChange = { value ->
+                        val updated = (color and 0xFF00FFFF.toInt()) or (value * 255).toInt().coerceIn(0, 255).shl(16)
+                        appearanceColor = 0xFF000000L or updated.toLong()
+                    }, onValueChangeFinished = ::commitAppearance)
+                    Text("绿色 ${color shr 8 and 0xFF}", style = MaterialTheme.typography.labelMedium)
+                    Slider(value = ((color shr 8) and 0xFF) / 255f, onValueChange = { value ->
+                        val updated = (color and 0xFFFF00FF.toInt()) or (value * 255).toInt().coerceIn(0, 255).shl(8)
+                        appearanceColor = 0xFF000000L or updated.toLong()
+                    }, onValueChangeFinished = ::commitAppearance)
+                    Text("蓝色 ${color and 0xFF}", style = MaterialTheme.typography.labelMedium)
+                    Slider(value = (color and 0xFF) / 255f, onValueChange = { value ->
+                        val updated = (color and 0xFFFFFF00.toInt()) or (value * 255).toInt().coerceIn(0, 255)
+                        appearanceColor = 0xFF000000L or updated.toLong()
+                    }, onValueChangeFinished = ::commitAppearance)
+                }
+                Text("背景不透明度 ${appearanceOpacity}%", style = MaterialTheme.typography.labelMedium)
+                Slider(value = appearanceOpacity / 100f,
+                    onValueChange = { appearanceOpacity = (it * 100).toInt() },
+                    onValueChangeFinished = ::commitAppearance)
             }
         }
 
@@ -1325,7 +1305,34 @@ private fun OtherTab(
                 Text("QuickDaily ", style = MaterialTheme.typography.titleMedium)
 
                 Text("更新内容：", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                Text("1.5:\n" +
+                Text("1.6:\n" +
+                    "• 新增 首页/小部件 标签自动补全（拉取Obsidian已有标签）\n" +
+                    "• 新增 首页/小部件 标签渲染为蓝色\n" +
+                    "• 新增 首页/小部件 标题#按钮切换逻辑：# ，## ，### ，无格式\n" +
+                    "• 新增 首页/小部件 工具栏添加撤销、重做、收起键盘按钮\n" +
+                    "• 新增 首页/小部件 全类型附件插入\n" +
+                    "• 新增 首页 标题栏添加打开 Obsidian 日记按钮\n" +
+                    "• 新增 便签小部件 支持上下滚动、支持实时渲染、支持任务交互\n" +
+                    "• 新增 任务小部件 时间段选择（日/周/月）\n" +
+                    "• 新增 设置 自定义图片添加裁剪步骤\n" +
+                    "• 新增 设置 小部件背景色以及透明度开发自定义\n" +
+                    "• 新增 设置 图片Markdow链接 新增格式 ![[filename]]\n" +
+                    "• 新增 设置 锚点文本支持换行\n" +
+                    "• 新增 每日凌晨自动刷新桌面小部件内容\n\n" +
+                    "• 调整 设置 界面 UI 分类\n" +
+                    "• 调整 悬浮窗 图片选择器样式同部位工具栏样式\n\n" +
+                    "• 修复 工具栏小白条颜色适配\n" +
+                    "• 修复 本周/本月任务小部件无法勾选任务\n" +
+                    "• 修复 图片文件夹选择保存路径导致ob库路径异常\n" +
+                    "• 修复 图片保存时图片Markdow格式链接跟ob不兼容\n" +
+                    "• 修复 悬浮窗 语音输入时只能输入单字\n" +
+                    "• 修复 悬浮窗 无文字时图片保存失败\n" +
+                    "• 修复 桌面添加多个速录图标时，部分图标变成灰色\n" +
+                    "• 修复 图片储存目录文件夹选择器无法正常选择附件目录\n" +
+                    "• 修复 工具栏标题#按钮后无空格\n" +
+                    "• 修复 模板中 ymal 被重复载入\n" +
+                    "• 修复 锚点位置设置为下方插入时误插入到文本最后\n\n" +
+                    "1.5:\n" +
                     "• 新增 首页/悬浮窗 底部工具栏 \n" +
                     "• 新增 首页 阅读视图图片显示 \n" +
                     "• 新增 对 Templater 插件日期格式支持 \n" +

@@ -355,10 +355,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        // SAF 选择器/权限对话框等外部 Activity 启动时不自杀
-        if (externalLaunching) return
+        // OEM launchers also call this when an in-app Activity (such as the cropper)
+        // starts. Ending the task here makes a successful crop look like a crash.
+        BetaLogger.log("Lifecycle", "onUserLeaveHint externalLaunching=$externalLaunching; saving without finishing task")
         if (::appState.isInitialized) appState.saveNow()
-        finishAffinity()
     }
 
     private fun requestManageStorage() {

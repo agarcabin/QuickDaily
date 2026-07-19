@@ -35,8 +35,16 @@ data class DiaryConfig(
     val imageLinkFormat: String = "described",
     val imageCustomNamingFormat: String = "yyyy-MM-dd_HHmmss_{filename}{ext}",
     val tagAutocomplete: Boolean = true,
-    val loggingEnabled: Boolean = false
+    val loggingEnabled: Boolean = false,
+    val taskPeriod: String = "today",
+    val widgetStyle: String = "dark",
+    val widgetBackgroundColor: Long = 0xFF202124L,
+    val widgetOpacity: Int = 100
 )
+
+const val TASK_PERIOD_TODAY = "today"
+const val TASK_PERIOD_WEEK = "week"
+const val TASK_PERIOD_MONTH = "month"
 
 
 /** Obsidian 应用配置（来自 .obsidian/app.json） */
@@ -107,7 +115,11 @@ class AppState(application: Application) : AndroidViewModel(application) {
             imageLinkFormat = prefs.getString("image_link_format", "described") ?: "described",
             imageCustomNamingFormat = prefs.getString("image_custom_naming_format", "yyyy-MM-dd_HHmmss_{filename}{ext}") ?: "yyyy-MM-dd_HHmmss_{filename}{ext}",
             tagAutocomplete = prefs.getBoolean("tag_autocomplete", true),
-            loggingEnabled = prefs.getBoolean("logging_enabled", false)
+            loggingEnabled = prefs.getBoolean("logging_enabled", false),
+            taskPeriod = prefs.getString("task_period", "today") ?: "today",
+            widgetStyle = prefs.getString("widget_style", "dark") ?: "dark",
+            widgetBackgroundColor = prefs.getLong("widget_background_color", 0xFF202124L),
+            widgetOpacity = prefs.getInt("widget_opacity", 100).coerceIn(0, 100)
         )
     }
 
@@ -130,7 +142,11 @@ class AppState(application: Application) : AndroidViewModel(application) {
             imageLinkFormat = raw.imageLinkFormat,
             imageCustomNamingFormat = raw.imageCustomNamingFormat,
             tagAutocomplete = raw.tagAutocomplete,
-            loggingEnabled = raw.loggingEnabled
+            loggingEnabled = raw.loggingEnabled,
+            taskPeriod = raw.taskPeriod,
+            widgetStyle = raw.widgetStyle,
+            widgetBackgroundColor = raw.widgetBackgroundColor,
+            widgetOpacity = raw.widgetOpacity.coerceIn(0, 100)
         )
         prefs.edit()
             .putString("vault_path", config.vaultPath)
@@ -151,6 +167,10 @@ class AppState(application: Application) : AndroidViewModel(application) {
             .putString("image_custom_naming_format", config.imageCustomNamingFormat)
             .putBoolean("tag_autocomplete", config.tagAutocomplete)
             .putBoolean("logging_enabled", config.loggingEnabled)
+            .putString("task_period", config.taskPeriod)
+            .putString("widget_style", config.widgetStyle)
+            .putLong("widget_background_color", config.widgetBackgroundColor)
+            .putInt("widget_opacity", config.widgetOpacity.coerceIn(0, 100))
             .commit()
         _config.value = config
         loadToday()

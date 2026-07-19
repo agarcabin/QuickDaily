@@ -10,6 +10,7 @@ import android.graphics.drawable.Icon
 import android.os.Build
 import com.quickdaily.QuickShortcutActivity
 import com.quickdaily.R
+import com.quickdaily.ShortcutPinResultReceiver
 import java.io.File
 
 object ShortcutHelper {
@@ -20,13 +21,20 @@ object ShortcutHelper {
      * 请求将快捷方式添加到桌面。
      */
     fun pinShortcutToDesktop(context: Context): Boolean {
+        // MIUI's ShortcutManager path has been observed to crash while opening its
+        // launcher permission UI. Its legacy launcher broadcast remains supported,
+        // so deliberately avoid requesting the system pin flow on Xiaomi devices.
+        if (isXiaomiDevice()) {
+            return pinShortcutLegacy(context).also { if (it) showRequestSentToast(context) }
+        }
+
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            return pinShortcutLegacy(context)
+            return pinShortcutLegacy(context).also { if (it) showRequestSentToast(context) }
         }
 
         val shortcutManager = context.getSystemService(ShortcutManager::class.java) ?: return false
         if (!shortcutManager.isRequestPinShortcutSupported) {
-            return pinShortcutLegacy(context)
+            return pinShortcutLegacy(context).also { if (it) showRequestSentToast(context) }
         }
 
         // 清理所有旧的 quick_note 快捷方式（动态 + 固定），避免重复创建失败
@@ -52,12 +60,33 @@ object ShortcutHelper {
             .build()
 
         return try {
-            shortcutManager.requestPinShortcut(shortcut, null)
-            true
+            val callback = android.app.PendingIntent.getBroadcast(
+                context,
+                (System.currentTimeMillis() and 0x7fffffff).toInt(),
+                Intent(context, ShortcutPinResultReceiver::class.java)
+                    .setAction(ShortcutPinResultReceiver.ACTION_PIN_SUCCEEDED),
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+            shortcutManager.requestPinShortcut(shortcut, callback.intentSender)
         } catch (e: Exception) {
             e.printStackTrace()
-            pinShortcutLegacy(context)
+            pinShortcutLegacy(context).also { if (it) showRequestSentToast(context) }
         }
+    }
+
+    private fun isXiaomiDevice(): Boolean {
+        val manufacturer = Build.MANUFACTURER.orEmpty()
+        val brand = Build.BRAND.orEmpty()
+        return manufacturer.equals("Xiaomi", ignoreCase = true) ||
+            manufacturer.equals("Redmi", ignoreCase = true) ||
+            manufacturer.equals("POCO", ignoreCase = true) ||
+            brand.equals("Xiaomi", ignoreCase = true) ||
+            brand.equals("Redmi", ignoreCase = true) ||
+            brand.equals("POCO", ignoreCase = true)
+    }
+
+    private fun showRequestSentToast(context: Context) {
+        android.widget.Toast.makeText(context.applicationContext, "已发送创建请求，请在桌面确认", android.widget.Toast.LENGTH_SHORT).show()
     }
 
     /**

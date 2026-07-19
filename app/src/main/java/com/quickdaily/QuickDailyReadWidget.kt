@@ -8,6 +8,7 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.media.MediaActionSound
 import android.os.Build
 import android.widget.RemoteViews
@@ -19,20 +20,23 @@ import com.quickdaily.util.ContentUtil
 class QuickDailyReadWidget : AppWidgetProvider() {
 
     override fun onUpdate(ctx: Context, manager: AppWidgetManager, ids: IntArray) {
+        BetaLogger.log("ReadWidget", "onUpdate widgetIds=${ids.joinToString()}")
         for (id in ids) {
             try { updateWidget(ctx, manager, id) } catch (_: Exception) { }
         }
+        WidgetRefreshCoordinator.refreshRead(ctx, immediate = true)
     }
 
     override fun onReceive(context: Context, intent: Intent) {
+        BetaLogger.log("ReadWidget", "onReceive action=${intent.action} widgetId=${intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1)}")
         try { super.onReceive(context, intent) } catch (_: Exception) { }
         if (ACTION_TOGGLE_MARKDOWN == intent.action) {
             val prefs = context.getSharedPreferences("QuickDaily", 0)
             val current = prefs.getBoolean("render_markdown", true)
             prefs.edit().putBoolean("render_markdown", !current).commit()
-            refreshAllWidgets(context)
+            refreshAllWidgets(context, immediate = true)
     } else if (ACTION_MIDNIGHT_REFRESH == intent.action) {
-        refreshAllWidgets(context)
+        refreshAllWidgets(context, immediate = true)
     } else if (ACTION_TOGGLE_TASK == intent.action) {
         val taskIdx = intent.getIntExtra("task_index", -1)
         if (taskIdx >= 0) {
@@ -60,14 +64,20 @@ class QuickDailyReadWidget : AppWidgetProvider() {
             } catch (_: Exception) { }
         }
 
-        fun refreshAllWidgets(context: Context) {
+        fun refreshAllWidgets(context: Context, immediate: Boolean = false) {
+            WidgetRefreshCoordinator.refreshRead(context, immediate)
+        }
+
+        internal fun refreshNow(context: Context) {
             try {
-                BetaLogger.log("ReadWidget", "refreshAllWidgets called")
                 val manager = AppWidgetManager.getInstance(context)
                 val component = ComponentName(context, QuickDailyReadWidget::class.java)
-                manager.notifyAppWidgetViewDataChanged(manager.getAppWidgetIds(component), R.id.content_list)
-                BetaLogger.log("ReadWidget", "notifyAppWidgetViewDataChanged sent")
-            } catch (_: Exception) { }
+                val ids = manager.getAppWidgetIds(component)
+                BetaLogger.log("ReadWidget", "refreshNow widgetCount=${ids.size} widgetIds=${ids.joinToString()}")
+                for (id in ids) updateWidget(context, manager, id)
+                manager.notifyAppWidgetViewDataChanged(ids, R.id.content_list)
+                BetaLogger.log("ReadWidget", "notifyDataChanged sent widgetCount=${ids.size}")
+            } catch (e: Exception) { BetaLogger.log("ReadWidget", "refreshNow failed exception=${e.javaClass.simpleName} message=${e.message}") }
         }
 
         private fun toggleTaskInDiary(context: Context, lineIndex: Int) {
@@ -113,13 +123,14 @@ class QuickDailyReadWidget : AppWidgetProvider() {
                 FileUtil.write(path, saveContent)
 
                 // Refresh both widgets
-                refreshAllWidgets(context)
-                TaskWidget.refreshAllWidgets(context)
+                WidgetRefreshCoordinator.refreshAll(context, immediate = true)
             } catch (_: Exception) { }
         }
 
         private fun updateWidget(ctx: Context, manager: AppWidgetManager, widgetId: Int) {
             val views = RemoteViews(ctx.packageName, R.layout.widget_diary_read)
+            val appearance = WidgetAppearance.colors(ctx)
+            WidgetAppearance.applyRoot(views, R.id.widget_root, appearance)
 
             // Home button
             val homeIntent = Intent(ctx, MainActivity::class.java).apply {
@@ -150,9 +161,15 @@ class QuickDailyReadWidget : AppWidgetProvider() {
             val prefs = ctx.getSharedPreferences("QuickDaily", 0)
             val dateFormat = prefs.getString("date_format", "YYYY-MM-DD") ?: "YYYY-MM-DD"
             views.setTextViewText(R.id.widget_title, DateUtil.todayStr(dateFormat))
+            views.setTextColor(R.id.widget_title, appearance.foreground)
+            views.setTextColor(R.id.empty_view, appearance.muted)
+            views.setTextViewText(R.id.empty_view, "Loading...")
 
             // Connect to RemoteViewsService (one call per refresh = one onDataSetChanged)
-            val serviceIntent = Intent(ctx, QuickDailyReadWidgetService::class.java)
+            val serviceIntent = Intent(ctx, QuickDailyReadWidgetService::class.java).apply {
+                data = Uri.parse("quickdaily://read-widget/$widgetId")
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+            }
             views.setRemoteAdapter(R.id.content_list, serviceIntent)
             views.setEmptyView(R.id.content_list, R.id.empty_view)
 

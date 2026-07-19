@@ -7,6 +7,7 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.media.MediaActionSound
 import android.os.Build
 import android.widget.RemoteViews
@@ -22,17 +23,24 @@ class TaskWidget : AppWidgetProvider() {
         appWidgetManager: AppWidgetManager,
         appWidgetIds: IntArray
     ) {
+        BetaLogger.log("TaskWidget", "onUpdate widgetIds=${appWidgetIds.joinToString()}")
         for (id in appWidgetIds) {
             updateWidget(context, appWidgetManager, id)
         }
+        WidgetRefreshCoordinator.refreshTasks(context, immediate = true)
     }
 
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
+        BetaLogger.log("TaskWidget", "onReceive action=${intent.action} widgetId=${intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1)}")
         if (ACTION_REFRESH == intent.action) {
             android.util.Log.d("QuickDaily", "Refresh pressed")
-            refreshAllWidgets(context)
-            android.widget.Toast.makeText(QuickDailyApp.instance, "已刷新", android.widget.Toast.LENGTH_SHORT).show()
+            if (refreshNow(context)) {
+                BetaLogger.log("TaskWidget", "manual refresh succeeded")
+                // MIUI suppresses background BroadcastReceiver toasts. Show the same
+                // confirmation inside the widget, where the launcher cannot suppress it.
+                showRefreshSuccess(context)
+            }
         } else if (ACTION_ADD_TASK == intent.action) {
             val intent2 = Intent(context, NoteEditActivity::class.java).apply {
                 putExtra("prefill_text", "- [ ] ")
@@ -41,11 +49,15 @@ class TaskWidget : AppWidgetProvider() {
             context.startActivity(intent2)
         } else if (ACTION_TOGGLE_TASK == intent.action) {
             val taskIdx = intent.getIntExtra(EXTRA_TASK_INDEX, -1)
-            if (taskIdx >= 0) {
-                toggleTask(context, taskIdx)
+            val taskDate = intent.getStringExtra(EXTRA_TASK_DATE)
+            if (taskIdx >= 0 && !taskDate.isNullOrBlank()) {
+                BetaLogger.log("TaskWidget", "toggle requested date=$taskDate taskIndex=$taskIdx")
+                toggleTask(context, taskDate, taskIdx)
+            } else {
+                BetaLogger.log("TaskWidget", "toggle ignored invalid date=$taskDate taskIndex=$taskIdx")
             }
         } else if (ACTION_MIDNIGHT_REFRESH == intent.action) {
-            refreshAllWidgets(context)
+            refreshAllWidgets(context, immediate = true)
         }
     }
 
@@ -55,6 +67,7 @@ class TaskWidget : AppWidgetProvider() {
         private const val ACTION_ADD_TASK = "com.quickdaily.ADD_TASK"
         private const val ACTION_MIDNIGHT_REFRESH = "com.quickdaily.TASK_MIDNIGHT_REFRESH"
         private const val EXTRA_TASK_INDEX = "task_index"
+        private const val EXTRA_TASK_DATE = "task_date"
 
         fun scheduleMidnightRefresh(context: Context) {
             try {
@@ -77,9 +90,26 @@ class TaskWidget : AppWidgetProvider() {
             widgetId: Int
         ) {
             val views = RemoteViews(context.packageName, R.layout.widget_tasks)
+            val appearance = WidgetAppearance.colors(context)
+            WidgetAppearance.applyRoot(views, R.id.widget_root, appearance)
+
+            // Set title based on task period
+            val prefs_ = context.getSharedPreferences("QuickDaily", 0)
+            val taskPeriod_ = prefs_.getString("task_period", "today") ?: "today"
+            val title_ = when (taskPeriod_) {
+                "week" -> "本周任务"
+                "month" -> "本月任务"
+                else -> "今日任务"
+            }
+            views.setTextViewText(R.id.widget_title, title_)
+            views.setTextColor(R.id.widget_title, appearance.foreground)
+            views.setTextColor(R.id.empty_view, appearance.muted)
 
             // Use RemoteViewsService for the list
-            val serviceIntent = Intent(context, TaskWidgetService::class.java)
+            val serviceIntent = Intent(context, TaskWidgetService::class.java).apply {
+                data = Uri.parse("quickdaily://task-widget/$widgetId")
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+            }
             views.setRemoteAdapter(R.id.task_list, serviceIntent)
             // 设置 emptyView，在某些国产 ROM 上不自动关联
             views.setEmptyView(R.id.task_list, R.id.empty_view)
@@ -124,29 +154,67 @@ class TaskWidget : AppWidgetProvider() {
             appWidgetManager.updateAppWidget(widgetId, views)
         }
 
-        fun refreshAllWidgets(context: Context) {
-            BetaLogger.log("TaskWidget", "refreshAllWidgets")
+        fun refreshAllWidgets(context: Context, immediate: Boolean = false) {
+            WidgetRefreshCoordinator.refreshTasks(context, immediate)
+        }
+
+        internal fun refreshNow(context: Context): Boolean {
+            return try {
             android.util.Log.d("QuickDaily", "TaskWidget.refreshAllWidgets")
             val manager = AppWidgetManager.getInstance(context)
             val component = ComponentName(context, TaskWidget::class.java)
-            manager.notifyAppWidgetViewDataChanged(manager.getAppWidgetIds(component), R.id.task_list)
+            val ids = manager.getAppWidgetIds(component)
+            val period = context.getSharedPreferences("QuickDaily", 0)
+                .getString("task_period", "today") ?: "today"
+            BetaLogger.log("TaskWidget", "refreshNow widgetCount=${ids.size} period=$period widgetIds=${ids.joinToString()}")
+            for (aid in ids) {
+                updateWidget(context, manager, aid)
+            }
+            manager.notifyAppWidgetViewDataChanged(ids, R.id.task_list)
+            true
+            } catch (e: Exception) {
+                BetaLogger.log("TaskWidget", "refreshNow failed exception=${e.javaClass.simpleName} message=${e.message}")
+                false
+            }
         }
 
-        private fun toggleTask(context: Context, taskIndex: Int) {
+        private fun showRefreshSuccess(context: Context) {
+            try {
+                val manager = AppWidgetManager.getInstance(context)
+                val ids = manager.getAppWidgetIds(ComponentName(context, TaskWidget::class.java))
+                val colors = WidgetAppearance.colors(context)
+                ids.forEach { id ->
+                    val views = RemoteViews(context.packageName, R.layout.widget_tasks)
+                    views.setTextViewText(R.id.widget_title, "刷新成功")
+                    views.setTextColor(R.id.widget_title, colors.foreground)
+                    manager.partiallyUpdateAppWidget(id, views)
+                }
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    refreshAllWidgets(context)
+                }, 1_600L)
+            } catch (e: Exception) {
+                BetaLogger.log("TaskWidget", "refresh feedback failed exception=${e.javaClass.simpleName}")
+            }
+        }
+
+        private fun toggleTask(context: Context, date: String, taskIndex: Int) {
             // 完成任务播放 ding 声
             try {
                 MediaActionSound().play(MediaActionSound.FOCUS_COMPLETE)
             } catch (_: Exception) {}
             val prefs = context.getSharedPreferences("QuickDaily", 0)
             val vaultPath = prefs.getString("vault_path", "") ?: ""
-            if (vaultPath.isBlank()) return
+            if (vaultPath.isBlank()) {
+                BetaLogger.log("TaskWidget", "toggle aborted: vault path blank")
+                return
+            }
             val diaryFolder = prefs.getString("diary_folder", "Daily") ?: "Daily"
-            val dateFormat = prefs.getString("date_format", "YYYY-MM-DD") ?: "YYYY-MM-DD"
-
-            val date = DateUtil.todayStr(dateFormat)
             val path = "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/$date.md"
             val content = FileUtil.read(path)
-            if (content.isEmpty()) return
+            if (content.isEmpty()) {
+                BetaLogger.log("TaskWidget", "toggle aborted: diary empty path=$path")
+                return
+            }
 
             val parsed = ContentUtil.parseFrontmatter(content)
             val body = if (parsed.hasFrontmatter) parsed.body else content
@@ -162,11 +230,14 @@ class TaskWidget : AppWidgetProvider() {
                     taskLineIdx++
                 }
             }
-            if (foundIdx < 0) return
+            if (foundIdx < 0) {
+                BetaLogger.log("TaskWidget", "toggle aborted: task index no longer matches date=$date taskIndex=$taskIndex")
+                return
+            }
 
             // Change - [ ] to - [x]
             val oldLine = lines[foundIdx]
-            lines[foundIdx] = oldLine.replaceFirst("- [ ] ", "- [x] ")
+            lines[foundIdx] = oldLine.replaceFirst("- [ ] ", "- [X] ")
             val newBody = lines.joinToString("\n")
             val saveContent = if (parsed.hasFrontmatter) {
                 ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, newBody)
@@ -174,10 +245,10 @@ class TaskWidget : AppWidgetProvider() {
                 newBody
             }
             FileUtil.write(path, saveContent)
+            BetaLogger.log("TaskWidget", "toggle saved date=$date taskIndex=$taskIndex line=$foundIdx path=$path")
 
             // Refresh all widgets
-            refreshAllWidgets(context)
-            QuickDailyReadWidget.refreshAllWidgets(context)
+            WidgetRefreshCoordinator.refreshAll(context, immediate = true)
         }
     }
 }

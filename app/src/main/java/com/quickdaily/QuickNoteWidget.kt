@@ -59,8 +59,8 @@ class QuickNoteWidget : AppWidgetProvider() {
             if (hasCustomImage) {
                 val templateFile = File(context.filesDir, IMAGE_TEMPLATE_FILE)
                 val perWidgetFile = File(context.filesDir, "widget_image_${widgetId}.jpg")
-                if (!perWidgetFile.exists() && templateFile.exists()) {
-                    try { templateFile.copyTo(perWidgetFile, overwrite = false) } catch (_: Exception) { }
+                if (templateFile.exists()) {
+                    try { templateFile.copyTo(perWidgetFile, overwrite = true) } catch (_: Exception) { }
                 }
                 val imageFile = if (perWidgetFile.exists()) perWidgetFile else File(context.filesDir, WIDGET_IMAGE_FILE)
                 if (imageFile.exists()) {
@@ -76,26 +76,30 @@ class QuickNoteWidget : AppWidgetProvider() {
                             views.setViewVisibility(R.id.quicknote_label, android.view.View.GONE)
                             views.setInt(R.id.quicknote_root, "setBackgroundResource", R.drawable.widget_transparent)
                         } else {
-                            resetToDefault(views)
+                            resetToDefault(context, views)
                         }
                     } catch (e: Exception) {
                         android.util.Log.e("QuickDaily", "小部件图片加载失败: " + e.message)
-                        resetToDefault(views)
+                        resetToDefault(context, views)
                     }
                 } else {
-                    resetToDefault(views)
+                    resetToDefault(context, views)
                 }
             } else {
-                resetToDefault(views)
+                resetToDefault(context, views)
             }
 
             appWidgetManager.updateAppWidget(widgetId, views)
         }
 
-        private fun resetToDefault(views: RemoteViews) {
+        private fun resetToDefault(context: Context, views: RemoteViews) {
+            val colors = WidgetAppearance.colors(context)
             views.setViewVisibility(R.id.quicknote_image, android.view.View.GONE)
             views.setViewVisibility(R.id.quicknote_label, android.view.View.VISIBLE)
-            views.setInt(R.id.quicknote_root, "setBackgroundResource", R.drawable.widget_background)
+            WidgetAppearance.applyRoot(views, R.id.quicknote_root, colors)
+            // quicknote_label is an ImageView, not a TextView. Calling setTextColor here
+            // aborts the RemoteViews update on some launchers.
+            views.setInt(R.id.quicknote_label, "setColorFilter", colors.foreground)
         }
 
         private fun centerCropSquare(src: Bitmap): Bitmap {
