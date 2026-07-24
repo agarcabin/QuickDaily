@@ -2,38 +2,34 @@ package com.quickdaily
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 object BetaLogger {
-    private var logFile: File? = null
-    private var enabled = false
+    private const val HEADER_MARKER = "===== QuickDaily Beta Debug Log ====="
+    @Volatile private var logFile: File? = null
+    @Volatile private var enabled = false
+    private var headerWritten = false
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
-    private const val MAX_FILE_SIZE = 500 * 1024
-    private val ioScope = CoroutineScope(Dispatchers.IO)
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val writeMutex = Mutex()
 
     fun init(context: Context) {
         try {
             val prefs = context.getSharedPreferences("QuickDaily", 0)
-            val extEnabled = prefs.getBoolean("logging_enabled", false)
-            if (extEnabled) {
-                val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-                val docsDir = ExternalStoragePaths.diagnosticsDirectory()
-                if (!docsDir.exists()) docsDir.mkdirs()
-                val migration = ExternalStoragePaths.migrateLegacyLogs()
-                logFile = File(docsDir, "QuickDaily_log_" + date + ".txt")
-                enabled = true
-                log("BetaLogger", "legacy logs migrated=${migration.moved} skipped=${migration.skipped}")
-                log("BetaLogger", "init with external logging from prefs")
+            if (prefs.getBoolean("logging_enabled", false)) {
+                configure(context, enabled = true, useExternal = true)
             } else {
-                logFile = File(context.filesDir, "beta_log.txt")
-                enabled = true
-                log("BetaLogger", "init internal (logging pref is false)")
+                disable()
             }
         } catch (_: Exception) { enabled = false }
     }
@@ -44,42 +40,91 @@ object BetaLogger {
         val line = "[$time] [$tag] $message"
         android.util.Log.d("QD-Beta", line)
         ioScope.launch {
-            try {
-                val file = logFile ?: return@launch
-                if (file.exists() && file.length() > MAX_FILE_SIZE) {
-                    val content = file.readText()
-                    val keepFrom = content.length / 2
-                    file.writeText(content.substring(keepFrom))
-                }
-                file.appendText("$line\n")
-            } catch (_: Exception) {}
+            writeMutex.withLock {
+                try {
+                    if (!enabled) return@withLock
+                    val file = logFile ?: return@withLock
+                    if (!headerWritten) {
+                        val existing = if (file.exists()) file.readText(Charsets.UTF_8) else ""
+                        if (!existing.startsWith(HEADER_MARKER)) {
+                            file.writeText(deviceHeader() + existing, Charsets.UTF_8)
+                        }
+                        headerWritten = true
+                    }
+                    file.appendText("$line\n", Charsets.UTF_8)
+                } catch (_: Exception) {}
+            }
         }
     }
 
-    fun getLogContent(): String = try { logFile?.readText() ?: "" } catch (_: Exception) { "" }
+    fun logException(tag: String, message: String, error: Throwable) {
+        log(tag, "$message\n${android.util.Log.getStackTraceString(error)}")
+    }
+
+    fun getLogContent(): String = if (!enabled) "" else try {
+        logFile?.readText(Charsets.UTF_8) ?: ""
+    } catch (_: Exception) { "" }
 
     fun configure(context: Context, enabled: Boolean, useExternal: Boolean) {
         try {
-            if (enabled && useExternal) {
+            if (!enabled) {
+                disable()
+                return
+            }
+            val file = if (useExternal) {
                 val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
                 val docsDir = ExternalStoragePaths.diagnosticsDirectory()
                 if (!docsDir.exists()) docsDir.mkdirs()
                 val migration = ExternalStoragePaths.migrateLegacyLogs()
-                logFile = File(docsDir, "QuickDaily_log_" + date + ".txt")
-                if (migration.moved > 0 || migration.skipped > 0) {
-                    log("BetaLogger", "legacy logs migrated=${migration.moved} skipped=${migration.skipped}")
+                File(docsDir, "QuickDaily_log_$date.txt").also {
+                    logFile = it
+                    headerWritten = hasDeviceHeader(it)
+                    this.enabled = true
+                    if (migration.moved > 0 || migration.skipped > 0) {
+                        log("BetaLogger", "legacy logs migrated=${migration.moved} skipped=${migration.skipped}")
+                    }
                 }
-            } else if (enabled) {
-                logFile = File(context.filesDir, "beta_log.txt")
             } else {
-                logFile = null
+                File(context.filesDir, "beta_log.txt")
             }
-            this.enabled = enabled
-            if (enabled) log("BetaLogger", "configured: external=" + useExternal + " path=" + (logFile?.absolutePath ?: "none"))
+            logFile = file
+            headerWritten = hasDeviceHeader(file)
+            this.enabled = true
+            log("BetaLogger", "configured: external=$useExternal path=${file.absolutePath}")
         } catch (_: Exception) { }
     }
 
-    fun clear() { try { logFile?.delete() } catch (_: Exception) {} }
+    private fun disable() {
+        enabled = false
+        logFile = null
+        headerWritten = false
+    }
+
+    private fun deviceHeader(): String = buildString {
+        appendLine(HEADER_MARKER)
+        appendLine("device.manufacturer=${Build.MANUFACTURER}")
+        appendLine("device.brand=${Build.BRAND}")
+        appendLine("device.model=${Build.MODEL}")
+        appendLine("android.release=${Build.VERSION.RELEASE}")
+        appendLine("android.sdk=${Build.VERSION.SDK_INT}")
+        appendLine("android.incremental=${Build.VERSION.INCREMENTAL}")
+        appendLine("android.display=${Build.DISPLAY}")
+        appendLine("android.fingerprint=${Build.FINGERPRINT}")
+        appendLine("=====================================")
+    }
+
+    private fun hasDeviceHeader(file: File): Boolean = try {
+        file.exists() && file.bufferedReader(Charsets.UTF_8).use { it.readLine() == HEADER_MARKER }
+    } catch (_: Exception) {
+        false
+    }
+
+    fun clear() {
+        try {
+            logFile?.delete()
+            headerWritten = false
+        } catch (_: Exception) {}
+    }
 
     fun shareLog(context: Context) {
         try {

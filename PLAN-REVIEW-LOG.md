@@ -65,3 +65,19 @@ NoteEditActivity 是独立 Activity，不共享 MainActivity 的 AppState ViewMo
 **新发现：无。** 修订后的计划完整覆盖了所有需注意的点，文件变更清单与需求对齐，设计合理。
 
 VERDICT: APPROVED
+
+---
+
+# Plan Review Log: QuickDaily 1.6.2-beta 四项修复
+Act 1 (grill) complete - plan locked with the user. MAX_ROUNDS=5.
+
+## Act 2 - Codex reviewer unavailable
+
+Attempted `codex --version` in the sandbox and with escalation; Windows returned `Access is denied` before the CLI could start. No reviewer round or verdict was produced. Implementation proceeds from the locked plan with local read-only checks instead; this is not a substitute Codex verdict.
+
+## Act 3 - Implementation and verification
+
+- Implemented the four requested fixes and bumped the app to `1.6.2-beta` / versionCode `55`.
+- `:app:assembleRelease` completed with `BUILD SUCCESSFUL`.
+- APK copied to `C:\Download\互传\QuickDaily-1.6.2-beta.apk`.
+- Device-level verification was unavailable because `adb` is not installed on this environment.

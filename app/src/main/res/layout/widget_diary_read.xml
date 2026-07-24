@@ -51,7 +51,8 @@
     <ListView
         android:id="@+id/content_list"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
         android:layout_marginTop="4dp"
         android:divider="@null"
         android:dividerHeight="0dp" />
@@ -59,7 +60,8 @@
     <TextView
         android:id="@+id/empty_view"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
         android:gravity="center"
         android:textColor="#888888"
         android:textSize="12sp"

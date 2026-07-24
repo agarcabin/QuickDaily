@@ -156,12 +156,18 @@ object WidgetContentLoader {
 }
 
 object ReadWidgetViews {
-    fun create(context: Context, item: ReadWidgetItem, position: Int): RemoteViews {
+    fun create(
+        context: Context,
+        item: ReadWidgetItem,
+        position: Int,
+        size: WidgetSize = WidgetSize.DEFAULT
+    ): RemoteViews {
         val colors = WidgetAppearance.colors(context)
         return when (item.type) {
             "task" -> RemoteViews(context.packageName, R.layout.widget_diary_read_task).apply {
                 setTextViewText(R.id.task_text, item.text)
-                setFloat(R.id.task_text, "setTextSize", 12f)
+                setFloat(R.id.task_text, "setTextSize", if (size.isTiny) 11f else 12f)
+                setInt(R.id.task_text, "setMaxLines", size.readMaxLines)
                 setTextColor(R.id.task_text, if (item.checked) colors.muted else colors.foreground)
                 setImageViewResource(
                     R.id.task_checkbox,
@@ -181,6 +187,7 @@ object ReadWidgetViews {
                     3 -> 14f
                     else -> 13f
                 })
+                setInt(R.id.task_text, "setMaxLines", size.readMaxLines)
             }
             "image" -> simpleLine(context, "[图片]", colors.muted)
             "quote" -> simpleLine(context, " ▍ " + renderMarkdown(item.text), colors.foreground)
@@ -192,23 +199,36 @@ object ReadWidgetViews {
                 if (item.renderInlineMarkdown) renderMarkdown(item.text) else item.text,
                 colors.foreground
             )
+        }.apply {
+            setInt(R.id.task_text, "setMaxLines", size.readMaxLines)
+            if (size.isTiny) setFloat(R.id.task_text, "setTextSize", 11f)
         }
     }
 
     @RequiresApi(Build.VERSION_CODES.S)
-    fun collection(context: Context, items: List<ReadWidgetItem>): RemoteViews.RemoteCollectionItems {
+    fun collection(
+        context: Context,
+        items: List<ReadWidgetItem>,
+        size: WidgetSize = WidgetSize.DEFAULT
+    ): RemoteViews.RemoteCollectionItems {
         val builder = RemoteViews.RemoteCollectionItems.Builder()
             .setHasStableIds(false)
             .setViewTypeCount(3)
         items.forEachIndexed { index, item ->
-            builder.addItem(index.toLong(), create(context, item, index))
+            builder.addItem(index.toLong(), create(context, item, index, size))
         }
         return builder.build()
     }
 
-    private fun simpleLine(context: Context, text: CharSequence, color: Int): RemoteViews =
+    private fun simpleLine(
+        context: Context,
+        text: CharSequence,
+        color: Int,
+        size: WidgetSize = WidgetSize.DEFAULT
+    ): RemoteViews =
         RemoteViews(context.packageName, R.layout.widget_diary_read_line).apply {
-            setFloat(R.id.task_text, "setTextSize", 12f)
+            setFloat(R.id.task_text, "setTextSize", if (size.isTiny) 11f else 12f)
+            setInt(R.id.task_text, "setMaxLines", size.readMaxLines)
             setTextViewText(R.id.task_text, text)
             setTextColor(R.id.task_text, color)
         }
@@ -253,10 +273,16 @@ object ReadWidgetViews {
 }
 
 object TaskWidgetViews {
-    fun create(context: Context, item: TaskWidgetItem): RemoteViews =
+    fun create(
+        context: Context,
+        item: TaskWidgetItem,
+        size: WidgetSize = WidgetSize.DEFAULT
+    ): RemoteViews =
         RemoteViews(context.packageName, R.layout.widget_task_item).apply {
             val taskText = item.text.replace("- [ ] ", "").replace("- [x] ", "").replace("- [X] ", "").trim()
             setTextViewText(R.id.task_text, taskText)
+            setFloat(R.id.task_text, "setTextSize", if (size.isTiny) 11f else 12f)
+            setInt(R.id.task_text, "setMaxLines", size.taskMaxLines)
             setTextColor(R.id.task_text, WidgetAppearance.colors(context).foreground)
             val fillIntent = Intent().apply {
                 putExtra("task_index", item.indexInDiary)
@@ -266,12 +292,16 @@ object TaskWidgetViews {
         }
 
     @RequiresApi(Build.VERSION_CODES.S)
-    fun collection(context: Context, items: List<TaskWidgetItem>): RemoteViews.RemoteCollectionItems {
+    fun collection(
+        context: Context,
+        items: List<TaskWidgetItem>,
+        size: WidgetSize = WidgetSize.DEFAULT
+    ): RemoteViews.RemoteCollectionItems {
         val builder = RemoteViews.RemoteCollectionItems.Builder()
             .setHasStableIds(false)
             .setViewTypeCount(1)
         items.forEachIndexed { index, item ->
-            builder.addItem(index.toLong(), create(context, item))
+            builder.addItem(index.toLong(), create(context, item, size))
         }
         return builder.build()
     }

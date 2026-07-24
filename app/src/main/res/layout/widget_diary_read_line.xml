@@ -7,4 +7,6 @@
     android:paddingBottom="1dp"
     android:textColor="#CCCCCC"
     android:textSize="12sp"
-    android:lineSpacingExtra="2dp" />
+    android:lineSpacingExtra="2dp"
+    android:maxLines="3"
+    android:ellipsize="end" />

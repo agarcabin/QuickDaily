@@ -2,6 +2,7 @@
 
 import android.app.Application
 import android.content.SharedPreferences
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.quickdaily.util.DateUtil
@@ -19,6 +20,7 @@ import kotlinx.coroutines.launch
 
 data class DiaryConfig(
     val vaultPath: String = "",
+    val obsidianConfigUri: String = "",
     val diaryFolder: String = "Daily",
     val dateFormat: String = "YYYY-MM-DD",
     val templatePath: String = "",
@@ -41,6 +43,17 @@ data class DiaryConfig(
     val widgetStyle: String = "dark",
     val widgetBackgroundColor: Long = 0xFF202124L,
     val widgetOpacity: Int = 100
+)
+
+enum class ObsidianConfigReadStatus {
+    SUCCESS,
+    UNAVAILABLE,
+    INVALID_JSON,
+}
+
+data class ObsidianConfigReadResult(
+    val status: ObsidianConfigReadStatus,
+    val config: DiaryConfig? = null,
 )
 
 const val TASK_PERIOD_TODAY = "today"
@@ -100,6 +113,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
     private fun loadConfig(): DiaryConfig {
         return DiaryConfig(
             vaultPath = prefs.getString("vault_path", "") ?: "",
+            obsidianConfigUri = prefs.getString("obsidian_config_uri", "") ?: "",
             diaryFolder = prefs.getString("diary_folder", "Daily") ?: "Daily",
             dateFormat = prefs.getString("date_format", "YYYY-MM-DD") ?: "YYYY-MM-DD",
             templatePath = prefs.getString("template_path", "") ?: "",
@@ -128,6 +142,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
     fun saveConfig(raw: DiaryConfig) {
         val config = DiaryConfig(
             vaultPath = raw.vaultPath.trim(),
+            obsidianConfigUri = raw.obsidianConfigUri.trim(),
             diaryFolder = raw.diaryFolder.trim().ifBlank { "Daily" },
             dateFormat = raw.dateFormat.trim().ifBlank { "YYYY-MM-DD" },
             templatePath = raw.templatePath.trim(),
@@ -153,6 +168,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
         )
         prefs.edit()
             .putString("vault_path", config.vaultPath)
+            .putString("obsidian_config_uri", config.obsidianConfigUri)
             .putString("diary_folder", config.diaryFolder)
             .putString("date_format", config.dateFormat)
             .putString("template_path", config.templatePath)
@@ -190,27 +206,54 @@ class AppState(application: Application) : AndroidViewModel(application) {
             val cleanPath = vaultPath.trimEnd('/')
             val jsonPath = "$cleanPath/.obsidian/daily-notes.json"
             val raw = FileUtil.readOrNull(jsonPath) ?: return@withContext null
-            try {
-                val json = kotlinx.serialization.json.Json {
-                    ignoreUnknownKeys = true
-                    isLenient = true
-                }
-                val obj = json.parseToJsonElement(raw) as? kotlinx.serialization.json.JsonObject
-                    ?: return@withContext null
+            parseObsidianConfig(raw, vaultPath, "vault-default")
+        }
+    }
 
-                fun field(key: String): String? =
-                    (obj[key] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNullBlank()
+    suspend fun loadObsidianConfig(uri: Uri, vaultPath: String): DiaryConfig? {
+        return inspectObsidianConfig(uri, vaultPath).config
+    }
 
-                val folder = field("folder") ?: "Daily"
-                val format = DateUtil.convertObsidianFormat(field("format") ?: "YYYY-MM-DD")
-                var template = field("template") ?: ""
-                if (template.isNotBlank() && !template.endsWith(".md", ignoreCase = true)) {
-                    template += ".md"
-                }
-                DiaryConfig(vaultPath, folder, format, template)
-            } catch (_: Exception) {
+    suspend fun inspectObsidianConfig(uri: Uri, vaultPath: String): ObsidianConfigReadResult {
+        return kotlinx.coroutines.withContext(Dispatchers.IO) {
+            val raw = try {
+                app.contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+            } catch (error: Exception) {
+                BetaLogger.logException("ObsidianConfig", "read_uri_failed uri=$uri", error)
                 null
+            } ?: return@withContext ObsidianConfigReadResult(ObsidianConfigReadStatus.UNAVAILABLE)
+            val parsed = parseObsidianConfig(raw, vaultPath, "custom-uri")
+            if (parsed == null) {
+                ObsidianConfigReadResult(ObsidianConfigReadStatus.INVALID_JSON)
+            } else {
+                ObsidianConfigReadResult(ObsidianConfigReadStatus.SUCCESS, parsed)
             }
+        }
+    }
+
+    private fun parseObsidianConfig(raw: String, vaultPath: String, source: String): DiaryConfig? {
+        return try {
+            val json = kotlinx.serialization.json.Json {
+                ignoreUnknownKeys = true
+                isLenient = true
+            }
+            val obj = json.parseToJsonElement(raw) as? kotlinx.serialization.json.JsonObject
+                ?: return null
+
+            fun field(key: String): String? =
+                (obj[key] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNullBlank()
+
+            val folder = field("folder") ?: "Daily"
+            val format = DateUtil.convertObsidianFormat(field("format") ?: "YYYY-MM-DD")
+            var template = field("template") ?: ""
+            if (template.isNotBlank() && !template.endsWith(".md", ignoreCase = true)) {
+                template += ".md"
+            }
+            BetaLogger.log("ObsidianConfig", "parsed source=$source path=$vaultPath bytes=${raw.length}")
+            DiaryConfig(vaultPath = vaultPath, diaryFolder = folder, dateFormat = format, templatePath = template)
+        } catch (error: Exception) {
+            BetaLogger.logException("ObsidianConfig", "parse_failed source=$source bytes=${raw.length}", error)
+            null
         }
     }
 
@@ -259,7 +302,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
                 is ReadResult.NotFound -> null
                 is ReadResult.Error -> {
                     android.util.Log.e("QuickDaily", "读取日记失败: $path", result.exception)
-                    BetaLogger.log("LoadToday", "read_error: ${result.exception.message}")
+                    BetaLogger.logException("LoadToday", "read_error path=$path", result.exception)
                     null
                 }
             }
@@ -366,7 +409,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
         saveUndoPoint(forceUndoPoint)
         _diaryContent.value = newContent
         autoSave?.trigger()
-        BetaLogger.log("Edit", "content_len=${newContent.length}")
+        BetaLogger.log("Edit", "content=$newContent")
     }
 
     // ── Undo/Redo helpers ──────────────────────────────────

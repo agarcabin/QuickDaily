@@ -27,6 +27,18 @@ class QuickDailyReadWidget : AppWidgetProvider() {
         WidgetRefreshCoordinator.refreshRead(ctx, immediate = true)
     }
 
+    override fun onAppWidgetOptionsChanged(
+        context: Context,
+        appWidgetManager: AppWidgetManager,
+        appWidgetId: Int,
+        newOptions: android.os.Bundle
+    ) {
+        super.onAppWidgetOptionsChanged(context, appWidgetManager, appWidgetId, newOptions)
+        BetaLogger.log("ReadWidget", "size changed widgetId=$appWidgetId options=$newOptions")
+        updateWidget(context, appWidgetManager, appWidgetId, null)
+        WidgetRefreshCoordinator.refreshRead(context, immediate = true)
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
         BetaLogger.log("ReadWidget", "onReceive action=${intent.action} widgetId=${intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1)}")
         try { super.onReceive(context, intent) } catch (_: Exception) { }
@@ -141,7 +153,9 @@ class QuickDailyReadWidget : AppWidgetProvider() {
         ) {
             val views = RemoteViews(ctx.packageName, R.layout.widget_diary_read)
             val appearance = WidgetAppearance.colors(ctx)
+            val size = WidgetSizePolicy.forWidget(manager, widgetId)
             WidgetAppearance.applyRoot(views, R.id.widget_root, appearance)
+            WidgetSizePolicy.applyReadChrome(views, size)
 
             // Home button
             val homeIntent = Intent(ctx, MainActivity::class.java).apply {
@@ -184,7 +198,7 @@ class QuickDailyReadWidget : AppWidgetProvider() {
 
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
                 val items = (effectiveResult as? WidgetLoadResult.Success)?.value.orEmpty()
-                views.setRemoteAdapter(R.id.content_list, ReadWidgetViews.collection(ctx, items))
+                views.setRemoteAdapter(R.id.content_list, ReadWidgetViews.collection(ctx, items, size))
             } else {
                 // API 26-30 fallback: bind the RemoteViewsService with BIND_REMOTEVIEWS.
                 val serviceIntent = Intent(ctx, QuickDailyReadWidgetService::class.java).apply {

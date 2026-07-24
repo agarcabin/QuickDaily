@@ -30,6 +30,18 @@ class TaskWidget : AppWidgetProvider() {
         WidgetRefreshCoordinator.refreshTasks(context, immediate = true)
     }
 
+    override fun onAppWidgetOptionsChanged(
+        context: Context,
+        appWidgetManager: AppWidgetManager,
+        appWidgetId: Int,
+        newOptions: android.os.Bundle
+    ) {
+        super.onAppWidgetOptionsChanged(context, appWidgetManager, appWidgetId, newOptions)
+        BetaLogger.log("TaskWidget", "size changed widgetId=$appWidgetId options=$newOptions")
+        updateWidget(context, appWidgetManager, appWidgetId, null)
+        WidgetRefreshCoordinator.refreshTasks(context, immediate = true)
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
         BetaLogger.log("TaskWidget", "onReceive action=${intent.action} widgetId=${intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1)}")
@@ -91,7 +103,9 @@ class TaskWidget : AppWidgetProvider() {
         ) {
             val views = RemoteViews(context.packageName, R.layout.widget_tasks)
             val appearance = WidgetAppearance.colors(context)
+            val size = WidgetSizePolicy.forWidget(appWidgetManager, widgetId)
             WidgetAppearance.applyRoot(views, R.id.widget_root, appearance)
+            WidgetSizePolicy.applyTaskChrome(views, size)
 
             // Set title based on task period
             val prefs_ = context.getSharedPreferences("QuickDaily", 0)
@@ -115,7 +129,7 @@ class TaskWidget : AppWidgetProvider() {
 
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
                 val items = (effectiveResult as? WidgetLoadResult.Success)?.value.orEmpty()
-                views.setRemoteAdapter(R.id.task_list, TaskWidgetViews.collection(context, items))
+                views.setRemoteAdapter(R.id.task_list, TaskWidgetViews.collection(context, items, size))
             } else {
                 // API 26-30 fallback: bind the RemoteViewsService with BIND_REMOTEVIEWS.
                 val serviceIntent = Intent(context, TaskWidgetService::class.java).apply {

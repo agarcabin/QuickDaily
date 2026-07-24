@@ -28,6 +28,16 @@ class QuickNoteWidget : AppWidgetProvider() {
         }
     }
 
+    override fun onAppWidgetOptionsChanged(
+        context: Context,
+        appWidgetManager: AppWidgetManager,
+        appWidgetId: Int,
+        newOptions: android.os.Bundle
+    ) {
+        super.onAppWidgetOptionsChanged(context, appWidgetManager, appWidgetId, newOptions)
+        updateWidget(context, appWidgetManager, appWidgetId)
+    }
+
     companion object {
         private const val CORNER_RADIUS_DP = 16f
         private const val WIDGET_IMAGE_FILE = "widget_image.jpg"

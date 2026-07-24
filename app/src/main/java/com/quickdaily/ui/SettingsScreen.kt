@@ -32,6 +32,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
@@ -54,6 +55,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.quickdaily.AppState
 import com.quickdaily.BuildConfig
 import com.quickdaily.DiaryConfig
+import com.quickdaily.ObsidianConfigReadStatus
 import com.quickdaily.QuickNoteWidget
 import com.quickdaily.QuickDailyReadWidget
 import com.quickdaily.TaskWidget
@@ -174,6 +176,7 @@ fun SettingsScreen(
 
     // ── Local edit state ──
     var vaultPath by remember { mutableStateOf(config.vaultPath) }
+    var obsidianConfigUri by remember { mutableStateOf(config.obsidianConfigUri) }
     var diaryFolder by remember { mutableStateOf(config.diaryFolder) }
     var dateFormat by remember { mutableStateOf(config.dateFormat) }
     var templatePath by remember { mutableStateOf(config.templatePath) }
@@ -183,8 +186,54 @@ fun SettingsScreen(
    var obsidianDetected by remember { mutableStateOf(false) }
    var obsidianMsg by remember { mutableStateOf("") }
    val scope = rememberCoroutineScope()
-   var widgetImageUri by rememberSaveable { mutableStateOf(config.widgetImageUri) }
-   var pendingImageUri by remember { mutableStateOf<Uri?>(null) }
+    var widgetImageUri by rememberSaveable { mutableStateOf(config.widgetImageUri) }
+    var pendingImageUri by remember { mutableStateOf<Uri?>(null) }
+
+    suspend fun readObsidianConfigFromSource() {
+        val selectedUri = obsidianConfigUri.trim().takeIf { it.isNotBlank() }
+        val customResult = selectedUri?.let { rawUri ->
+            runCatching { appState.inspectObsidianConfig(Uri.parse(rawUri), vaultPath) }.getOrNull()
+        }
+        if (customResult?.status == ObsidianConfigReadStatus.INVALID_JSON) {
+            obsidianDetected = false
+            obsidianMsg = "自定义配置文件 JSON 无效，已保留当前配置"
+            return
+        }
+        val obsCfg = customResult?.config ?: appState.loadObsidianConfig(vaultPath)
+        val appCfg = if (obsCfg != null) appState.loadObsidianAppConfig(vaultPath) else null
+        if (obsCfg != null) {
+            diaryFolder = obsCfg.diaryFolder
+            dateFormat = obsCfg.dateFormat
+            templatePath = obsCfg.templatePath
+            if (appCfg != null) {
+                imageStoragePath = appCfg.attachmentFolderPath.let {
+                    if (it == "/") "" else it.trimStart('/')
+                }
+            }
+            obsidianDetected = true
+            obsidianMsg = when {
+                customResult?.status == ObsidianConfigReadStatus.SUCCESS -> "已读取自定义 Obsidian 配置"
+                selectedUri != null -> "自定义配置文件不可用，已回退默认路径并读取"
+                else -> "已读取 Obsidian 配置"
+            }
+            appState.saveConfig(config.copy(
+                vaultPath = vaultPath.trim(),
+                obsidianConfigUri = obsidianConfigUri.trim(),
+                diaryFolder = diaryFolder.trim().ifBlank { "Daily" },
+                dateFormat = dateFormat.trim().ifBlank { "YYYY-MM-DD" },
+                templatePath = templatePath.trim(),
+                imageStoragePath = imageStoragePath.trim(),
+                imageLinkFormat = if (appCfg?.useMarkdownLinks == true) "described" else config.imageLinkFormat
+            ))
+        } else {
+            obsidianDetected = false
+            obsidianMsg = if (selectedUri != null) {
+                "自定义配置文件不可用，默认路径也未找到"
+            } else {
+                "未找到 .obsidian/daily-notes.json"
+            }
+        }
+    }
 
     // ── Update check state ──
     var isCheckingUpdate by remember { mutableStateOf(false) }
@@ -211,6 +260,7 @@ fun SettingsScreen(
             val path = UriUtil.treeUriToPath(it)
             if (path != null) {
                 vaultPath = path
+                obsidianConfigUri = ""
                 scope.launch {
                     val obsCfg = appState.loadObsidianConfig(path)
                     val appCfg = appState.loadObsidianAppConfig(path)
@@ -225,6 +275,7 @@ fun SettingsScreen(
                         }
                         appState.saveConfig(DiaryConfig(
                             vaultPath = path.trim(),
+                            obsidianConfigUri = "",
                             diaryFolder = obsCfg.diaryFolder.trim().ifBlank { "Daily" },
                             dateFormat = obsCfg.dateFormat.trim().ifBlank { "YYYY-MM-DD" },
                             templatePath = obsCfg.templatePath.trim(),
@@ -331,6 +382,21 @@ fun SettingsScreen(
         }
     }
 
+    val obsidianConfigPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri ?: return@rememberLauncherForActivityResult
+        try {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        } catch (_: Exception) { }
+        obsidianConfigUri = uri.toString()
+        appState.saveConfig(config.copy(vaultPath = vaultPath.trim(), obsidianConfigUri = uri.toString()))
+        scope.launch { readObsidianConfigFromSource() }
+    }
+
    val internalCropLauncher = rememberLauncherForActivityResult(
        ActivityResultContracts.StartActivityForResult()
    ) { result ->
@@ -365,7 +431,8 @@ fun SettingsScreen(
    
     fun buildConfig(): DiaryConfig = DiaryConfig(
         vaultPath = vaultPath.trim(),
-        diaryFolder = diaryFolder.trim().ifBlank { "Daily" },
+        obsidianConfigUri = obsidianConfigUri.trim(),
+         diaryFolder = diaryFolder.trim().ifBlank { "Daily" },
         dateFormat = dateFormat.trim().ifBlank { "YYYY-MM-DD" },
         templatePath = templatePath.trim(),
         anchorText = anchorText,
@@ -434,6 +501,7 @@ fun SettingsScreen(
                 when (page) {
                     0 -> DiaryStorageTab(
                         vaultPath = vaultPath,
+                        obsidianConfigUri = obsidianConfigUri,
                         diaryFolder = diaryFolder,
                         dateFormat = dateFormat,
                         templatePath = templatePath,
@@ -448,27 +516,15 @@ fun SettingsScreen(
                         onImageStoragePathChange = { imageStoragePath = it },
                         config = config,
                         onConfigChange = { newCfg -> appState.saveConfig(newCfg) },
-                        onReadObsidianConfig = {
-                            scope.launch {
-                                val obsCfg = appState.loadObsidianConfig(vaultPath)
-                                val appCfg = appState.loadObsidianAppConfig(vaultPath)
-                                if (obsCfg != null) {
-                                    diaryFolder = obsCfg.diaryFolder
-                                    dateFormat = obsCfg.dateFormat
-                                    templatePath = obsCfg.templatePath
-                                    obsidianDetected = true
-                                    obsidianMsg = "已读取 Obsidian 配置"
-                                    if (appCfg != null) {
-                                        imageStoragePath = appCfg.attachmentFolderPath.let { if (it == "/") "" else it.trimStart('/') }
-                                        appState.saveConfig(config.copy(
-                                            imageLinkFormat = if (appCfg.useMarkdownLinks) "described" else "obsidian_wikilink"
-                                        ))
-                                    }
-                                } else {
-                                    obsidianDetected = false
-                                    obsidianMsg = "未找到 .obsidian/daily-notes.json"
-                                }
-                            }
+                        onReadObsidianConfig = { scope.launch { readObsidianConfigFromSource() } },
+                        onPickObsidianConfig = {
+                            onExternalLaunch()
+                            obsidianConfigPicker.launch(arrayOf("application/json", "text/plain", "*/*"))
+                        },
+                        onClearObsidianConfig = {
+                            obsidianConfigUri = ""
+                            appState.saveConfig(config.copy(obsidianConfigUri = ""))
+                            scope.launch { readObsidianConfigFromSource() }
                         },
                         onPickVault = { onExternalLaunch(); vaultPicker.launch(null) },
                         onPickTemplate = {
@@ -566,6 +622,7 @@ fun SettingsScreen(
 @Composable
 private fun DiaryStorageTab(
     vaultPath: String,
+    obsidianConfigUri: String,
     diaryFolder: String,
     dateFormat: String,
     templatePath: String,
@@ -581,6 +638,8 @@ private fun DiaryStorageTab(
     config: DiaryConfig,
     onConfigChange: (DiaryConfig) -> Unit,
     onReadObsidianConfig: () -> Unit,
+    onPickObsidianConfig: () -> Unit,
+    onClearObsidianConfig: () -> Unit,
     onPickVault: () -> Unit,
     onPickTemplate: () -> Unit,
     onPickImageStorage: () -> Unit,
@@ -624,10 +683,36 @@ private fun DiaryStorageTab(
                 }
 
                 Text(
-                    text = "Obsidian\u914d\u7f6e\u8def\u5f84\uff1astorage/emulated/0/Document/obsidian/.obsidian/daily-notes.json",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                    text = "Obsidian 配置文件路径：",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                val configPathText = if (obsidianConfigUri.isBlank()) {
+                    "未选择（使用仓库默认路径 /.obsidian/daily-notes.json）"
+                } else {
+                    documentDisplayName(context, Uri.parse(obsidianConfigUri)) ?: obsidianConfigUri
+                }
+                Text(
+                    text = configPathText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedButton(onClick = onPickObsidianConfig, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.FileOpen, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (obsidianConfigUri.isBlank()) "选择配置文件" else "重新选择")
+                    }
+                    if (obsidianConfigUri.isNotBlank()) {
+                        IconButton(onClick = onClearObsidianConfig) {
+                            Icon(Icons.Default.Clear, "清除自定义配置文件")
+                        }
+                    }
+                }
                 if (obsidianMsg.isNotEmpty()) {
                     Text(obsidianMsg,
                         color = if (obsidianDetected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
@@ -1365,7 +1450,7 @@ private fun OtherTab(
             Column(modifier = Modifier.padding(16.dp)) {
                 ListItem(colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                     headlineContent = { Text("记录日志") },
-                    supportingContent = { Text("开启后记录日志到根目录，非记录BUG无需开启。") },
+                    supportingContent = { Text("开启后将记录操作日志，会带来一定程度的性能损耗，提交完 BUG 后请自行手动关闭。") },
                     trailingContent = {
                         Switch(checked = config.loggingEnabled, onCheckedChange = {
                             onConfigChange(config.copy(loggingEnabled = it))
@@ -1377,6 +1462,11 @@ private fun OtherTab(
         }
 
         if (config.loggingEnabled) {
+            Text(
+                "完整调试日志可能包含日记正文、输入内容和本地路径，请仅在定位 BUG 时开启并谨慎分享。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
             Button(onClick = { com.quickdaily.BetaLogger.shareLog(context) }, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.BugReport, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
@@ -1392,7 +1482,7 @@ private fun OtherTab(
             ),
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("QuickDaily 1.7", style = MaterialTheme.typography.titleMedium)
+                Text("QuickDaily 1.7.4-beta", style = MaterialTheme.typography.titleMedium)
 
                 Text("更新内容：", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
                 Text("1.7:\n" +

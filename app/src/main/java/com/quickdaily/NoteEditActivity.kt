@@ -40,6 +40,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.foundation.clickable
@@ -525,6 +526,7 @@ fun NoteEditDialog(
                 keyboardOptions = KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { if (enterToSave) saveOrClose() }),
                 textStyle = TextStyle(fontSize = 15.sp, lineHeight = 22.sp, color = floater.onBackground),
+                cursorBrush = SolidColor(FloatingCursorPolicy.colorFor(floater.background)),
                 modifier = Modifier
                     .fillMaxWidth()
                     .focusRequester(focusRequester)

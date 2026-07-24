@@ -95,6 +95,7 @@ class FloatingNoteService : LifecycleService() {
                                 text = state.text,
                                 onTextChange = {
                                     state.text = it
+                                    BetaLogger.log("FloatingNote/Input", "content=$it")
                                     FloatingNoteDraftStore.persist(this@FloatingNoteService, state)
                                 },
                                 enterToSave = state.enterToSave,
@@ -141,7 +142,7 @@ class FloatingNoteService : LifecycleService() {
             FloatingNoteTiming.mark("window_add_end")
             BetaLogger.log("FloatingNote/Window", "show type=TYPE_APPLICATION_OVERLAY width=$width height=$height")
         } catch (error: Throwable) {
-            BetaLogger.log("FloatingNote/Window", "add_failed=${error.javaClass.simpleName}")
+            BetaLogger.logException("FloatingNote/Window", "add_failed=${error.javaClass.simpleName}", error)
             overlayView = null
             isWindowShowing = false
             Toast.makeText(this, "悬浮窗启动失败，已返回首页", Toast.LENGTH_SHORT).show()
@@ -158,6 +159,10 @@ class FloatingNoteService : LifecycleService() {
         }
         state.isSaving = true
         FloatingNoteDraftStore.persist(this, state)
+        BetaLogger.log(
+            "FloatingNote/Save",
+            "content=${state.text} images=${state.selectedImages.size} attachments=${state.pendingAttachments.size}"
+        )
         lifecycleScope.launch {
             FloatingNoteTiming.mark("save_start")
             val result = saveUseCase.save(

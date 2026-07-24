@@ -1,5 +1,5 @@
 ﻿{
-    "version": "1.7.3-beta",
+    "version": "1.7.4-beta",
     "url": "https://github.com/agarcabin/QuickDaily/releases/latest",
-    "body": "QuickDaily 1.7.3-beta\n• 调整 编辑设置，将回车保存与系统侧边启动器支持归入悬浮窗设置\n• 新增 系统侧边启动器支持开关与启动/关闭延迟说明\n• 保留 悬浮窗草稿恢复、重复启动聚焦和权限不足时安全降级"
+    "body": "QuickDaily 1.7.4-beta\n• 新增 悬浮窗光标按背景明暗自动切换黑白\n• 新增 完整 Beta 调试日志与设备信息\n• 新增 自定义 Obsidian daily-notes.json 配置文件路径\n• 新增 三类小部件桌面自由调整大小"
 }

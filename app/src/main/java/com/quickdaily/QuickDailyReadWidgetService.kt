@@ -12,15 +12,16 @@ class QuickDailyReadWidgetService : RemoteViewsService() {
     }
 
     override fun onGetViewFactory(intent: Intent): RemoteViewsService.RemoteViewsFactory {
+        val widgetId = intent.getIntExtra(android.appwidget.AppWidgetManager.EXTRA_APPWIDGET_ID, -1)
         BetaLogger.log(
             "ReadWidgetSvc",
-            "factory created widgetId=${intent.getIntExtra(android.appwidget.AppWidgetManager.EXTRA_APPWIDGET_ID, -1)} data=${intent.data}"
+            "factory created widgetId=$widgetId data=${intent.data}"
         )
-        return ReadViewsFactory(applicationContext)
+        return ReadViewsFactory(applicationContext, widgetId)
     }
 }
 
-class ReadViewsFactory(private val context: Context) : RemoteViewsService.RemoteViewsFactory {
+class ReadViewsFactory(private val context: Context, private val widgetId: Int) : RemoteViewsService.RemoteViewsFactory {
     private val lines = mutableListOf<ReadWidgetItem>()
 
     override fun onCreate() {
@@ -41,7 +42,12 @@ class ReadViewsFactory(private val context: Context) : RemoteViewsService.Remote
     override fun getCount(): Int = lines.size
 
     override fun getViewAt(position: Int): RemoteViews =
-        lines.getOrNull(position)?.let { ReadWidgetViews.create(context, it, position) }
+        lines.getOrNull(position)?.let {
+            val size = WidgetSizePolicy.forWidget(
+                android.appwidget.AppWidgetManager.getInstance(context), widgetId
+            )
+            ReadWidgetViews.create(context, it, position, size)
+        }
             ?: RemoteViews(context.packageName, R.layout.widget_diary_read_line)
 
     override fun getLoadingView(): RemoteViews? = null

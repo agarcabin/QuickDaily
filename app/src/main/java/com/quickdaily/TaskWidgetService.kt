@@ -12,15 +12,16 @@ class TaskWidgetService : RemoteViewsService() {
     }
 
     override fun onGetViewFactory(intent: Intent): RemoteViewsService.RemoteViewsFactory {
+        val widgetId = intent.getIntExtra(android.appwidget.AppWidgetManager.EXTRA_APPWIDGET_ID, -1)
         BetaLogger.log(
             "TaskWidgetSvc",
-            "factory created widgetId=${intent.getIntExtra(android.appwidget.AppWidgetManager.EXTRA_APPWIDGET_ID, -1)} data=${intent.data}"
+            "factory created widgetId=$widgetId data=${intent.data}"
         )
-        return TaskViewsFactory(applicationContext)
+        return TaskViewsFactory(applicationContext, widgetId)
     }
 }
 
-class TaskViewsFactory(private val context: Context) : RemoteViewsService.RemoteViewsFactory {
+class TaskViewsFactory(private val context: Context, private val widgetId: Int) : RemoteViewsService.RemoteViewsFactory {
     private val tasks = mutableListOf<TaskWidgetItem>()
 
     override fun onCreate() {
@@ -40,7 +41,12 @@ class TaskViewsFactory(private val context: Context) : RemoteViewsService.Remote
     override fun getCount(): Int = tasks.size
 
     override fun getViewAt(position: Int): RemoteViews =
-        tasks.getOrNull(position)?.let { TaskWidgetViews.create(context, it) }
+        tasks.getOrNull(position)?.let {
+            val size = WidgetSizePolicy.forWidget(
+                android.appwidget.AppWidgetManager.getInstance(context), widgetId
+            )
+            TaskWidgetViews.create(context, it, size)
+        }
             ?: RemoteViews(context.packageName, R.layout.widget_task_item)
 
     override fun getLoadingView(): RemoteViews? = null
