@@ -240,6 +240,7 @@ fun SettingsScreen(
                             imageNamingFormat = config.imageNamingFormat,
                             imageLinkFormat = if (appCfg?.useMarkdownLinks == true) "described" else config.imageLinkFormat,
                             tagAutocomplete = config.tagAutocomplete,
+                            systemSidebarSupport = config.systemSidebarSupport,
                             imageCustomNamingFormat = config.imageCustomNamingFormat,
                             loggingEnabled = config.loggingEnabled,
                             taskPeriod = config.taskPeriod,
@@ -380,6 +381,7 @@ fun SettingsScreen(
         imageLinkFormat = config.imageLinkFormat,
         imageCustomNamingFormat = config.imageCustomNamingFormat,
         tagAutocomplete = config.tagAutocomplete,
+        systemSidebarSupport = config.systemSidebarSupport,
         loggingEnabled = config.loggingEnabled,
         taskPeriod = config.taskPeriod,
         widgetStyle = config.widgetStyle,
@@ -909,16 +911,6 @@ private fun EditorSettingsTab(
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 ListItem(colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    headlineContent = { Text("回车触发保存") },
-                    supportingContent = { Text("在悬浮窗中按回车键即触发保存。开启后悬浮窗无法多行输入。") },
-                    trailingContent = {
-                        Switch(checked = config.enterToSave, onCheckedChange = {
-                            onConfigChange(config.copy(enterToSave = it))
-                        })
-                    }
-                )
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                ListItem(colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                     headlineContent = { Text("过滤 Frontmatter") },
                     supportingContent = { Text("编辑时隐藏日记文件头部元数据。但有可能造成元数据多次写入。") },
                     trailingContent = {
@@ -935,6 +927,41 @@ private fun EditorSettingsTab(
                         Switch(checked = config.tagAutocomplete, onCheckedChange = {
                             onConfigChange(config.copy(tagAutocomplete = it))
                         })
+                    }
+                )
+            }
+        }
+
+        Text("悬浮窗设置", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+            ),
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                ListItem(colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    headlineContent = { Text("回车触发保存") },
+                    supportingContent = { Text("在悬浮窗中按回车键即触发保存。开启后悬浮窗无法多行输入。") },
+                    trailingContent = {
+                        Switch(checked = config.enterToSave, onCheckedChange = {
+                            onConfigChange(config.copy(enterToSave = it))
+                        })
+                    }
+                )
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                ListItem(colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    headlineContent = { Text("系统侧边启动器支持") },
+                    supportingContent = {
+                        Text("开启后可使用系统自带侧边栏启动器拉起速录悬浮窗。但会增加悬浮窗0.5s的启动/关闭时间，如无需求建议关闭。")
+                    },
+                    trailingContent = {
+                        Switch(
+                            checked = config.systemSidebarSupport,
+                            onCheckedChange = {
+                                onConfigChange(config.copy(systemSidebarSupport = it))
+                            }
+                        )
                     }
                 )
             }

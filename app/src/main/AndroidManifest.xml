@@ -10,6 +10,11 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- True system overlay used by the launcher quick-note flow. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
     <!-- 存储权限 -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
@@ -37,10 +42,6 @@
             android:windowSoftInputMode="adjustNothing"
             android:launchMode="singleTask">
             <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-            <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
@@ -57,6 +58,21 @@
             </intent-filter>
         </activity>
 
+        <!-- 透明桌面入口：避免普通首页主题在跳转速录前闪白屏 -->
+        <activity
+            android:name=".LauncherActivity"
+            android:exported="true"
+            android:resizeableActivity="true"
+            android:theme="@style/Theme.QuickDaily.Launcher"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
         <activity
             android:name=".NoteEditActivity"
             android:exported="false"
@@ -65,6 +81,23 @@
             android:excludeFromRecents="true"
             android:taskAffinity=""
             android:launchMode="singleInstance" />
+
+        <activity
+            android:name=".FloatingNotePickerActivity"
+            android:exported="false"
+            android:theme="@style/Theme.QuickDaily.Transparent"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:launchMode="singleTop" />
+
+        <service
+            android:name=".FloatingNoteService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="QuickDaily cross-app quick-note overlay editor" />
+        </service>
 
         <activity
             android:name=".WidgetImageCropActivity"
@@ -146,7 +179,8 @@
 
        <service
            android:name=".TaskWidgetService"
-            android:exported="true" />
+            android:exported="false"
+            android:permission="android.permission.BIND_REMOTEVIEWS" />
 
         <receiver
             android:name=".QuickDailyReadWidget"
@@ -162,7 +196,8 @@
 
         <service
             android:name=".QuickDailyReadWidgetService"
-            android:exported="true" />
+            android:exported="false"
+            android:permission="android.permission.BIND_REMOTEVIEWS" />
 
                 <provider
             android:name="androidx.core.content.FileProvider"

@@ -84,10 +84,13 @@ fun QuickDailyTheme(content: @Composable () -> Unit) {
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
-            val window = (view.context as Activity).window
-            window.statusBarColor = android.graphics.Color.TRANSPARENT
-            WindowCompat.getInsetsController(window, window.decorView).apply {
-                isAppearanceLightStatusBars = false
+            val activity = view.context as? Activity
+            if (activity != null) {
+                val window = activity.window
+                window.statusBarColor = android.graphics.Color.TRANSPARENT
+                WindowCompat.getInsetsController(window, window.decorView).apply {
+                    isAppearanceLightStatusBars = false
+                }
             }
         }
     }

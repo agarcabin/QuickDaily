@@ -22,7 +22,7 @@ class QuickDailyReadWidget : AppWidgetProvider() {
     override fun onUpdate(ctx: Context, manager: AppWidgetManager, ids: IntArray) {
         BetaLogger.log("ReadWidget", "onUpdate widgetIds=${ids.joinToString()}")
         for (id in ids) {
-            try { updateWidget(ctx, manager, id) } catch (_: Exception) { }
+            try { updateWidget(ctx, manager, id, null) } catch (_: Exception) { }
         }
         WidgetRefreshCoordinator.refreshRead(ctx, immediate = true)
     }
@@ -68,15 +68,21 @@ class QuickDailyReadWidget : AppWidgetProvider() {
             WidgetRefreshCoordinator.refreshRead(context, immediate)
         }
 
-        internal fun refreshNow(context: Context) {
+        internal suspend fun refreshNow(context: Context) {
             try {
                 val manager = AppWidgetManager.getInstance(context)
                 val component = ComponentName(context, QuickDailyReadWidget::class.java)
                 val ids = manager.getAppWidgetIds(component)
                 BetaLogger.log("ReadWidget", "refreshNow widgetCount=${ids.size} widgetIds=${ids.joinToString()}")
-                for (id in ids) updateWidget(context, manager, id)
-                manager.notifyAppWidgetViewDataChanged(ids, R.id.content_list)
-                BetaLogger.log("ReadWidget", "notifyDataChanged sent widgetCount=${ids.size}")
+                val result = WidgetContentLoader.loadRead(context)
+                logWidgetResult("ReadWidget", result)
+                for (id in ids) updateWidget(context, manager, id, result)
+                if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) {
+                    manager.notifyAppWidgetViewDataChanged(ids, R.id.content_list)
+                    BetaLogger.log("ReadWidget", "notifyDataChanged sent widgetCount=${ids.size}")
+                } else {
+                    BetaLogger.log("ReadWidget", "direct collection submitted widgetCount=${ids.size}")
+                }
             } catch (e: Exception) { BetaLogger.log("ReadWidget", "refreshNow failed exception=${e.javaClass.simpleName} message=${e.message}") }
         }
 
@@ -127,7 +133,12 @@ class QuickDailyReadWidget : AppWidgetProvider() {
             } catch (_: Exception) { }
         }
 
-        private fun updateWidget(ctx: Context, manager: AppWidgetManager, widgetId: Int) {
+        private fun updateWidget(
+            ctx: Context,
+            manager: AppWidgetManager,
+            widgetId: Int,
+            result: WidgetLoadResult<List<ReadWidgetItem>>?
+        ) {
             val views = RemoteViews(ctx.packageName, R.layout.widget_diary_read)
             val appearance = WidgetAppearance.colors(ctx)
             WidgetAppearance.applyRoot(views, R.id.widget_root, appearance)
@@ -163,14 +174,25 @@ class QuickDailyReadWidget : AppWidgetProvider() {
             views.setTextViewText(R.id.widget_title, DateUtil.todayStr(dateFormat))
             views.setTextColor(R.id.widget_title, appearance.foreground)
             views.setTextColor(R.id.empty_view, appearance.muted)
-            views.setTextViewText(R.id.empty_view, "Loading...")
-
-            // Connect to RemoteViewsService (one call per refresh = one onDataSetChanged)
-            val serviceIntent = Intent(ctx, QuickDailyReadWidgetService::class.java).apply {
-                data = Uri.parse("quickdaily://read-widget/$widgetId")
-                putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+            val effectiveResult = result ?: WidgetLoadResult.Empty("正在加载…")
+            val status = when (effectiveResult) {
+                is WidgetLoadResult.Success -> "暂无日记"
+                is WidgetLoadResult.Empty -> effectiveResult.message
+                is WidgetLoadResult.Failure -> effectiveResult.message
             }
-            views.setRemoteAdapter(R.id.content_list, serviceIntent)
+            views.setTextViewText(R.id.empty_view, status)
+
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                val items = (effectiveResult as? WidgetLoadResult.Success)?.value.orEmpty()
+                views.setRemoteAdapter(R.id.content_list, ReadWidgetViews.collection(ctx, items))
+            } else {
+                // API 26-30 fallback: bind the RemoteViewsService with BIND_REMOTEVIEWS.
+                val serviceIntent = Intent(ctx, QuickDailyReadWidgetService::class.java).apply {
+                    data = Uri.parse("quickdaily://read-widget/$widgetId")
+                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+                }
+                views.setRemoteAdapter(R.id.content_list, serviceIntent)
+            }
             views.setEmptyView(R.id.content_list, R.id.empty_view)
 
             // Task toggle click template

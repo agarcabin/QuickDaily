@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
@@ -30,6 +32,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextRange
@@ -44,10 +52,13 @@ import com.quickdaily.BetaLogger
 import com.quickdaily.util.DateUtil
 import com.quickdaily.util.ContentUtil
 import com.quickdaily.util.ImageUtil
+import com.quickdaily.util.DiaryAppendUtil
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.Image
@@ -61,14 +72,22 @@ import com.quickdaily.util.FileUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.take
 class NoteEditActivity : ComponentActivity() {
+    companion object {
+        const val EXTRA_RETURN_TO_HOME = "return_to_home"
+    }
+
     private var noteText by mutableStateOf("")
     private val selectedImages = mutableStateListOf<Uri>()
     private val pendingAttachments = mutableStateListOf<Uri>()
     private var noteTimestampFormat by mutableStateOf("list_time")
     private var noteAddAnchorIfMissing by mutableStateOf(true)
     private var noteTimestampOrder by mutableStateOf("above")
+    private var noteSaveInProgress = false
     private var noteEnterToSave by mutableStateOf(false)
+    private var returnToHomeAfterClose = false
 
     private val imagePicker = registerForActivityResult(
         ActivityResultContracts.GetMultipleContents()
@@ -96,6 +115,7 @@ class NoteEditActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        returnToHomeAfterClose = intent.getBooleanExtra(EXTRA_RETURN_TO_HOME, false)
         val prefillTxt = intent.getStringExtra("prefill_text") ?: ""
         if (prefillTxt.isNotBlank()) noteText = prefillTxt
         val prefs = getSharedPreferences("QuickDaily", 0)
@@ -140,9 +160,15 @@ class NoteEditActivity : ComponentActivity() {
                         enterToSave = noteEnterToSave,
                         onSave = {
                     if (hasRealContent(noteText) || selectedImages.isNotEmpty() || pendingAttachments.isNotEmpty()) appendToDiary(noteText.trim())
-                    else finish()
+                    else finishEditor()
                         },
-                        onClose = { finish() },
+                        onClose = { finishEditor() },
+                        onHome = {
+                            startActivity(Intent(this@NoteEditActivity, MainActivity::class.java).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                            })
+                            finish()
+                        },
                         imageUris = selectedImages,
                         hasAttachments = pendingAttachments.isNotEmpty(),
                         attachmentUris = pendingAttachments,
@@ -161,214 +187,54 @@ class NoteEditActivity : ComponentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        // singleInstance 会复用当前编辑器。不要重新初始化 noteText，避免重复点击入口时丢草稿。
+        if (intent.hasExtra(EXTRA_RETURN_TO_HOME)) {
+            returnToHomeAfterClose = intent.getBooleanExtra(EXTRA_RETURN_TO_HOME, false)
+        }
+        BetaLogger.log("Lifecycle", "NoteEditActivity reused")
+    }
+
+    private fun finishEditor() {
+        if (returnToHomeAfterClose) {
+            startActivity(Intent(this, MainActivity::class.java).apply {
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+                )
+            })
+        }
+        finish()
+    }
+
     private fun appendToDiary(text: String) {
-        // 空内容检查：只有任务标记没有实质内容时直接返回
+        if (noteSaveInProgress) return
         if (!hasRealContent(text) && selectedImages.isEmpty() && pendingAttachments.isEmpty()) {
-            finish()
+            finishEditor()
             return
         }
-        lifecycleScope.launch(Dispatchers.IO) {
-            val prefs = getSharedPreferences("QuickDaily", 0)
-            val vaultPath = prefs.getString("vault_path", "") ?: ""
-            if (vaultPath.isBlank()) { withContext(Dispatchers.Main) { finish() }; return@launch }
-            val diaryFolder = prefs.getString("diary_folder", "Daily") ?: "Daily"
-            val dateFormat = prefs.getString("date_format", "YYYY-MM-DD") ?: "YYYY-MM-DD"
-            val d = DateUtil.todayStr(dateFormat)
-            val path = "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/$d.md"
-            val anchor = (prefs.getString("anchor_text", "") ?: "").trim()
-            // 同时识别 - [ ] 和 - [x] 前缀
-            // 同时识别 - [ ] 和 - [x] 前缀（含/不含尾随空格）
-            val trimmedText = text.trim()
-            val isTask = trimmedText.startsWith("- [ ] ") || trimmedText.startsWith("- [x] ") || trimmedText.startsWith("- [X] ") ||
-                trimmedText.startsWith("- [ ]") || trimmedText.startsWith("- [x]") || trimmedText.startsWith("- [X]")
-            val line = if (isTask) {
-                val wasChecked = trimmedText.startsWith("- [x] ") || trimmedText.startsWith("- [X] ") || trimmedText.startsWith("- [x]") || trimmedText.startsWith("- [X]")
-                val taskDesc = trimmedText.let { t ->
-                    when {
-                        t.startsWith("- [ ] ") -> t.removePrefix("- [ ] ").trim()
-                        t.startsWith("- [x] ") -> t.removePrefix("- [x] ").trim()
-                        t.startsWith("- [X] ") -> t.removePrefix("- [X] ").trim()
-                        t.startsWith("- [ ]") -> t.removePrefix("- [ ]").trim()
-                        t.startsWith("- [x]") -> t.removePrefix("- [x]").trim()
-                        t.startsWith("- [X]") -> t.removePrefix("- [X]").trim()
-                        else -> t
-                    }
+        noteSaveInProgress = true
+        lifecycleScope.launch {
+            when (val result = FloatingNoteSaveUseCase(this@NoteEditActivity).save(
+                text,
+                selectedImages.toList(),
+                pendingAttachments.toList()
+            )) {
+                FloatingNoteSaveResult.Saved -> {
+                    selectedImages.clear()
+                    pendingAttachments.clear()
+                    Toast.makeText(this@NoteEditActivity, "已保存", Toast.LENGTH_SHORT).show()
+                    finishEditor()
                 }
-                val marker = if (wasChecked) "- [x]" else "- [ ]"
-                when (noteTimestampFormat) {
-                    "none" -> "$marker $taskDesc"
-                    "time_only" -> "$marker ${DateUtil.nowTimeStr()} $taskDesc"
-                    "time_only_seconds" -> "$marker ${DateUtil.nowTimeSecondsStr()} $taskDesc"
-                    "list" -> "$marker $taskDesc"
-                    "ordered" -> "$marker $taskDesc"
-                    "list_time" -> "$marker ${DateUtil.nowTimeStr()} $taskDesc"
-                    "list_time_seconds" -> "$marker ${DateUtil.nowTimeSecondsStr()} $taskDesc"
-                    else -> "$marker $taskDesc"
+                FloatingNoteSaveResult.NoContent -> finishEditor()
+                is FloatingNoteSaveResult.Failed -> {
+                    noteSaveInProgress = false
+                    BetaLogger.log("NoteEdit", "save failed=${result.message}")
+                    Toast.makeText(this@NoteEditActivity, result.message, Toast.LENGTH_LONG).show()
                 }
-            } else {
-                when (noteTimestampFormat) {
-                    "none" -> text
-                    "time_only" -> "${DateUtil.nowTimeStr()} $text"
-                    "time_only_seconds" -> "${DateUtil.nowTimeSecondsStr()} $text"
-                    "list" -> "- $text"
-                    "ordered" -> "1. $text"
-                    "list_time" -> "- ${DateUtil.nowTimeStr()} $text"
-                    "list_time_seconds" -> "- ${DateUtil.nowTimeSecondsStr()} $text"
-                   else -> text
-               }
-            }
-
-            var existing = FileUtil.read(path)
-            var parsed = ContentUtil.parseFrontmatter(existing)
-            var body = if (parsed.hasFrontmatter) parsed.body else existing
-
-            // 文件不存在、为空、或仅有frontmatter（无正文）时，从模板加载
-            if (existing.isEmpty() || (parsed.hasFrontmatter && parsed.body.isBlank())) {
-                val tplPathPref = prefs.getString("template_path", "") ?: ""
-                if (tplPathPref.isNotBlank()) {
-                    val tplPath = if (tplPathPref.startsWith("/")) tplPathPref
-                    else "${vaultPath.trimEnd('/')}/${tplPathPref}"
-                    val tplContent = FileUtil.readOrNull(tplPath)
-                    if (tplContent != null && tplContent.isNotEmpty()) {
-                        existing = tplContent
-                        // Bug4: 重新解析模板内容，使 body 正确更新
-                        val reParsed = ContentUtil.parseFrontmatter(existing)
-                        body = if (reParsed.hasFrontmatter) reParsed.body else existing
-                        parsed = reParsed
-                    }
-                }
-            }
-
-            if (anchor.isNotEmpty() && !body.contains(anchor) && noteAddAnchorIfMissing) {
-                body = if (body.isNotEmpty() && !body.endsWith("\n")) {
-                    body + "\n$anchor\n"
-                } else {
-                    body + "$anchor\n"
-                }
-            }
-            val workingContent = body
-            // 处理附件（将 content URI 替换为 vault 相对路径）
-            var resolvedLine = line
-            if (pendingAttachments.isNotEmpty()) {
-                val attachStoragePath = prefs.getString("image_storage_path", "") ?: ""
-                var attachmentCopyFailed = false
-                pendingAttachments.toList().forEach { uri ->
-                    try {
-                        val relPath = com.quickdaily.util.ImageUtil.copyToVault(
-                            this@NoteEditActivity, uri, vaultPath,
-                            attachStoragePath, "original",
-                            "obsidian_wikilink")
-                        if (relPath != null) {
-                            resolvedLine = resolvedLine.replace(uri.toString(), relPath)
-                        } else {
-                            attachmentCopyFailed = true
-                            BetaLogger.log("NoteEdit", "attachment copy returned null uri=$uri")
-                        }
-                    } catch (e: Exception) {
-                        attachmentCopyFailed = true
-                        BetaLogger.log("NoteEdit", "attachment copy failed uri=$uri exception=${e.javaClass.simpleName}")
-                    }
-                }
-                if (attachmentCopyFailed) {
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(this@NoteEditActivity, "附件保存失败，请检查存储路径权限", Toast.LENGTH_LONG).show()
-                    }
-                    return@launch
-                }
-                withContext(Dispatchers.Main) { pendingAttachments.clear() }
-            }
-
-            // 处理图片（移到 nc 之前，以便图片与文本行一起插入）
-            val imageLinks = if (selectedImages.isNotEmpty()) {
-                val imgStoragePath = prefs.getString("image_storage_path", "") ?: ""
-                val imgNamingFormat = prefs.getString("image_naming_format", "timestamp_ext") ?: "timestamp_ext"
-                val imgLinkFormat = prefs.getString("image_link_format", "described") ?: "described"
-                val imgCustomNaming = prefs.getString("image_custom_naming_format", "") ?: ""
-                ImageUtil.processImages(this@NoteEditActivity, selectedImages.toList(), vaultPath, imgStoragePath, imgNamingFormat, imgLinkFormat, imgCustomNaming)
-            } else emptyList()
-
-            // 如果有图片链接，追加到文本行后面（Bug1: 图片与文本在同一位置插入，而非末尾）
-            val effectiveLine = if (imageLinks.isNotEmpty()) {
-                resolvedLine + "\n" + imageLinks.joinToString("\n")
-            } else resolvedLine
-
-            val nc = if (noteTimestampOrder == "below" && anchor.isNotEmpty()) {
-                val bodyLines = workingContent.lines().toMutableList()
-                val anchorIdx = bodyLines.indexOfFirst { it.trim().contains(anchor.trim()) }
-                if (anchorIdx >= 0) {
-                    var endIdx = bodyLines.size
-                    for (i in (anchorIdx + 1) until bodyLines.size) {
-                        val tl = bodyLines[i].trimStart()
-                        if (tl.startsWith("# ") || tl.startsWith("## ") || tl.startsWith("### ")) {
-                            endIdx = i
-                            break
-                        }
-                    }
-                    var lastDash = -1
-                    for (i in (anchorIdx + 1) until endIdx) {
-                        if (bodyLines[i].trimStart().startsWith("- ")) lastDash = i
-                    }
-                    val insAt = if (lastDash >= 0) lastDash + 1 else anchorIdx + 1
-                    bodyLines.add(insAt, effectiveLine)
-                    val nb = bodyLines.joinToString("\n")
-                    if (parsed.hasFrontmatter) ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, nb) else nb
-                } else {
-                    val allLines = workingContent.lines().toMutableList()
-                    var lastDashAll = -1
-                    for (i in allLines.indices) {
-                        if (allLines[i].trimStart().startsWith("- ")) lastDashAll = i
-                    }
-                    if (lastDashAll >= 0) {
-                        allLines.add(lastDashAll + 1, effectiveLine)
-                        val nb = allLines.joinToString("\n")
-                        if (parsed.hasFrontmatter) ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, nb) else nb
-                    } else {
-                        if (workingContent.endsWith("\n")) {
-                            if (parsed.hasFrontmatter) ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, workingContent + "$effectiveLine\n") else workingContent + "$effectiveLine\n"
-                        } else {
-                            if (parsed.hasFrontmatter) ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, workingContent + "\n$effectiveLine\n") else workingContent + "\n$effectiveLine\n"
-                        }
-                    }
-                }
-            } else if (anchor.isNotEmpty() && workingContent.contains(anchor) && noteTimestampOrder == "above") {
-                val idx = workingContent.indexOf(anchor) + anchor.length
-                val newBody = workingContent.substring(0, idx) + "\n" + effectiveLine + workingContent.substring(idx)
-                if (parsed.hasFrontmatter) {
-                    ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, newBody)
-                } else {
-                    newBody
-                }
-            } else if (workingContent.isEmpty()) {
-                if (parsed.hasFrontmatter) {
-                    ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, "$effectiveLine\n")
-                } else {
-                    "$effectiveLine\n"
-                }
-            } else if (workingContent.endsWith("\n")) {
-                if (parsed.hasFrontmatter) {
-                    ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, workingContent + "$effectiveLine\n")
-                } else {
-                    workingContent + "$effectiveLine\n"
-                }
-            } else {
-                if (parsed.hasFrontmatter) {
-                    ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, workingContent + "\n$effectiveLine\n")
-                } else {
-                    workingContent + "\n$effectiveLine\n"
-                }
-            }
-            // 图片已合并到 resolvedLine-based effectiveLine 中，不再需要 finalNc
-
-            if (selectedImages.isNotEmpty()) {
-                withContext(Dispatchers.Main) { selectedImages.clear() }
-            }
-
-            FileUtil.write(path, nc)
-            com.quickdaily.util.RecentTags.recordFromText(this@NoteEditActivity, text)
-            WidgetRefreshHelper.refreshAll(this@NoteEditActivity)
-            withContext(Dispatchers.Main) {
-                Toast.makeText(this@NoteEditActivity, "已保存", Toast.LENGTH_SHORT).show()
-                finish()
             }
         }
     }
@@ -378,7 +244,7 @@ class NoteEditActivity : ComponentActivity() {
             if (hasRealContent(noteText) || selectedImages.isNotEmpty() || pendingAttachments.isNotEmpty()) {
                     appendToDiary(noteText.trim())
             } else {
-                finish()
+                finishEditor()
             }
             return true
         }
@@ -410,7 +276,7 @@ private fun cycleHeading(tfv: TextFieldValue): TextFieldValue {
     return TextFieldValue(newText, TextRange(cursorPos))
 }
 
-private fun hasRealContent(text: String): Boolean {
+internal fun hasRealContent(text: String): Boolean {
     val trimmed = text.trim()
     if (trimmed.isBlank()) return false
     // 任务标记前缀（同时检查有无尾随空格，因为 .trim() 会去掉末尾空格）
@@ -452,22 +318,29 @@ private fun taskToggleAtCursor(tfv: TextFieldValue): String {
 }
 
 @Composable
-private fun NoteEditDialog(
+fun NoteEditDialog(
     text: String,
     onTextChange: (String) -> Unit,
     enterToSave: Boolean,
     onSave: () -> Unit,
     onClose: () -> Unit,
-    imageUris: SnapshotStateList<Uri>,
+    onHome: () -> Unit,
+    imageUris: List<Uri>,
     hasAttachments: Boolean,
-    attachmentUris: SnapshotStateList<Uri>,
+    attachmentUris: List<Uri>,
     onPickImages: () -> Unit,
     onPickAttachment: () -> Unit,
-    onRemoveImage: (Int) -> Unit
+    onRemoveImage: (Int) -> Unit,
+    onTiming: (stage: String, detail: String?) -> Unit = { _, _ -> }
 ) {
     val floater = LocalFloaterColors.current
     val dim = LocalAppDimensions.current
     val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val density = LocalDensity.current
+    val imeInsets = WindowInsets.ime
+    var focusRequested by remember { mutableStateOf(false) }
+    var imeShowRequested by remember { mutableStateOf(false) }
     var tfv by remember { mutableStateOf(TextFieldValue(text, TextRange(text.length))) }
     val localUndoStack = remember { mutableStateListOf<String>() }
     val localRedoStack = remember { mutableStateListOf<String>() }
@@ -496,7 +369,19 @@ private fun NoteEditDialog(
         onTextChange(newValue.text)
     }
 
-    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    SideEffect {
+        if (!focusRequested) {
+            focusRequested = true
+            onTiming("focus_request", null)
+            focusRequester.requestFocus()
+        }
+    }
+    LaunchedEffect(density, imeInsets) {
+        snapshotFlow { imeInsets.getBottom(density) > 0 }
+            .filter { it }
+            .take(1)
+            .collect { onTiming("ime_visible", null) }
+    }
     LaunchedEffect(text) { if (text != tfv.text) tfv = TextFieldValue(text, TextRange(text.length)) }
     val tagVaultPath = neCtx.getSharedPreferences("QuickDaily", 0).getString("vault_path", "") ?: ""
     var noteTagList by remember(tagVaultPath) { mutableStateOf(emptyList<String>()) }
@@ -543,6 +428,17 @@ private fun NoteEditDialog(
         }
     }
 
+    fun saveOrClose() {
+        onTiming("enter_action", "hasTagCandidates=${noteMatchingTags.isNotEmpty()}")
+        if (noteMatchingTags.isNotEmpty()) {
+            noteSelectTag(noteMatchingTags.first())
+        } else if (tfv.text.isNotBlank() || imageUris.isNotEmpty() || hasAttachments) {
+            onSave()
+        } else {
+            onClose()
+        }
+    }
+
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = floater.background,
@@ -553,9 +449,7 @@ private fun NoteEditDialog(
                     Box(Modifier.fillMaxWidth()) {
                 TextButton(
                     onClick = {
-                        neCtx.startActivity(android.content.Intent(neCtx, com.quickdaily.MainActivity::class.java).apply {
-                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                        })
+                        onHome()
                     },
                     modifier = Modifier.align(Alignment.CenterStart)
                 ) {
@@ -616,33 +510,45 @@ private fun NoteEditDialog(
             }
 
             BasicTextField(value = tfv, onValueChange = { newTfv ->
-                    if (enterToSave) {
-                        val oldText = tfv.text
-                        val newText = newTfv.text
-                        val insertedNewlines = newText.count { it == '\n' } - oldText.count { it == '\n' }
-                        val lengthDiff = newText.length - oldText.length
-                        if (insertedNewlines > 0 && lengthDiff == 1) {
-                           if (noteMatchingTags.isNotEmpty()) {
-                               noteSelectTag(noteMatchingTags.first())
-                           } else {
-                               onTextChange(oldText)
-                               if (oldText.isNotBlank() || imageUris.isNotEmpty() || hasAttachments) onSave() else onClose()
-                           }
-                        } else {
-                            if (oldText != newText) recordUndo(oldText)
-                            tfv = newTfv
-                            onTextChange(newText)
-                        }
+                    val oldText = tfv.text
+                    val newText = newTfv.text
+                    val insertedNewlines = newText.count { it == '\n' } - oldText.count { it == '\n' }
+                    if (enterToSave && insertedNewlines > 0 && newText.length == oldText.length + 1) {
+                        // IMEs that commit Enter as a newline still use the same explicit action.
+                        saveOrClose()
                     } else {
-                        val oldTextNot = tfv.text
-                        if (oldTextNot != newTfv.text) recordUndo(oldTextNot)
+                        if (oldText != newText) recordUndo(oldText)
                         tfv = newTfv
-                        onTextChange(newTfv.text)
+                        onTextChange(newText)
                     }
-                    
             },
+                keyboardOptions = KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { if (enterToSave) saveOrClose() }),
                 textStyle = TextStyle(fontSize = 15.sp, lineHeight = 22.sp, color = floater.onBackground),
-                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focusRequester)
+                    .onFocusChanged {
+                        if (it.isFocused) {
+                            onTiming("focus_acquired", null)
+                            if (!imeShowRequested) {
+                                imeShowRequested = true
+                                onTiming("ime_show_request", null)
+                                keyboardController?.show()
+                            }
+                        }
+                    }
+                    .onPreviewKeyEvent { event ->
+                        if (enterToSave &&
+                            event.type == KeyEventType.KeyDown &&
+                            (event.key == Key.Enter || event.key == Key.NumPadEnter)
+                        ) {
+                            saveOrClose()
+                            true
+                        } else {
+                            false
+                        }
+                    },
                 decorationBox = { inner ->
                     if (text.isEmpty()) Text("写点什么...", color = floater.onBackgroundDim, fontSize = MaterialTheme.typography.bodyMedium.fontSize)
                     inner() })
@@ -693,7 +599,7 @@ private fun NoteEditDialog(
                     }
                     applyTextChange(TextFieldValue(nt, TextRange(nc)), forceUndo = true)
                 }, modifier = Modifier.size(36.dp)) {
-                    Text("-", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color(0xFF6EB8FF))
+                    Text("-", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = floater.primary)
                 }
                 IconButton(onClick = {
                     val t = tfv.text; val c = tfv.selection.start

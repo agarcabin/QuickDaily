@@ -3,6 +3,12 @@ package com.quickdaily
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /** Coalesces noisy lifecycle/save refreshes before they reach launcher RemoteViews services. */
 object WidgetRefreshCoordinator {
@@ -12,6 +18,8 @@ object WidgetRefreshCoordinator {
     private val lock = Any()
     private val lastRun = mutableMapOf<String, Long>()
     private val pending = mutableMapOf<String, Runnable>()
+    private val runLocks = mutableMapOf<String, Mutex>()
+    private val workerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     fun refreshRead(context: Context, immediate: Boolean = false) =
         request(context, "read", immediate) { QuickDailyReadWidget.refreshNow(context.applicationContext) }
@@ -24,7 +32,7 @@ object WidgetRefreshCoordinator {
         refreshTasks(context, immediate)
     }
 
-    private fun request(context: Context, key: String, immediate: Boolean, work: () -> Unit) {
+    private fun request(context: Context, key: String, immediate: Boolean, work: suspend () -> Unit) {
         synchronized(lock) {
             val replacedPending = pending.remove(key)?.also(handler::removeCallbacks) != null
             val now = System.currentTimeMillis()
@@ -41,12 +49,15 @@ object WidgetRefreshCoordinator {
                     pending.remove(key)
                     lastRun[key] = startedAt
                 }
-                BetaLogger.log("WidgetRefresh", "run start type=$key")
-                try {
-                    work()
-                    BetaLogger.log("WidgetRefresh", "run success type=$key durationMs=${System.currentTimeMillis() - startedAt}")
-                } catch (e: Exception) {
-                    BetaLogger.log("WidgetRefresh", "run failed type=$key durationMs=${System.currentTimeMillis() - startedAt} exception=${e.javaClass.simpleName} message=${e.message}")
+                workerScope.launch {
+                    BetaLogger.log("WidgetRefresh", "run start type=$key")
+                    val runLock = synchronized(lock) { runLocks.getOrPut(key) { Mutex() } }
+                    try {
+                        runLock.withLock { work() }
+                        BetaLogger.log("WidgetRefresh", "run success type=$key durationMs=${System.currentTimeMillis() - startedAt}")
+                    } catch (e: Exception) {
+                        BetaLogger.log("WidgetRefresh", "run failed type=$key durationMs=${System.currentTimeMillis() - startedAt} exception=${e.javaClass.simpleName} message=${e.message}")
+                    }
                 }
             }
             pending[key] = runnable

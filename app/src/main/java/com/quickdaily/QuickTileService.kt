@@ -3,6 +3,7 @@ package com.quickdaily
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import android.widget.Toast
@@ -74,12 +75,18 @@ class QuickTileService : TileService() {
     }
 
     private fun launchNoteEditor() {
-        val intent = Intent(this, NoteEditActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_NO_ANIMATION
-        }
+        val overlayStarted = FloatingNoteEntryPolicy.isSystemSidebarSupportEnabled(this) &&
+            Settings.canDrawOverlays(this) &&
+            FloatingNoteControllerProvider.forContext(this).showOrFocus(
+                FloatingNoteRequest(
+                    source = FloatingNoteSource.SIDEBAR,
+                    returnToHomeAfterClose = false
+                )
+            )
+        if (overlayStarted) return
+
         try {
-            startActivity(intent)
+            FloatingNoteEntryPolicy.launchLegacyEditor(this)
         } catch (_: Exception) {
             startActivity(Intent(this, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK

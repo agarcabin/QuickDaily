@@ -25,7 +25,7 @@ class TaskWidget : AppWidgetProvider() {
     ) {
         BetaLogger.log("TaskWidget", "onUpdate widgetIds=${appWidgetIds.joinToString()}")
         for (id in appWidgetIds) {
-            updateWidget(context, appWidgetManager, id)
+            updateWidget(context, appWidgetManager, id, null)
         }
         WidgetRefreshCoordinator.refreshTasks(context, immediate = true)
     }
@@ -35,12 +35,11 @@ class TaskWidget : AppWidgetProvider() {
         BetaLogger.log("TaskWidget", "onReceive action=${intent.action} widgetId=${intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1)}")
         if (ACTION_REFRESH == intent.action) {
             android.util.Log.d("QuickDaily", "Refresh pressed")
-            if (refreshNow(context)) {
-                BetaLogger.log("TaskWidget", "manual refresh succeeded")
-                // MIUI suppresses background BroadcastReceiver toasts. Show the same
-                // confirmation inside the widget, where the launcher cannot suppress it.
-                showRefreshSuccess(context)
-            }
+            WidgetRefreshCoordinator.refreshTasks(context, immediate = true)
+            BetaLogger.log("TaskWidget", "manual refresh queued")
+            // MIUI suppresses background BroadcastReceiver toasts. Show the same
+            // confirmation inside the widget, where the launcher cannot suppress it.
+            showRefreshSuccess(context)
         } else if (ACTION_ADD_TASK == intent.action) {
             val intent2 = Intent(context, NoteEditActivity::class.java).apply {
                 putExtra("prefill_text", "- [ ] ")
@@ -87,7 +86,8 @@ class TaskWidget : AppWidgetProvider() {
         fun updateWidget(
             context: Context,
             appWidgetManager: AppWidgetManager,
-            widgetId: Int
+            widgetId: Int,
+            result: WidgetLoadResult<List<TaskWidgetItem>>?
         ) {
             val views = RemoteViews(context.packageName, R.layout.widget_tasks)
             val appearance = WidgetAppearance.colors(context)
@@ -105,12 +105,25 @@ class TaskWidget : AppWidgetProvider() {
             views.setTextColor(R.id.widget_title, appearance.foreground)
             views.setTextColor(R.id.empty_view, appearance.muted)
 
-            // Use RemoteViewsService for the list
-            val serviceIntent = Intent(context, TaskWidgetService::class.java).apply {
-                data = Uri.parse("quickdaily://task-widget/$widgetId")
-                putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+            val effectiveResult = result ?: WidgetLoadResult.Empty("正在加载…")
+            val status = when (effectiveResult) {
+                is WidgetLoadResult.Success -> "暂无待办事项"
+                is WidgetLoadResult.Empty -> effectiveResult.message
+                is WidgetLoadResult.Failure -> effectiveResult.message
             }
-            views.setRemoteAdapter(R.id.task_list, serviceIntent)
+            views.setTextViewText(R.id.empty_view, status)
+
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                val items = (effectiveResult as? WidgetLoadResult.Success)?.value.orEmpty()
+                views.setRemoteAdapter(R.id.task_list, TaskWidgetViews.collection(context, items))
+            } else {
+                // API 26-30 fallback: bind the RemoteViewsService with BIND_REMOTEVIEWS.
+                val serviceIntent = Intent(context, TaskWidgetService::class.java).apply {
+                    data = Uri.parse("quickdaily://task-widget/$widgetId")
+                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+                }
+                views.setRemoteAdapter(R.id.task_list, serviceIntent)
+            }
             // 设置 emptyView，在某些国产 ROM 上不自动关联
             views.setEmptyView(R.id.task_list, R.id.empty_view)
 
@@ -158,8 +171,8 @@ class TaskWidget : AppWidgetProvider() {
             WidgetRefreshCoordinator.refreshTasks(context, immediate)
         }
 
-        internal fun refreshNow(context: Context): Boolean {
-            return try {
+        internal suspend fun refreshNow(context: Context) {
+            try {
             android.util.Log.d("QuickDaily", "TaskWidget.refreshAllWidgets")
             val manager = AppWidgetManager.getInstance(context)
             val component = ComponentName(context, TaskWidget::class.java)
@@ -167,14 +180,19 @@ class TaskWidget : AppWidgetProvider() {
             val period = context.getSharedPreferences("QuickDaily", 0)
                 .getString("task_period", "today") ?: "today"
             BetaLogger.log("TaskWidget", "refreshNow widgetCount=${ids.size} period=$period widgetIds=${ids.joinToString()}")
+            val result = WidgetContentLoader.loadTasks(context)
+            logWidgetResult("TaskWidget", result)
             for (aid in ids) {
-                updateWidget(context, manager, aid)
+                updateWidget(context, manager, aid, result)
             }
-            manager.notifyAppWidgetViewDataChanged(ids, R.id.task_list)
-            true
+            if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) {
+                manager.notifyAppWidgetViewDataChanged(ids, R.id.task_list)
+                BetaLogger.log("TaskWidget", "notifyDataChanged sent widgetCount=${ids.size}")
+            } else {
+                BetaLogger.log("TaskWidget", "direct collection submitted widgetCount=${ids.size}")
+            }
             } catch (e: Exception) {
                 BetaLogger.log("TaskWidget", "refreshNow failed exception=${e.javaClass.simpleName} message=${e.message}")
-                false
             }
         }
 

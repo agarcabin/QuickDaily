@@ -23,14 +23,22 @@ import com.quickdaily.ui.EditorScreen
 import com.quickdaily.ui.SettingsScreen
 import com.quickdaily.ui.theme.QuickDailyTheme
 import com.quickdaily.util.ImageUtil
+import com.quickdaily.util.DiaryAppendUtil
 import com.quickdaily.BetaLogger
 import com.quickdaily.TaskWidget
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
+    companion object {
+        const val EXTRA_REQUEST_FLOATING_PERMISSION = "request_floating_permission"
+    }
+
     private lateinit var appState: AppState
     var externalLaunching = false  // SAF/权限等外部 Activity 启动中
+    private var awaitingFloatingPermission = false
+    private var floatingPermissionPromptShown = false
+    private var floatingPermissionRetried = false
 
     private val manageStorageLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -47,6 +55,13 @@ class MainActivity : ComponentActivity() {
         BetaLogger.log("Lifecycle", "onCreate")
         appState = ViewModelProvider(this)[AppState::class.java]
         val firstLaunch = appState.config.value.vaultPath.isBlank()
+        awaitingFloatingPermission = intent.getBooleanExtra(EXTRA_REQUEST_FLOATING_PERMISSION, false)
+
+        // 标准桌面/侧边栏入口默认进入速记。首次安装、仓库未配置或存储不可用时，
+        // 保留完整首页作为降级入口，避免速记打开后无法保存内容。
+        if (shouldOpenQuickNote(intent) && launchQuickNoteFromLauncher()) {
+            return
+        }
 
         // 处理分享意图（冷启动时走这里）
         handleShareIntent(intent)
@@ -70,7 +85,10 @@ class MainActivity : ComponentActivity() {
             }
         }
         // 权限检查延迟到 UI 首帧之后，不阻塞冷启动
-        window.decorView.post { checkPermissions() }
+        window.decorView.post {
+            checkPermissions()
+            maybeShowFloatingPermissionPrompt()
+        }
 
         // 启动时自动检查更新
         if (appState.config.value.autoCheckUpdate) {
@@ -107,6 +125,14 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         BetaLogger.log("Lifecycle", "onNewIntent: ${intent.action}")
+        if (intent.getBooleanExtra(EXTRA_REQUEST_FLOATING_PERMISSION, false)) {
+            awaitingFloatingPermission = true
+            floatingPermissionPromptShown = false
+            floatingPermissionRetried = false
+        }
+        if (shouldOpenQuickNote(intent) && launchQuickNoteFromLauncher()) {
+            return
+        }
         handleShareIntent(intent)
     }
 
@@ -260,6 +286,7 @@ class MainActivity : ComponentActivity() {
         val dateFormat = prefs.getString("date_format", "YYYY-MM-DD") ?: "YYYY-MM-DD"
         val textAnchor = (prefs.getString("anchor_text", "") ?: "").trim()
         val addAnchorIfMissing = prefs.getBoolean("add_anchor_if_missing", false)
+        val timestampOrder = prefs.getString("timestamp_order", "below") ?: "below"
         val d = com.quickdaily.util.DateUtil.todayStr(dateFormat)
         val path = "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/$d.md"
 
@@ -285,16 +312,17 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        val imageText = links.joinToString("\n")
-        val newBody = if (anchor.isNotEmpty() && workingContent.contains(anchor)) {
+        val newBody = if (timestampOrder == "below") {
+            DiaryAppendUtil.appendAtAnchorSectionEnd(workingContent, anchor, links)
+        } else if (anchor.isNotEmpty() && workingContent.contains(anchor)) {
             val idx = workingContent.indexOf(anchor) + anchor.length
-            workingContent.substring(0, idx) + "\n" + imageText + workingContent.substring(idx)
+            workingContent.substring(0, idx) + "\n" + links.joinToString("\n") + workingContent.substring(idx)
         } else if (workingContent.isEmpty()) {
-            "$imageText\n"
+            links.joinToString("\n") + "\n"
         } else if (workingContent.endsWith("\n")) {
-            "$workingContent$imageText\n"
+            "$workingContent${links.joinToString("\n")}\n"
         } else {
-            "$workingContent\n$imageText\n"
+            "$workingContent\n${links.joinToString("\n")}\n"
         }
 
         val saveContent = if (parsed.hasFrontmatter) {
@@ -308,18 +336,68 @@ class MainActivity : ComponentActivity() {
         android.widget.Toast.makeText(this, "已保存 ${links.size} 张图片到日记", android.widget.Toast.LENGTH_SHORT).show()
     }
 
+    private fun shouldOpenQuickNote(intent: Intent?): Boolean {
+        return QuickLaunchPolicy.shouldOpenQuickNote(
+            action = intent?.action,
+            categories = intent?.categories,
+            vaultPath = appState.config.value.vaultPath,
+            hasStorageAccess = hasStorageAccess()
+        )
+    }
+
+    private fun hasStorageAccess(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    private fun launchQuickNoteFromLauncher(): Boolean {
+        return try {
+            val systemSidebarSupport = FloatingNoteEntryPolicy.isSystemSidebarSupportEnabled(this)
+            if (!systemSidebarSupport) {
+                BetaLogger.log("FloatingNote/Launch", "main launcher legacy activity path")
+                FloatingNoteEntryPolicy.launchLegacyEditor(this)
+                finishAndRemoveTask()
+                return true
+            }
+
+            val overlayAllowed = Settings.canDrawOverlays(this)
+            val request = FloatingNoteRequest(
+                source = FloatingNoteSource.DESKTOP_LAUNCHER,
+                returnToHomeAfterClose = false
+            )
+            if (!QuickLaunchPolicy.shouldUseSystemOverlay(systemSidebarSupport, overlayAllowed) ||
+                !FloatingNoteControllerProvider.forContext(this).showOrFocus(request)
+            ) {
+                awaitingFloatingPermission = true
+                maybeShowFloatingPermissionPrompt()
+                return false
+            }
+            BetaLogger.log("FloatingNote/Launch", "main launcher overlay requested")
+            // 直接从桌面/侧边栏速录后，关闭速录应回到原来的系统界面，
+            // 而不是回到一个被动留在后台的首页任务。
+            finishAndRemoveTask()
+            true
+        } catch (e: Exception) {
+            BetaLogger.log("Launch", "launcher -> NoteEditActivity failed=${e.javaClass.simpleName}")
+            false
+        }
+    }
+
     private fun checkPermissions() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (!Environment.isExternalStorageManager()) {
+            if (!hasStorageAccess()) {
                 requestManageStorage()
                 return
             }
         } else {
             // Android 10 及以下仍需运行时申请存储权限
-            if (ContextCompat.checkSelfPermission(
-                    this, Manifest.permission.WRITE_EXTERNAL_STORAGE
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
+            if (!hasStorageAccess()) {
                 requestPermissions(
                     arrayOf(
                         Manifest.permission.READ_EXTERNAL_STORAGE,
@@ -343,6 +421,20 @@ class MainActivity : ComponentActivity() {
             // 刷新所有小部件确保最新内容
             WidgetRefreshHelper.refreshAll(this)
        }
+        if (awaitingFloatingPermission) {
+            if (android.provider.Settings.canDrawOverlays(this) && !floatingPermissionRetried) {
+                floatingPermissionRetried = true
+                awaitingFloatingPermission = false
+                FloatingNoteControllerProvider.forContext(this).showOrFocus(
+                    FloatingNoteRequest(
+                        source = FloatingNoteSource.HOME_AUTH_FLOW,
+                        returnToHomeAfterClose = true
+                    )
+                )
+            } else {
+                maybeShowFloatingPermissionPrompt()
+            }
+        }
     }
 
     override fun onPause() {
@@ -367,6 +459,28 @@ class MainActivity : ComponentActivity() {
             Uri.parse("package:$packageName")
         )
         manageStorageLauncher.launch(intent)
+    }
+
+    private fun maybeShowFloatingPermissionPrompt() {
+        if (!awaitingFloatingPermission || floatingPermissionPromptShown) return
+        if (!hasStorageAccess()) return
+        if (android.provider.Settings.canDrawOverlays(this)) {
+            return
+        }
+        floatingPermissionPromptShown = true
+        android.app.AlertDialog.Builder(this)
+            .setTitle("需要悬浮窗权限")
+            .setMessage("侧边栏速记需要显示在当前应用上方，请允许 QuickDaily 显示悬浮窗。")
+            .setPositiveButton("去授权") { _, _ ->
+                externalLaunching = true
+                startActivity(Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName")
+                ))
+            }
+            .setNegativeButton("暂不") { _, _ -> awaitingFloatingPermission = false }
+            .setOnDismissListener { BetaLogger.log("FloatingNote/Permission", "prompt dismissed") }
+            .show()
     }
 }
 

@@ -1,5 +1,5 @@
 ﻿{
-    "version": "1.7",
+    "version": "1.7.3-beta",
     "url": "https://github.com/agarcabin/QuickDaily/releases/latest",
-    "body": "QuickDaily 1.7\n• 修复 日记模板路径选择器选择异常\n• 修复 撤销按钮对md符号失效\n• 修复 设置界面多余的横线\n• 修复 日志保存位置异常"
+    "body": "QuickDaily 1.7.3-beta\n• 调整 编辑设置，将回车保存与系统侧边启动器支持归入悬浮窗设置\n• 新增 系统侧边启动器支持开关与启动/关闭延迟说明\n• 保留 悬浮窗草稿恢复、重复启动聚焦和权限不足时安全降级"
 }

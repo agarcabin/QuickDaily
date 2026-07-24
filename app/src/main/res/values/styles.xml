@@ -9,4 +9,9 @@
         <item name="android:windowNoTitle">true</item>
         <item name="android:colorBackgroundCacheHint">@null</item>
     </style>
+
+    <!-- LauncherActivity must not create the normal white starting preview. -->
+    <style name="Theme.QuickDaily.Launcher" parent="Theme.QuickDaily.Transparent">
+        <item name="android:windowDisablePreview">true</item>
+    </style>
 </resources>

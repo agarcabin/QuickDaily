@@ -2,7 +2,6 @@ package com.quickdaily
 
 import android.content.Context
 import android.content.Intent
-import android.os.Environment
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -24,10 +23,12 @@ object BetaLogger {
             val extEnabled = prefs.getBoolean("logging_enabled", false)
             if (extEnabled) {
                 val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-                val docsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+                val docsDir = ExternalStoragePaths.diagnosticsDirectory()
                 if (!docsDir.exists()) docsDir.mkdirs()
+                val migration = ExternalStoragePaths.migrateLegacyLogs()
                 logFile = File(docsDir, "QuickDaily_log_" + date + ".txt")
                 enabled = true
+                log("BetaLogger", "legacy logs migrated=${migration.moved} skipped=${migration.skipped}")
                 log("BetaLogger", "init with external logging from prefs")
             } else {
                 logFile = File(context.filesDir, "beta_log.txt")
@@ -61,9 +62,13 @@ object BetaLogger {
         try {
             if (enabled && useExternal) {
                 val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-                val docsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+                val docsDir = ExternalStoragePaths.diagnosticsDirectory()
                 if (!docsDir.exists()) docsDir.mkdirs()
+                val migration = ExternalStoragePaths.migrateLegacyLogs()
                 logFile = File(docsDir, "QuickDaily_log_" + date + ".txt")
+                if (migration.moved > 0 || migration.skipped > 0) {
+                    log("BetaLogger", "legacy logs migrated=${migration.moved} skipped=${migration.skipped}")
+                }
             } else if (enabled) {
                 logFile = File(context.filesDir, "beta_log.txt")
             } else {

@@ -2,6 +2,7 @@ package com.quickdaily
 
 import android.content.Intent
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 
 /**
@@ -12,9 +13,15 @@ class QuickShortcutActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        startActivity(Intent(this, NoteEditActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION
-        })
+        val overlayStarted = FloatingNoteEntryPolicy.isSystemSidebarSupportEnabled(this) &&
+            Settings.canDrawOverlays(this) &&
+            FloatingNoteControllerProvider.forContext(this).showOrFocus(
+                FloatingNoteRequest(
+                    source = FloatingNoteSource.SIDEBAR,
+                    returnToHomeAfterClose = false
+                )
+            )
+        if (!overlayStarted) FloatingNoteEntryPolicy.launchLegacyEditor(this)
 
         finish()
     }
