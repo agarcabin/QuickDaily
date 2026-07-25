@@ -176,7 +176,9 @@ class FloatingNoteService : LifecycleService() {
                 when (result) {
                     FloatingNoteSaveResult.Saved -> {
                         FloatingNoteDraftStore.clear(this@FloatingNoteService)
-                        Toast.makeText(this@FloatingNoteService, "已保存", Toast.LENGTH_SHORT).show()
+                        if (!FloatingNoteEntryPolicy.isSystemSidebarSupportEnabled(this@FloatingNoteService)) {
+                            Toast.makeText(this@FloatingNoteService, "已保存", Toast.LENGTH_SHORT).show()
+                        }
                         hideOverlay("saved", persistDraft = false)
                     }
                     FloatingNoteSaveResult.NoContent -> finishFromClose()

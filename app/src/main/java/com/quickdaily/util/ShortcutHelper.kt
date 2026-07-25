@@ -21,13 +21,9 @@ object ShortcutHelper {
      * 请求将快捷方式添加到桌面。
      */
     fun pinShortcutToDesktop(context: Context): Boolean {
-        // MIUI's ShortcutManager path has been observed to crash while opening its
-        // launcher permission UI. Its legacy launcher broadcast remains supported,
-        // so deliberately avoid requesting the system pin flow on Xiaomi devices.
-        if (isXiaomiDevice()) {
-            return pinShortcutLegacy(context).also { if (it) showRequestSentToast(context) }
-        }
-
+        // Modern launchers, including current HyperOS versions, no longer honor
+        // INSTALL_SHORTCUT reliably. Use the official pin flow on API 26+ and
+        // keep the broadcast only as the compatibility fallback.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             return pinShortcutLegacy(context).also { if (it) showRequestSentToast(context) }
         }
@@ -72,17 +68,6 @@ object ShortcutHelper {
             e.printStackTrace()
             pinShortcutLegacy(context).also { if (it) showRequestSentToast(context) }
         }
-    }
-
-    private fun isXiaomiDevice(): Boolean {
-        val manufacturer = Build.MANUFACTURER.orEmpty()
-        val brand = Build.BRAND.orEmpty()
-        return manufacturer.equals("Xiaomi", ignoreCase = true) ||
-            manufacturer.equals("Redmi", ignoreCase = true) ||
-            manufacturer.equals("POCO", ignoreCase = true) ||
-            brand.equals("Xiaomi", ignoreCase = true) ||
-            brand.equals("Redmi", ignoreCase = true) ||
-            brand.equals("POCO", ignoreCase = true)
     }
 
     private fun showRequestSentToast(context: Context) {

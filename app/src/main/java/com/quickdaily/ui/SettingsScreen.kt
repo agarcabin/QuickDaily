@@ -114,6 +114,15 @@ private fun templatePathRelativeToVault(vaultPath: String, selectedPath: String)
     return selected
 }
 
+private fun defaultObsidianConfigFilePath(vaultPath: String): String {
+    val normalizedVaultPath = vaultPath.replace('\\', '/').trimEnd('/')
+    return if (normalizedVaultPath.isBlank()) {
+        "/.obsidian/daily-notes.json"
+    } else {
+        "$normalizedVaultPath/.obsidian/daily-notes.json"
+    }
+}
+
 private fun documentDisplayName(context: android.content.Context, uri: Uri): String? {
     return try {
         context.contentResolver.query(
@@ -177,6 +186,7 @@ fun SettingsScreen(
     // ── Local edit state ──
     var vaultPath by remember { mutableStateOf(config.vaultPath) }
     var obsidianConfigUri by remember { mutableStateOf(config.obsidianConfigUri) }
+    var useCustomObsidianConfigPath by remember { mutableStateOf(config.useCustomObsidianConfigPath) }
     var diaryFolder by remember { mutableStateOf(config.diaryFolder) }
     var dateFormat by remember { mutableStateOf(config.dateFormat) }
     var templatePath by remember { mutableStateOf(config.templatePath) }
@@ -190,7 +200,11 @@ fun SettingsScreen(
     var pendingImageUri by remember { mutableStateOf<Uri?>(null) }
 
     suspend fun readObsidianConfigFromSource() {
-        val selectedUri = obsidianConfigUri.trim().takeIf { it.isNotBlank() }
+        val selectedUri = if (useCustomObsidianConfigPath) {
+            obsidianConfigUri.trim().takeIf { it.isNotBlank() }
+        } else {
+            null
+        }
         val customResult = selectedUri?.let { rawUri ->
             runCatching { appState.inspectObsidianConfig(Uri.parse(rawUri), vaultPath) }.getOrNull()
         }
@@ -219,6 +233,7 @@ fun SettingsScreen(
             appState.saveConfig(config.copy(
                 vaultPath = vaultPath.trim(),
                 obsidianConfigUri = obsidianConfigUri.trim(),
+                useCustomObsidianConfigPath = useCustomObsidianConfigPath,
                 diaryFolder = diaryFolder.trim().ifBlank { "Daily" },
                 dateFormat = dateFormat.trim().ifBlank { "YYYY-MM-DD" },
                 templatePath = templatePath.trim(),
@@ -261,6 +276,7 @@ fun SettingsScreen(
             if (path != null) {
                 vaultPath = path
                 obsidianConfigUri = ""
+                useCustomObsidianConfigPath = false
                 scope.launch {
                     val obsCfg = appState.loadObsidianConfig(path)
                     val appCfg = appState.loadObsidianAppConfig(path)
@@ -276,6 +292,7 @@ fun SettingsScreen(
                         appState.saveConfig(DiaryConfig(
                             vaultPath = path.trim(),
                             obsidianConfigUri = "",
+                            useCustomObsidianConfigPath = false,
                             diaryFolder = obsCfg.diaryFolder.trim().ifBlank { "Daily" },
                             dateFormat = obsCfg.dateFormat.trim().ifBlank { "YYYY-MM-DD" },
                             templatePath = obsCfg.templatePath.trim(),
@@ -295,6 +312,7 @@ fun SettingsScreen(
                             imageCustomNamingFormat = config.imageCustomNamingFormat,
                             loggingEnabled = config.loggingEnabled,
                             taskPeriod = config.taskPeriod,
+                            taskCompletionSound = config.taskCompletionSound,
                             widgetStyle = config.widgetStyle,
                             widgetBackgroundColor = config.widgetBackgroundColor,
                             widgetOpacity = config.widgetOpacity,
@@ -393,7 +411,12 @@ fun SettingsScreen(
             )
         } catch (_: Exception) { }
         obsidianConfigUri = uri.toString()
-        appState.saveConfig(config.copy(vaultPath = vaultPath.trim(), obsidianConfigUri = uri.toString()))
+        useCustomObsidianConfigPath = true
+        appState.saveConfig(config.copy(
+            vaultPath = vaultPath.trim(),
+            obsidianConfigUri = uri.toString(),
+            useCustomObsidianConfigPath = true
+        ))
         scope.launch { readObsidianConfigFromSource() }
     }
 
@@ -432,6 +455,7 @@ fun SettingsScreen(
     fun buildConfig(): DiaryConfig = DiaryConfig(
         vaultPath = vaultPath.trim(),
         obsidianConfigUri = obsidianConfigUri.trim(),
+        useCustomObsidianConfigPath = useCustomObsidianConfigPath,
          diaryFolder = diaryFolder.trim().ifBlank { "Daily" },
         dateFormat = dateFormat.trim().ifBlank { "YYYY-MM-DD" },
         templatePath = templatePath.trim(),
@@ -451,6 +475,7 @@ fun SettingsScreen(
         systemSidebarSupport = config.systemSidebarSupport,
         loggingEnabled = config.loggingEnabled,
         taskPeriod = config.taskPeriod,
+        taskCompletionSound = config.taskCompletionSound,
         widgetStyle = config.widgetStyle,
         widgetBackgroundColor = config.widgetBackgroundColor,
         widgetOpacity = config.widgetOpacity
@@ -502,6 +527,7 @@ fun SettingsScreen(
                     0 -> DiaryStorageTab(
                         vaultPath = vaultPath,
                         obsidianConfigUri = obsidianConfigUri,
+                        useCustomObsidianConfigPath = useCustomObsidianConfigPath,
                         diaryFolder = diaryFolder,
                         dateFormat = dateFormat,
                         templatePath = templatePath,
@@ -516,6 +542,11 @@ fun SettingsScreen(
                         onImageStoragePathChange = { imageStoragePath = it },
                         config = config,
                         onConfigChange = { newCfg -> appState.saveConfig(newCfg) },
+                        onCustomObsidianConfigPathChange = { enabled ->
+                            useCustomObsidianConfigPath = enabled
+                            appState.saveConfig(buildConfig())
+                            scope.launch { readObsidianConfigFromSource() }
+                        },
                         onReadObsidianConfig = { scope.launch { readObsidianConfigFromSource() } },
                         onPickObsidianConfig = {
                             onExternalLaunch()
@@ -523,7 +554,7 @@ fun SettingsScreen(
                         },
                         onClearObsidianConfig = {
                             obsidianConfigUri = ""
-                            appState.saveConfig(config.copy(obsidianConfigUri = ""))
+                            appState.saveConfig(buildConfig())
                             scope.launch { readObsidianConfigFromSource() }
                         },
                         onPickVault = { onExternalLaunch(); vaultPicker.launch(null) },
@@ -623,6 +654,7 @@ fun SettingsScreen(
 private fun DiaryStorageTab(
     vaultPath: String,
     obsidianConfigUri: String,
+    useCustomObsidianConfigPath: Boolean,
     diaryFolder: String,
     dateFormat: String,
     templatePath: String,
@@ -637,6 +669,7 @@ private fun DiaryStorageTab(
     onImageStoragePathChange: (String) -> Unit,
     config: DiaryConfig,
     onConfigChange: (DiaryConfig) -> Unit,
+    onCustomObsidianConfigPathChange: (Boolean) -> Unit,
     onReadObsidianConfig: () -> Unit,
     onPickObsidianConfig: () -> Unit,
     onClearObsidianConfig: () -> Unit,
@@ -682,37 +715,63 @@ private fun DiaryStorageTab(
                     Text("从 Obsidian 读取配置")
                 }
 
+                ListItem(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onCustomObsidianConfigPathChange(!useCustomObsidianConfigPath) },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    headlineContent = { Text("是否自定义配置路径") },
+                    supportingContent = {
+                        Text("关闭时使用仓库默认路径 /.obsidian/daily-notes.json；如无特殊需求默认关闭。")
+                    },
+                    trailingContent = {
+                        Checkbox(
+                            checked = useCustomObsidianConfigPath,
+                            onCheckedChange = onCustomObsidianConfigPathChange
+                        )
+                    }
+                )
+
+                if (useCustomObsidianConfigPath) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedButton(onClick = onPickObsidianConfig, modifier = Modifier.weight(1f)) {
+                            Icon(Icons.Default.FileOpen, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (obsidianConfigUri.isBlank()) "选择配置文件" else "重新选择")
+                        }
+                        if (obsidianConfigUri.isNotBlank()) {
+                            IconButton(onClick = onClearObsidianConfig) {
+                                Icon(Icons.Default.Clear, "清除自定义配置文件")
+                            }
+                        }
+                    }
+                }
+
                 Text(
                     text = "Obsidian 配置文件路径：",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                val configPathText = if (obsidianConfigUri.isBlank()) {
-                    "未选择（使用仓库默认路径 /.obsidian/daily-notes.json）"
+                val defaultConfigPath = defaultObsidianConfigFilePath(vaultPath)
+                val configPathText = if (!useCustomObsidianConfigPath) {
+                    defaultConfigPath
+                } else if (obsidianConfigUri.isBlank()) {
+                    "未选择（使用仓库默认路径 $defaultConfigPath）"
                 } else {
-                    documentDisplayName(context, Uri.parse(obsidianConfigUri)) ?: obsidianConfigUri
+                    val uri = Uri.parse(obsidianConfigUri)
+                    UriUtil.documentUriToPath(context, uri)
+                        ?: documentDisplayName(context, uri)
+                        ?: obsidianConfigUri
                 }
                 Text(
                     text = configPathText,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    OutlinedButton(onClick = onPickObsidianConfig, modifier = Modifier.weight(1f)) {
-                        Icon(Icons.Default.FileOpen, null, Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (obsidianConfigUri.isBlank()) "选择配置文件" else "重新选择")
-                    }
-                    if (obsidianConfigUri.isNotBlank()) {
-                        IconButton(onClick = onClearObsidianConfig) {
-                            Icon(Icons.Default.Clear, "清除自定义配置文件")
-                        }
-                    }
-                }
                 if (obsidianMsg.isNotEmpty()) {
                     Text(obsidianMsg,
                         color = if (obsidianDetected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
@@ -1298,6 +1357,23 @@ private fun WidgetsTab(
                         }
                     }
                 }
+
+                HorizontalDivider()
+                ListItem(
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    headlineContent = { Text("完成提示音") },
+                    supportingContent = {
+                        Text("在任务小部件中完成任务时播放提示音")
+                    },
+                    trailingContent = {
+                        Switch(
+                            checked = config.taskCompletionSound,
+                            onCheckedChange = {
+                                onConfigChange(config.copy(taskCompletionSound = it))
+                            }
+                        )
+                    }
+                )
             }
         }
 

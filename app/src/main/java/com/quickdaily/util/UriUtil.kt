@@ -36,6 +36,33 @@ object UriUtil {
         return docIdToPath(docId)
     }
 
+    /**
+     * Resolves a document URI to a filesystem path, including vendor file pickers
+     * that do not expose a DocumentsContract document ID (for example HyperOS).
+     */
+    fun documentUriToPath(context: Context, uri: Uri): String? {
+        documentUriToPath(uri)?.let { return it }
+        if (uri.scheme.equals("file", ignoreCase = true)) return uri.path
+
+        return try {
+            context.contentResolver.query(
+                uri,
+                arrayOf("_data"),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    cursor.getString(0)?.takeIf { it.isNotBlank() }
+                } else {
+                    null
+                }
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun docIdToPath(docId: String): String? {
         if (docId.startsWith("raw:", ignoreCase = true)) {
             return docId.substringAfter(':').takeIf { it.isNotBlank() }

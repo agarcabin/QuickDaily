@@ -21,6 +21,7 @@ import kotlinx.coroutines.launch
 data class DiaryConfig(
     val vaultPath: String = "",
     val obsidianConfigUri: String = "",
+    val useCustomObsidianConfigPath: Boolean = false,
     val diaryFolder: String = "Daily",
     val dateFormat: String = "YYYY-MM-DD",
     val templatePath: String = "",
@@ -40,6 +41,7 @@ data class DiaryConfig(
     val systemSidebarSupport: Boolean = false,
     val loggingEnabled: Boolean = false,
     val taskPeriod: String = "today",
+    val taskCompletionSound: Boolean = true,
     val widgetStyle: String = "dark",
     val widgetBackgroundColor: Long = 0xFF202124L,
     val widgetOpacity: Int = 100
@@ -111,9 +113,16 @@ class AppState(application: Application) : AndroidViewModel(application) {
     // ── Config ──────────────────────────────────────────
 
     private fun loadConfig(): DiaryConfig {
+        val obsidianConfigUri = prefs.getString("obsidian_config_uri", "") ?: ""
         return DiaryConfig(
             vaultPath = prefs.getString("vault_path", "") ?: "",
-            obsidianConfigUri = prefs.getString("obsidian_config_uri", "") ?: "",
+            obsidianConfigUri = obsidianConfigUri,
+            useCustomObsidianConfigPath = if (prefs.contains("use_custom_obsidian_config_path")) {
+                prefs.getBoolean("use_custom_obsidian_config_path", false)
+            } else {
+                // Migrate the 1.7.4 URI-only setting without disabling an existing choice.
+                obsidianConfigUri.isNotBlank()
+            },
             diaryFolder = prefs.getString("diary_folder", "Daily") ?: "Daily",
             dateFormat = prefs.getString("date_format", "YYYY-MM-DD") ?: "YYYY-MM-DD",
             templatePath = prefs.getString("template_path", "") ?: "",
@@ -133,6 +142,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
             systemSidebarSupport = prefs.getBoolean(FloatingNoteEntryPolicy.PREF_SYSTEM_SIDEBAR_SUPPORT, false),
             loggingEnabled = prefs.getBoolean("logging_enabled", false),
             taskPeriod = prefs.getString("task_period", "today") ?: "today",
+            taskCompletionSound = prefs.getBoolean(TaskCompletionSoundPolicy.PREF_KEY, TaskCompletionSoundPolicy.DEFAULT_ENABLED),
             widgetStyle = prefs.getString("widget_style", "dark") ?: "dark",
             widgetBackgroundColor = prefs.getLong("widget_background_color", 0xFF202124L),
             widgetOpacity = prefs.getInt("widget_opacity", 100).coerceIn(0, 100)
@@ -143,6 +153,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
         val config = DiaryConfig(
             vaultPath = raw.vaultPath.trim(),
             obsidianConfigUri = raw.obsidianConfigUri.trim(),
+            useCustomObsidianConfigPath = raw.useCustomObsidianConfigPath,
             diaryFolder = raw.diaryFolder.trim().ifBlank { "Daily" },
             dateFormat = raw.dateFormat.trim().ifBlank { "YYYY-MM-DD" },
             templatePath = raw.templatePath.trim(),
@@ -162,6 +173,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
             systemSidebarSupport = raw.systemSidebarSupport,
             loggingEnabled = raw.loggingEnabled,
             taskPeriod = raw.taskPeriod,
+            taskCompletionSound = raw.taskCompletionSound,
             widgetStyle = raw.widgetStyle,
             widgetBackgroundColor = raw.widgetBackgroundColor,
             widgetOpacity = raw.widgetOpacity.coerceIn(0, 100)
@@ -169,6 +181,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
         prefs.edit()
             .putString("vault_path", config.vaultPath)
             .putString("obsidian_config_uri", config.obsidianConfigUri)
+            .putBoolean("use_custom_obsidian_config_path", config.useCustomObsidianConfigPath)
             .putString("diary_folder", config.diaryFolder)
             .putString("date_format", config.dateFormat)
             .putString("template_path", config.templatePath)
@@ -188,6 +201,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
             .putBoolean(FloatingNoteEntryPolicy.PREF_SYSTEM_SIDEBAR_SUPPORT, config.systemSidebarSupport)
             .putBoolean("logging_enabled", config.loggingEnabled)
             .putString("task_period", config.taskPeriod)
+            .putBoolean(TaskCompletionSoundPolicy.PREF_KEY, config.taskCompletionSound)
             .putString("widget_style", config.widgetStyle)
             .putLong("widget_background_color", config.widgetBackgroundColor)
             .putInt("widget_opacity", config.widgetOpacity.coerceIn(0, 100))

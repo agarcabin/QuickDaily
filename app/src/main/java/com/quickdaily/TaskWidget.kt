@@ -230,10 +230,6 @@ class TaskWidget : AppWidgetProvider() {
         }
 
         private fun toggleTask(context: Context, date: String, taskIndex: Int) {
-            // 完成任务播放 ding 声
-            try {
-                MediaActionSound().play(MediaActionSound.FOCUS_COMPLETE)
-            } catch (_: Exception) {}
             val prefs = context.getSharedPreferences("QuickDaily", 0)
             val vaultPath = prefs.getString("vault_path", "") ?: ""
             if (vaultPath.isBlank()) {
@@ -254,7 +250,7 @@ class TaskWidget : AppWidgetProvider() {
             var foundIdx = -1
             var taskLineIdx = 0
             for (i in lines.indices) {
-                if (lines[i].contains("- [ ] ")) {
+                if (lines[i].trimStart().startsWith("- [ ]")) {
                     if (taskLineIdx == taskIndex) {
                         foundIdx = i
                         break
@@ -276,8 +272,24 @@ class TaskWidget : AppWidgetProvider() {
             } else {
                 newBody
             }
-            FileUtil.write(path, saveContent)
+            val saveSucceeded = FileUtil.write(path, saveContent)
+            if (!saveSucceeded) {
+                BetaLogger.log("TaskWidget", "toggle failed to write date=$date taskIndex=$taskIndex path=$path")
+                return
+            }
             BetaLogger.log("TaskWidget", "toggle saved date=$date taskIndex=$taskIndex line=$foundIdx path=$path")
+
+            if (TaskCompletionSoundPolicy.shouldPlay(
+                    enabled = prefs.getBoolean(
+                        TaskCompletionSoundPolicy.PREF_KEY,
+                        TaskCompletionSoundPolicy.DEFAULT_ENABLED
+                    ),
+                    saveSucceeded = saveSucceeded
+                )) {
+                try {
+                    MediaActionSound().play(MediaActionSound.FOCUS_COMPLETE)
+                } catch (_: Exception) { }
+            }
 
             // Refresh all widgets
             WidgetRefreshCoordinator.refreshAll(context, immediate = true)
