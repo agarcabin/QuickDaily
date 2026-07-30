@@ -69,6 +69,7 @@ fun EditorScreen(
     val diaryContent by appState.diaryContent.collectAsState()
     val isLoaded by appState.isLoaded.collectAsState()
     val todayPath by appState.todayPath.collectAsState()
+    val editorTargetRelativePath by appState.editorTargetRelativePath.collectAsState()
     val config by appState.config.collectAsState()
     val allTags by appState.tags.collectAsState()
     val canUndo by appState.canUndo.collectAsState()
@@ -213,7 +214,7 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
         }
     }
 
-    LaunchedEffect(Unit) { appState.loadToday() }
+    LaunchedEffect(editorTargetRelativePath) { appState.loadEditorTarget(editorTargetRelativePath) }
     LaunchedEffect(diaryContent) {
         if (diaryContent != textFieldValue.text) textFieldValue = TextFieldValue(diaryContent)
     }
@@ -230,8 +231,7 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
                         val vaultName = config.vaultPath.trimEnd('/').substringAfterLast('/')
                         if (vaultName.isNotBlank()) {
                             try {
-                                val date = com.quickdaily.util.DateUtil.todayStr(config.dateFormat)
-                                val relativePath = Uri.encode("${config.diaryFolder.trimEnd('/')}/${date}.md")
+                                val relativePath = Uri.encode(appState.currentEditorRelativePath())
                                 val uri = Uri.parse("obsidian://open?vault=${Uri.encode(vaultName)}&file=$relativePath")
                                 val intent = Intent(Intent.ACTION_VIEW, uri)
                                 context.startActivity(intent)

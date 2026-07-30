@@ -21,10 +21,19 @@ class FloatingNotePickerActivity : ComponentActivity() {
         refreshOverlayAndFinish()
     }
 
+    private val pagePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        val path = uri?.let { TaskWidgetConfigStore.filePathFromUri(this, it) }
+        if (path != null) {
+            FloatingNoteDraftStore.setTarget(this, path)
+        }
+        refreshOverlayAndFinish()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         when (intent.getStringExtra(EXTRA_MODE)) {
             MODE_ATTACHMENT -> attachmentPicker.launch(arrayOf("*/*"))
+            MODE_CUSTOM_PAGE -> pagePicker.launch(arrayOf("text/*", "application/octet-stream", "*/*"))
             else -> imagePicker.launch("image/*")
         }
     }
@@ -38,5 +47,6 @@ class FloatingNotePickerActivity : ComponentActivity() {
         const val EXTRA_MODE = "picker_mode"
         const val MODE_IMAGES = "images"
         const val MODE_ATTACHMENT = "attachment"
+        const val MODE_CUSTOM_PAGE = "custom_page"
     }
 }

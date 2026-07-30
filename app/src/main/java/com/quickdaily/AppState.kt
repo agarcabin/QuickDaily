@@ -10,6 +10,7 @@ import com.quickdaily.util.Debounce
 import com.quickdaily.util.FileUtil
 import com.quickdaily.util.ContentUtil
 import com.quickdaily.util.ReadResult
+import com.quickdaily.util.VaultPathUtil
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -97,6 +98,9 @@ class AppState(application: Application) : AndroidViewModel(application) {
 
     private val _todayPath = MutableStateFlow("")
     val todayPath: StateFlow<String> = _todayPath.asStateFlow()
+
+    private val _editorTargetRelativePath = MutableStateFlow("")
+    val editorTargetRelativePath: StateFlow<String> = _editorTargetRelativePath.asStateFlow()
 
     private var autoSave: Debounce? = null
 
@@ -211,7 +215,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
             .putInt("widget_opacity", config.widgetOpacity.coerceIn(0, 100))
             .commit()
         _config.value = config
-        loadToday()
+        loadEditorTarget(_editorTargetRelativePath.value)
     }
 
     fun setLoggingEnabled(enabled: Boolean) {
@@ -304,64 +308,86 @@ class AppState(application: Application) : AndroidViewModel(application) {
         return "$base/${cfg.diaryFolder.trimEnd('/')}/${date}.md"
     }
 
-    fun loadToday() {
-        if (_config.value.vaultPath.isBlank()) {
+    fun loadToday() = loadEditorTarget("")
+
+    /** Load either today's diary or an absolute/vault-relative Markdown file. */
+    fun loadEditorTarget(relativePath: String?) {
+        val normalized = relativePath.orEmpty().trim()
+        _editorTargetRelativePath.value = normalized
+        _isLoaded.value = false
+        if (_config.value.vaultPath.isBlank() && normalized.isBlank()) {
+            _todayPath.value = ""
+            _diaryContent.value = ""
+            _frontmatter.value = ""
             _isLoaded.value = true
             return
         }
+
         viewModelScope.launch(Dispatchers.IO) {
-            val path = todayFilePath()
+            val path = if (normalized.isBlank()) {
+                todayFilePath()
+            } else {
+                VaultPathUtil.resolveTarget(_config.value.vaultPath, normalized).orEmpty()
+            }
             _todayPath.value = path
             _lastLoadedMtime = FileUtil.lastModified(path)
-            BetaLogger.log("LoadToday", "path=$path | mtime=$_lastLoadedMtime")
+            val isToday = normalized.isBlank()
+            val logTag = if (isToday) "LoadToday" else "LoadEditorTarget"
+            BetaLogger.log(logTag, "path=$path | mtime=$_lastLoadedMtime")
 
             val content = when (val result = FileUtil.readResult(path)) {
                 is ReadResult.Success -> result.content
                 is ReadResult.NotFound -> null
                 is ReadResult.Error -> {
-                    android.util.Log.e("QuickDaily", "读取日记失败: $path", result.exception)
-                    BetaLogger.logException("LoadToday", "read_error path=$path", result.exception)
+                    BetaLogger.logException(logTag, "read_error path=$path", result.exception)
                     null
                 }
             }
-            BetaLogger.log("LoadToday", "file_exists=" + (content != null) + " content_len=" + (content?.length ?: 0))
-        // If file exists with only frontmatter (empty body), still try template
-        val rawContent: String
-        var contentSource = "template"
-        if (content != null && content.isNotEmpty()) {
-            val pc = ContentUtil.parseFrontmatter(content)
-            if (pc.hasFrontmatter && pc.body.isBlank() && config.value.templatePath.isNotBlank()) {
-                val tpl = loadTemplate()
-                if (tpl.isNotEmpty()) {
-                    rawContent = tpl
-                    contentSource = "template(fm-file)"
+
+            val rawContent: String
+            var contentSource = "empty"
+            if (content != null && content.isNotEmpty()) {
+                val parsedContent = ContentUtil.parseFrontmatter(content)
+                if (isToday && parsedContent.hasFrontmatter && parsedContent.body.isBlank() && config.value.templatePath.isNotBlank()) {
+                    val tpl = loadTemplate()
+                    rawContent = if (tpl.isNotEmpty()) tpl else content
+                    contentSource = if (tpl.isNotEmpty()) "template(fm-file)" else "file(fm-only,no-tpl)"
                 } else {
                     rawContent = content
-                    contentSource = "file(fm-only,no-tpl)"
+                    contentSource = "file"
                 }
+            } else if (isToday) {
+                rawContent = loadTemplate()
+                contentSource = if (rawContent.isNotEmpty()) "template" else "empty"
             } else {
-                rawContent = content
-                contentSource = "file"
+                rawContent = ""
             }
-        } else {
-            rawContent = loadTemplate()  // loadTemplate() returns "" if no template set
-            contentSource = if (rawContent.isNotEmpty()) "template" else "empty"
-        }
-        BetaLogger.log("LoadToday", "rawContent from=" + contentSource + " raw_len=" + rawContent.length)
+            BetaLogger.log(logTag, "rawContent from=$contentSource raw_len=${rawContent.length}")
+
             val parsed = ContentUtil.parseFrontmatter(rawContent)
             _frontmatter.value = parsed.frontmatter
-            if (parsed.hasFrontmatter && config.value.filterFrontmatter) {
-                _diaryContent.value = parsed.body
+            _diaryContent.value = if (parsed.hasFrontmatter && config.value.filterFrontmatter) {
+                parsed.body
             } else {
-                _diaryContent.value = rawContent
+                rawContent
             }
-            BetaLogger.log("LoadToday", "frontmatter_len=${parsed.frontmatter.length} body_len=${parsed.body.length} has_fm=${parsed.hasFrontmatter} filtering=${config.value.filterFrontmatter}")
+            _undoStack.clear()
+            _redoStack.clear()
+            _canUndo.value = false
+            _canRedo.value = false
+            _lastUndoPushTime = 0L
             scanTags()
-
             _isLoaded.value = true
             autoSave?.cancel()
             autoSave = Debounce(scope = viewModelScope, onFire = { saveNow() })
         }
+    }
+
+    fun currentEditorRelativePath(): String {
+        val target = _editorTargetRelativePath.value
+        if (target.isNotBlank()) return target
+        val cfg = _config.value
+        return "${cfg.diaryFolder.trimEnd('/')}/${DateUtil.todayStr(cfg.dateFormat)}.md"
     }
 
     fun reloadIfNewerOnDisk() {

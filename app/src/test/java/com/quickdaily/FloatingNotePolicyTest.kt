@@ -1,5 +1,6 @@
 package com.quickdaily
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -20,5 +21,23 @@ class FloatingNotePolicyTest {
         assertFalse(FloatingNotePolicy.effectiveReturnHome(false, true))
         assertTrue(FloatingNotePolicy.effectiveReturnHome(null, true))
         assertFalse(FloatingNotePolicy.effectiveReturnHome(null, false))
+    }
+
+    @Test
+    fun existingOverlayDoesNotAcceptASecondWidgetTarget() {
+        assertFalse(FloatingNotePolicy.shouldLoadNewRequest(overlayShowing = true))
+        assertTrue(FloatingNotePolicy.shouldLoadNewRequest(overlayShowing = false))
+    }
+
+    @Test
+    fun newRequestTargetWinsWhenOnlyOldTargetMetadataRemains() {
+        assertEquals(
+            "/new-page.md",
+            FloatingNotePolicy.targetForRequest(false, "/old-page.md", "/new-page.md"),
+        )
+        assertEquals(
+            "/old-page.md",
+            FloatingNotePolicy.targetForRequest(true, "/old-page.md", "/new-page.md"),
+        )
     }
 }

@@ -56,7 +56,8 @@ class TaskViewsFactory(private val context: Context, private val widgetId: Int) 
 
     private fun loadTasks() {
         tasks.clear()
-        val result = WidgetContentLoader.loadTasks(context)
+        val config = TaskWidgetConfigStore.load(context, widgetId)
+        val result = WidgetContentLoader.loadTasks(context, config)
         if (result is WidgetLoadResult.Success) {
             tasks.addAll(result.value)
         } else {
@@ -75,9 +76,13 @@ class TaskViewsFactory(private val context: Context, private val widgetId: Int) 
         if (message.isBlank()) return
         try {
             val manager = android.appwidget.AppWidgetManager.getInstance(context)
-            val ids = manager.getAppWidgetIds(
-                android.content.ComponentName(context, TaskWidget::class.java)
-            )
+            val ids = if (widgetId >= 0) {
+                intArrayOf(widgetId)
+            } else {
+                manager.getAppWidgetIds(
+                    android.content.ComponentName(context, TaskWidget::class.java)
+                )
+            }
             if (ids.isNotEmpty()) {
                 val views = RemoteViews(context.packageName, R.layout.widget_tasks)
                 views.setTextViewText(R.id.empty_view, message)

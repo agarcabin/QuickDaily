@@ -37,12 +37,6 @@ data class ReadWidgetItem(
     val renderInlineMarkdown: Boolean = true
 )
 
-data class TaskWidgetItem(
-    val text: String,
-    val date: String,
-    val indexInDiary: Int
-)
-
 object WidgetContentLoader {
     fun loadRead(context: Context): WidgetLoadResult<List<ReadWidgetItem>> {
         return try {
@@ -83,40 +77,59 @@ object WidgetContentLoader {
         }
     }
 
-    fun loadTasks(context: Context): WidgetLoadResult<List<TaskWidgetItem>> {
+    fun loadTasks(
+        context: Context,
+        widgetConfig: TaskWidgetConfig,
+    ): WidgetLoadResult<List<TaskWidgetItem>> {
         return try {
             val prefs = context.getSharedPreferences("QuickDaily", 0)
             val vaultPath = prefs.getString("vault_path", "") ?: ""
-            if (vaultPath.isBlank()) return WidgetLoadResult.Empty("请先配置仓库")
+            if (vaultPath.isBlank() && widgetConfig.scope != TaskWidgetScope.CUSTOM) {
+                return WidgetLoadResult.Empty("请先配置仓库")
+            }
 
             val diaryFolder = prefs.getString("diary_folder", "Daily") ?: "Daily"
             val dateFormat = prefs.getString("date_format", "YYYY-MM-DD") ?: "YYYY-MM-DD"
-            val taskPeriod = prefs.getString("task_period", "today") ?: "today"
-            val daysToLoad = when (taskPeriod) {
-                "week" -> 7
-                "month" -> 30
-                else -> 1
-            }
             val tasks = mutableListOf<TaskWidgetItem>()
             var lastPath: String? = null
-            for (i in 0 until daysToLoad) {
-                val date = DateUtil.dateStr(dateFormat, -i.toLong())
-                val path = "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/$date.md"
+            val paths: List<Pair<String, String?>> = when (widgetConfig.scope) {
+                TaskWidgetScope.TODAY,
+                TaskWidgetScope.WEEK,
+                TaskWidgetScope.MONTH -> {
+                    val daysToLoad = when (widgetConfig.scope) {
+                        TaskWidgetScope.WEEK -> 7
+                        TaskWidgetScope.MONTH -> 30
+                        else -> 1
+                    }
+                    (0 until daysToLoad).map { offset ->
+                        val date = DateUtil.dateStr(dateFormat, -offset.toLong())
+                        "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/$date.md" to date
+                    }
+                }
+                TaskWidgetScope.CUSTOM -> {
+                    val customPath = TaskWidgetConfigStore.customFilePath(context, widgetConfig)
+                        ?: return WidgetLoadResult.Failure("自定义页面不可用")
+                    listOf(customPath to null)
+                }
+            }
+
+            for ((path, date) in paths) {
                 lastPath = path
                 val fileContent = when (val result = FileUtil.readResult(path)) {
                     is ReadResult.Success -> result.content
-                    is ReadResult.NotFound -> continue
+                    is ReadResult.NotFound -> {
+                        if (widgetConfig.scope == TaskWidgetScope.CUSTOM) {
+                            return WidgetLoadResult.Failure("自定义页面不可用", path)
+                        }
+                        continue
+                    }
                     is ReadResult.Error -> return WidgetLoadResult.Failure("读取失败", path, result.exception)
                 }
                 if (fileContent.isEmpty()) continue
 
-                var taskIndex = 0
-                for (line in fileContent.lines()) {
-                    if (line.trimStart().startsWith("- [ ]")) {
-                        tasks += TaskWidgetItem(line.trim(), date, taskIndex)
-                        taskIndex++
-                    }
-                }
+                val parsed = ContentUtil.parseFrontmatter(fileContent)
+                val body = if (parsed.hasFrontmatter) parsed.body else fileContent
+                tasks += TaskWidgetTaskParser.parseVisible(body, path, date)
             }
             if (tasks.isEmpty()) WidgetLoadResult.Empty("暂无待办事项", lastPath)
             else WidgetLoadResult.Success(tasks, lastPath ?: vaultPath)
@@ -279,14 +292,27 @@ object TaskWidgetViews {
         size: WidgetSize = WidgetSize.DEFAULT
     ): RemoteViews =
         RemoteViews(context.packageName, R.layout.widget_task_item).apply {
-            val taskText = item.text.replace("- [ ] ", "").replace("- [x] ", "").replace("- [X] ", "").trim()
-            setTextViewText(R.id.task_text, taskText)
+            setTextViewText(R.id.task_text, item.text.trim())
             setFloat(R.id.task_text, "setTextSize", if (size.isTiny) 11f else 12f)
             setInt(R.id.task_text, "setMaxLines", size.taskMaxLines)
-            setTextColor(R.id.task_text, WidgetAppearance.colors(context).foreground)
+            val colors = WidgetAppearance.colors(context)
+            setTextColor(R.id.task_text, if (item.checked) colors.muted else colors.foreground)
+            setImageViewResource(
+                R.id.task_checkbox,
+                if (item.checked) android.R.drawable.checkbox_on_background
+                else android.R.drawable.checkbox_off_background
+            )
+            setViewPadding(
+                R.id.task_row,
+                (item.indentLevel * 12 * context.resources.displayMetrics.density).toInt(),
+                3,
+                0,
+                3
+            )
             val fillIntent = Intent().apply {
-                putExtra("task_index", item.indexInDiary)
-                putExtra("task_date", item.date)
+                putExtra(TaskWidget.EXTRA_TASK_PATH, item.sourcePath)
+                putExtra(TaskWidget.EXTRA_TASK_LINE, item.lineIndex)
+                putExtra(TaskWidget.EXTRA_TASK_RAW, item.rawLine)
             }
             setOnClickFillInIntent(R.id.task_checkbox, fillIntent)
         }

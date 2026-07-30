@@ -8,6 +8,7 @@ import com.quickdaily.util.DiaryAppendUtil
 import com.quickdaily.util.FileUtil
 import com.quickdaily.util.ImageUtil
 import com.quickdaily.util.RecentTags
+import com.quickdaily.util.VaultPathUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -22,7 +23,8 @@ class FloatingNoteSaveUseCase(private val context: Context) {
     suspend fun save(
         text: String,
         selectedImages: List<Uri>,
-        pendingAttachments: List<Uri>
+        pendingAttachments: List<Uri>,
+        targetRelativePath: String? = null,
     ): FloatingNoteSaveResult = withContext(Dispatchers.IO) {
         if (!hasRealContent(text) && selectedImages.isEmpty() && pendingAttachments.isEmpty()) {
             return@withContext FloatingNoteSaveResult.NoContent
@@ -30,11 +32,18 @@ class FloatingNoteSaveUseCase(private val context: Context) {
 
         val prefs = context.getSharedPreferences("QuickDaily", Context.MODE_PRIVATE)
         val vaultPath = prefs.getString("vault_path", "").orEmpty()
-        if (vaultPath.isBlank()) return@withContext FloatingNoteSaveResult.Failed("请先设置仓库路径")
+        if (vaultPath.isBlank() && targetRelativePath.isNullOrBlank()) {
+            return@withContext FloatingNoteSaveResult.Failed("请先设置仓库路径")
+        }
 
         val diaryFolder = prefs.getString("diary_folder", "Daily").orEmpty()
         val dateFormat = prefs.getString("date_format", "YYYY-MM-DD").orEmpty()
-        val path = "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/${DateUtil.todayStr(dateFormat)}.md"
+        val path = if (targetRelativePath.isNullOrBlank()) {
+            "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/${DateUtil.todayStr(dateFormat)}.md"
+        } else {
+            VaultPathUtil.resolveTarget(vaultPath, targetRelativePath)
+                ?: return@withContext FloatingNoteSaveResult.Failed("目标页面不可用")
+        }
         val anchor = prefs.getString("anchor_text", "").orEmpty().trim()
         val timestampFormat = prefs.getString("timestamp_format", "list_time").orEmpty()
         val addAnchorIfMissing = prefs.getBoolean("add_anchor_if_missing", true)
@@ -141,7 +150,9 @@ class FloatingNoteSaveUseCase(private val context: Context) {
             ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, newContent)
         } else newContent
 
-        FileUtil.write(path, output)
+        if (!FileUtil.write(path, output)) {
+            return@withContext FloatingNoteSaveResult.Failed("保存失败，请检查仓库路径权限")
+        }
         RecentTags.recordFromText(context, text)
         WidgetRefreshHelper.refreshAll(context)
         FloatingNoteSaveResult.Saved

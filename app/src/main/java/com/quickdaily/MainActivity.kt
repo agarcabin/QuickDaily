@@ -32,6 +32,13 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_REQUEST_FLOATING_PERMISSION = "request_floating_permission"
+        const val EXTRA_EDITOR_RELATIVE_PATH = "editor_relative_path"
+
+        fun editorIntent(context: android.content.Context, targetRelativePath: String?): Intent =
+            Intent(context, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                putExtra(EXTRA_EDITOR_RELATIVE_PATH, targetRelativePath.orEmpty())
+            }
     }
 
     private lateinit var appState: AppState
@@ -54,6 +61,9 @@ class MainActivity : ComponentActivity() {
 
         BetaLogger.log("Lifecycle", "onCreate")
         appState = ViewModelProvider(this)[AppState::class.java]
+        if (intent.hasExtra(EXTRA_EDITOR_RELATIVE_PATH)) {
+            appState.loadEditorTarget(intent.getStringExtra(EXTRA_EDITOR_RELATIVE_PATH))
+        }
         val firstLaunch = appState.config.value.vaultPath.isBlank()
         awaitingFloatingPermission = intent.getBooleanExtra(EXTRA_REQUEST_FLOATING_PERMISSION, false)
 
@@ -125,6 +135,9 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         BetaLogger.log("Lifecycle", "onNewIntent: ${intent.action}")
+        if (intent.hasExtra(EXTRA_EDITOR_RELATIVE_PATH)) {
+            appState.loadEditorTarget(intent.getStringExtra(EXTRA_EDITOR_RELATIVE_PATH))
+        }
         if (intent.getBooleanExtra(EXTRA_REQUEST_FLOATING_PERMISSION, false)) {
             awaitingFloatingPermission = true
             floatingPermissionPromptShown = false

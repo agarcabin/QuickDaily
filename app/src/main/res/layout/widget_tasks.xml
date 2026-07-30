@@ -7,41 +7,74 @@
     android:orientation="vertical"
     android:padding="10dp">
 
-    <LinearLayout
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
         android:gravity="center_vertical">
 
-        <TextView
-            android:id="@+id/widget_title"
-            android:layout_width="0dp"
+        <LinearLayout
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:textColor="#FFFFFF"
-            android:textSize="13sp"
-            android:textStyle="bold"
-            android:text="任务" />
+            android:layout_gravity="start|center_vertical"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
 
-        <ImageButton
-            android:id="@+id/btn_refresh"
-            android:layout_width="28dp"
-            android:layout_height="28dp"
-            android:src="@android:drawable/stat_notify_sync"
-            android:background="@null"
-            android:scaleType="centerInside"
-            android:contentDescription="刷新" />
+            <TextView
+                android:id="@+id/widget_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxEms="12"
+                android:maxLines="1"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp"
+                android:textStyle="bold" />
 
-        <ImageButton
-            android:id="@+id/btn_add_task"
-            android:layout_width="28dp"
-            android:layout_height="28dp"
-            android:src="@drawable/ic_add_white"
-            android:background="@null"
-            android:scaleType="centerInside"
-            android:contentDescription="添加任务" />
+            <ImageButton
+                android:id="@+id/btn_scope"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:background="@null"
+                android:contentDescription="选择任务范围"
+                android:scaleType="centerInside"
+                android:src="@android:drawable/arrow_down_float" />
+        </LinearLayout>
 
-    </LinearLayout>
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end|center_vertical"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <ImageButton
+                android:id="@+id/btn_refresh"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:background="@null"
+                android:contentDescription="刷新任务"
+                android:scaleType="centerInside"
+                android:src="@android:drawable/stat_notify_sync" />
+
+            <ImageButton
+                android:id="@+id/btn_home"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:background="@null"
+                android:contentDescription="打开首页"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_home_white" />
+
+            <ImageButton
+                android:id="@+id/btn_add_task"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:background="@null"
+                android:contentDescription="添加任务"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_add_white" />
+        </LinearLayout>
+    </FrameLayout>
 
     <ListView
         android:id="@+id/task_list"
@@ -60,7 +93,6 @@
         android:gravity="center"
         android:textColor="#888888"
         android:textSize="12sp"
-        android:layout_marginTop="4dp"
-        android:text="暂无待办事项" />
+        android:layout_marginTop="4dp" />
 
 </LinearLayout>

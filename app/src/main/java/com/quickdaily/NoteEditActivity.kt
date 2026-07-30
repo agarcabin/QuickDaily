@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
@@ -55,12 +56,15 @@ import com.quickdaily.util.ContentUtil
 import com.quickdaily.util.ImageUtil
 import com.quickdaily.util.DiaryAppendUtil
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.Image
 import androidx.compose.runtime.snapshots.SnapshotStateList
@@ -78,6 +82,8 @@ import kotlinx.coroutines.flow.take
 class NoteEditActivity : ComponentActivity() {
     companion object {
         const val EXTRA_RETURN_TO_HOME = "return_to_home"
+        const val EXTRA_TARGET_RELATIVE_PATH = "target_relative_path"
+        const val EXTRA_DIALOG_TITLE = "dialog_title"
     }
 
     private var noteText by mutableStateOf("")
@@ -89,6 +95,9 @@ class NoteEditActivity : ComponentActivity() {
     private var noteSaveInProgress = false
     private var noteEnterToSave by mutableStateOf(false)
     private var returnToHomeAfterClose = false
+    private var targetRelativePath by mutableStateOf<String?>(null)
+    private var targetOptions by mutableStateOf<List<FloatingNoteTargetOption>>(emptyList())
+    private var dialogTitle by mutableStateOf("速记")
 
     private val imagePicker = registerForActivityResult(
         ActivityResultContracts.GetMultipleContents()
@@ -117,6 +126,14 @@ class NoteEditActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         returnToHomeAfterClose = intent.getBooleanExtra(EXTRA_RETURN_TO_HOME, false)
+        targetRelativePath = intent.getStringExtra(EXTRA_TARGET_RELATIVE_PATH)
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+        targetOptions = FloatingNoteTargetStore.options(this, targetRelativePath)
+        dialogTitle = intent.getStringExtra(EXTRA_DIALOG_TITLE)
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: FloatingNoteTargetStore.titleFor(this, targetRelativePath)
         val prefillTxt = intent.getStringExtra("prefill_text") ?: ""
         if (prefillTxt.isNotBlank()) noteText = prefillTxt
         val prefs = getSharedPreferences("QuickDaily", 0)
@@ -159,15 +176,31 @@ class NoteEditActivity : ComponentActivity() {
                         text = noteText,
                         onTextChange = { noteText = it },
                         enterToSave = noteEnterToSave,
+                        title = dialogTitle,
+                        targetPath = targetRelativePath,
+                        targetOptions = targetOptions,
+                        onTargetChange = { option ->
+                            targetRelativePath = option.path
+                            dialogTitle = option.title
+                        },
+                        onAddCustomPage = {
+                            customPagePicker.launch(arrayOf("text/*", "application/octet-stream", "*/*"))
+                        },
+                        onRemoveTarget = { path ->
+                            if (targetRelativePath == path) {
+                                targetRelativePath = null
+                                dialogTitle = FloatingNoteTargetStore.titleFor(this@NoteEditActivity, null)
+                            }
+                            TaskWidgetConfigStore.removeCustomPage(this@NoteEditActivity, path)
+                            targetOptions = FloatingNoteTargetStore.options(this@NoteEditActivity, targetRelativePath)
+                        },
                         onSave = {
                     if (hasRealContent(noteText) || selectedImages.isNotEmpty() || pendingAttachments.isNotEmpty()) appendToDiary(noteText.trim())
                     else finishEditor()
                         },
                         onClose = { finishEditor() },
                         onHome = {
-                            startActivity(Intent(this@NoteEditActivity, MainActivity::class.java).apply {
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                            })
+                            startActivity(MainActivity.editorIntent(this@NoteEditActivity, targetRelativePath))
                             finish()
                         },
                         imageUris = selectedImages,
@@ -188,6 +221,18 @@ class NoteEditActivity : ComponentActivity() {
         }
     }
 
+    private val customPagePicker = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        val path = uri?.let { TaskWidgetConfigStore.filePathFromUri(this, it) }
+        if (path != null) {
+            TaskWidgetConfigStore.recordCustomPage(this, path)
+            targetRelativePath = path
+            dialogTitle = FloatingNoteTargetStore.titleFor(this, path)
+            targetOptions = FloatingNoteTargetStore.options(this, targetRelativePath)
+        }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -200,13 +245,7 @@ class NoteEditActivity : ComponentActivity() {
 
     private fun finishEditor() {
         if (returnToHomeAfterClose) {
-            startActivity(Intent(this, MainActivity::class.java).apply {
-                addFlags(
-                    Intent.FLAG_ACTIVITY_NEW_TASK or
-                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                        Intent.FLAG_ACTIVITY_SINGLE_TOP
-                )
-            })
+            startActivity(MainActivity.editorIntent(this, targetRelativePath))
         }
         finish()
     }
@@ -222,7 +261,8 @@ class NoteEditActivity : ComponentActivity() {
             when (val result = FloatingNoteSaveUseCase(this@NoteEditActivity).save(
                 text,
                 selectedImages.toList(),
-                pendingAttachments.toList()
+                pendingAttachments.toList(),
+                targetRelativePath = targetRelativePath,
             )) {
                 FloatingNoteSaveResult.Saved -> {
                     selectedImages.clear()
@@ -323,6 +363,13 @@ fun NoteEditDialog(
     text: String,
     onTextChange: (String) -> Unit,
     enterToSave: Boolean,
+    title: String = "速记",
+    targetPath: String? = null,
+    targetOptions: List<FloatingNoteTargetOption> = emptyList(),
+    onTargetChange: (FloatingNoteTargetOption) -> Unit = {},
+    onAddCustomPage: () -> Unit = {},
+    onRemoveTarget: (String) -> Unit = {},
+    useInlineTargetMenu: Boolean = false,
     onSave: () -> Unit,
     onClose: () -> Unit,
     onHome: () -> Unit,
@@ -342,6 +389,7 @@ fun NoteEditDialog(
     val imeInsets = WindowInsets.ime
     var focusRequested by remember { mutableStateOf(false) }
     var imeShowRequested by remember { mutableStateOf(false) }
+    var targetMenuExpanded by remember { mutableStateOf(false) }
     var tfv by remember { mutableStateOf(TextFieldValue(text, TextRange(text.length))) }
     val localUndoStack = remember { mutableStateListOf<String>() }
     val localRedoStack = remember { mutableStateListOf<String>() }
@@ -446,6 +494,7 @@ fun NoteEditDialog(
         shape = RoundedCornerShape(dim.radiusXl),
         shadowElevation = 0.dp
     ) {
+        Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().padding(10.dp)) {
                     Box(Modifier.fillMaxWidth()) {
                 TextButton(
@@ -456,10 +505,40 @@ fun NoteEditDialog(
                 ) {
                     Text("首页", color = floater.primary, style = MaterialTheme.typography.labelSmall)
                 }
-                Text("速记", style = MaterialTheme.typography.labelMedium, color = floater.onSurfaceVariant, modifier = Modifier.align(Alignment.Center))
+                Row(
+                    modifier = Modifier.align(Alignment.Center),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        title.ifBlank { "速记" },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = floater.onSurfaceVariant,
+                    )
+                    IconButton(onClick = { targetMenuExpanded = true }) {
+                        Icon(
+                            Icons.Default.KeyboardArrowDown,
+                            contentDescription = "选择记录页面",
+                            tint = floater.onSurfaceVariant,
+                        )
+                    }
+                }
                 TextButton(onClick = {
                     onClose()
                 }, modifier = Modifier.align(Alignment.CenterEnd)) { Text("关闭", color = floater.onBackgroundVariant, style = MaterialTheme.typography.labelSmall) }
+            }
+
+            if (targetMenuExpanded && !useInlineTargetMenu) {
+                Dialog(onDismissRequest = { targetMenuExpanded = false }) {
+                    TargetSelectionSurface(
+                        modifier = Modifier.fillMaxWidth(0.86f),
+                        targetPath = targetPath,
+                        targetOptions = targetOptions,
+                        onTargetChange = onTargetChange,
+                        onAddCustomPage = onAddCustomPage,
+                        onRemoveTarget = onRemoveTarget,
+                        onDismiss = { targetMenuExpanded = false },
+                    )
+                }
             }
 
 
@@ -676,6 +755,109 @@ fun NoteEditDialog(
                     Icon(Icons.Default.Check, "保存", tint = floater.primary, modifier = Modifier.size(dim.iconMd))
                 }
             } // end toolbar Row
+        }
+
+        if (targetMenuExpanded && useInlineTargetMenu) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.18f))
+                    .clickable { targetMenuExpanded = false },
+            )
+            TargetSelectionSurface(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .fillMaxWidth(0.86f),
+                targetPath = targetPath,
+                targetOptions = targetOptions,
+                onTargetChange = onTargetChange,
+                onAddCustomPage = onAddCustomPage,
+                onRemoveTarget = onRemoveTarget,
+                onDismiss = { targetMenuExpanded = false },
+            )
+        }
+        }
+    }
+}
+
+@Composable
+private fun TargetSelectionSurface(
+    modifier: Modifier,
+    targetPath: String?,
+    targetOptions: List<FloatingNoteTargetOption>,
+    onTargetChange: (FloatingNoteTargetOption) -> Unit,
+    onAddCustomPage: () -> Unit,
+    onRemoveTarget: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val floater = LocalFloaterColors.current
+    val dim = LocalAppDimensions.current
+
+    Surface(
+        modifier = modifier,
+        color = floater.background,
+        shape = RoundedCornerShape(dim.radiusXl),
+        shadowElevation = 8.dp,
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Text(
+                "记录到",
+                style = MaterialTheme.typography.titleMedium,
+                color = floater.onBackground,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+            )
+            LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
+                items(
+                    targetOptions,
+                    key = { option -> option.path ?: "today" },
+                ) { option ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 52.dp)
+                            .clickable {
+                                onDismiss()
+                                onTargetChange(option)
+                            },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (targetPath == option.path) {
+                            Icon(
+                                Icons.Default.Check,
+                                contentDescription = "当前页面",
+                                tint = floater.primary,
+                                modifier = Modifier.padding(horizontal = 8.dp),
+                            )
+                        } else {
+                            Spacer(Modifier.width(40.dp))
+                        }
+                        Text(
+                            option.menuTitle,
+                            color = floater.onBackground,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (option.path != null) {
+                            IconButton(onClick = { onRemoveTarget(option.path) }) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "删除页面记录",
+                                    tint = floater.onBackgroundVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            HorizontalDivider()
+            TextButton(
+                onClick = {
+                    onDismiss()
+                    onAddCustomPage()
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("添加自定义页面", color = floater.primary)
+            }
         }
     }
 }

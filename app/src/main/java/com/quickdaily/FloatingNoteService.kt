@@ -13,6 +13,9 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.setViewTreeLifecycleOwner
@@ -30,6 +33,7 @@ class FloatingNoteService : LifecycleService() {
     private lateinit var state: FloatingNoteEditorState
     private lateinit var viewTreeOwner: FloatingNoteViewTreeOwner
     private val saveUseCase by lazy { FloatingNoteSaveUseCase(applicationContext) }
+    private var targetOptions by mutableStateOf<List<FloatingNoteTargetOption>>(emptyList())
 
     override fun onCreate() {
         super.onCreate()
@@ -53,11 +57,19 @@ class FloatingNoteService : LifecycleService() {
                     state,
                     FloatingNoteRequest(FloatingNoteSource.SIDEBAR, returnToHomeAfterClose = false)
                 )
+                targetOptions = FloatingNoteTargetStore.options(this, state.targetRelativePath)
                 ensureOverlay()
             }
             else -> {
                 val request = requestFromIntent(intent)
-                FloatingNoteDraftStore.loadInto(this, state, request)
+                if (FloatingNotePolicy.shouldLoadNewRequest(overlayView != null)) {
+                    FloatingNoteDraftStore.loadInto(this, state, request)
+                } else {
+                    BetaLogger.log(
+                        "FloatingNote/Window",
+                        "focus existing; ignore new target=${request.targetRelativePath}",
+                    )
+                }
                 ensureOverlay()
             }
         }
@@ -72,6 +84,7 @@ class FloatingNoteService : LifecycleService() {
         }
 
         try {
+            targetOptions = FloatingNoteTargetStore.options(this, state.targetRelativePath)
             // Launcher starts this service from a user-visible Activity. Starting the
             // foreground service immediately keeps the overlay alive on Android 14+.
             FloatingNoteTiming.mark("foreground_start")
@@ -99,6 +112,30 @@ class FloatingNoteService : LifecycleService() {
                                     FloatingNoteDraftStore.persist(this@FloatingNoteService, state)
                                 },
                                 enterToSave = state.enterToSave,
+                                title = state.displayTitle.orEmpty(),
+                                targetPath = state.targetRelativePath,
+                                targetOptions = targetOptions,
+                                onTargetChange = { option ->
+                                    state.targetRelativePath = option.path
+                                    state.displayTitle = option.title
+                                    FloatingNoteDraftStore.persist(this@FloatingNoteService, state)
+                                },
+                                onAddCustomPage = {
+                                    openPicker(FloatingNotePickerActivity.MODE_CUSTOM_PAGE)
+                                },
+                                onRemoveTarget = { path ->
+                                    if (state.targetRelativePath == path) {
+                                        state.targetRelativePath = null
+                                        state.displayTitle = FloatingNoteTargetStore.titleFor(this@FloatingNoteService, null)
+                                        FloatingNoteDraftStore.persist(this@FloatingNoteService, state)
+                                    }
+                                    TaskWidgetConfigStore.removeCustomPage(this@FloatingNoteService, path)
+                                    targetOptions = FloatingNoteTargetStore.options(
+                                        this@FloatingNoteService,
+                                        state.targetRelativePath,
+                                    )
+                                },
+                                useInlineTargetMenu = true,
                                 onSave = { saveDraft() },
                                 onClose = { finishFromClose() },
                                 onHome = { openHome() },
@@ -168,7 +205,8 @@ class FloatingNoteService : LifecycleService() {
             val result = saveUseCase.save(
                 state.text,
                 state.selectedImages.toList(),
-                state.pendingAttachments.toList()
+                state.pendingAttachments.toList(),
+                targetRelativePath = state.targetRelativePath,
             )
             withContext(Dispatchers.Main) {
                 FloatingNoteTiming.mark("save_use_case_done", "result=${result::class.simpleName}")
@@ -207,9 +245,7 @@ class FloatingNoteService : LifecycleService() {
 
     private fun openHome() {
         FloatingNoteDraftStore.persist(this, state)
-        startActivity(Intent(this, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        })
+        startActivity(MainActivity.editorIntent(this, state.targetRelativePath))
         hideOverlay("home")
     }
 
@@ -249,7 +285,9 @@ class FloatingNoteService : LifecycleService() {
         return FloatingNoteRequest(
             source = source,
             prefillText = intent?.getStringExtra(EXTRA_PREFILL).orEmpty(),
-            returnToHomeAfterClose = intent?.getBooleanExtra(EXTRA_RETURN_HOME, false) ?: false
+            returnToHomeAfterClose = intent?.getBooleanExtra(EXTRA_RETURN_HOME, false) ?: false,
+            targetRelativePath = intent?.getStringExtra(EXTRA_TARGET_PATH),
+            displayTitle = intent?.getStringExtra(EXTRA_DISPLAY_TITLE),
         )
     }
 
@@ -293,6 +331,8 @@ class FloatingNoteService : LifecycleService() {
         private const val EXTRA_SOURCE = "floating_source"
         private const val EXTRA_PREFILL = "floating_prefill"
         private const val EXTRA_RETURN_HOME = "floating_return_home"
+        private const val EXTRA_TARGET_PATH = "floating_target_path"
+        private const val EXTRA_DISPLAY_TITLE = "floating_display_title"
         private const val EXTRA_REASON = "floating_reason"
 
         @Volatile
@@ -304,6 +344,8 @@ class FloatingNoteService : LifecycleService() {
                 putExtra(EXTRA_SOURCE, request.source.name)
                 putExtra(EXTRA_PREFILL, request.prefillText)
                 putExtra(EXTRA_RETURN_HOME, request.returnToHomeAfterClose)
+                putExtra(EXTRA_TARGET_PATH, request.targetRelativePath)
+                putExtra(EXTRA_DISPLAY_TITLE, request.displayTitle)
             }
 
         fun hideIntent(context: Context, reason: String): Intent =

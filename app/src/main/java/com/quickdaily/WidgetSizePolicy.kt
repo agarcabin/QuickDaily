@@ -12,6 +12,7 @@ data class WidgetSize(
 ) {
     val isNarrow: Boolean get() = widthDp < 220
     val isTiny: Boolean get() = widthDp < 150
+    val isVeryNarrow: Boolean get() = widthDp < 180
     val isShort: Boolean get() = heightDp < 120
     val readMaxLines: Int get() = if (isTiny || isShort) 1 else 3
     val taskMaxLines: Int get() = if (isTiny) 1 else 2
@@ -46,7 +47,11 @@ object WidgetSizePolicy {
     }
 
     fun applyTaskChrome(views: RemoteViews, size: WidgetSize) {
+        // Keep the requested priority on small launchers: add > title/list >
+        // scope > home > refresh.
         views.setViewVisibility(R.id.btn_refresh, if (size.isNarrow) View.GONE else View.VISIBLE)
+        views.setViewVisibility(R.id.btn_home, if (size.isVeryNarrow) View.GONE else View.VISIBLE)
+        views.setViewVisibility(R.id.btn_scope, if (size.isTiny) View.GONE else View.VISIBLE)
         views.setFloat(R.id.widget_title, "setTextSize", if (size.isTiny) 11f else 13f)
     }
 }
