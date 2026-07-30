@@ -523,7 +523,13 @@ fun NoteEditDialog(
                         onTextChange(newText)
                     }
             },
-                keyboardOptions = KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Done),
+                keyboardOptions = KeyboardOptions(
+                    imeAction = if (enterToSave) {
+                        androidx.compose.ui.text.input.ImeAction.Done
+                    } else {
+                        androidx.compose.ui.text.input.ImeAction.Default
+                    }
+                ),
                 keyboardActions = KeyboardActions(onDone = { if (enterToSave) saveOrClose() }),
                 textStyle = TextStyle(fontSize = 15.sp, lineHeight = 22.sp, color = floater.onBackground),
                 cursorBrush = SolidColor(FloatingCursorPolicy.colorFor(floater.background)),

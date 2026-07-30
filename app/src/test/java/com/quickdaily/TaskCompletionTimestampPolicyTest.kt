@@ -1,0 +1,50 @@
+package com.quickdaily
+
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class TaskCompletionTimestampPolicyTest {
+    @Test
+    fun disabledLeavesTaskUnchanged() {
+        val line = "- [X] Buy milk"
+
+        assertEquals(
+            line,
+            TaskCompletionTimestampPolicy.appendIfEnabled(line, enabled = false, date = "2026-07-30")
+        )
+    }
+
+    @Test
+    fun enabledAppendsIsoDateToTaskEnd() {
+        assertEquals(
+            "- [X] Buy milk ✅️ 2026-07-30",
+            TaskCompletionTimestampPolicy.appendIfEnabled(
+                line = "- [X] Buy milk",
+                enabled = true,
+                date = "2026-07-30"
+            )
+        )
+    }
+
+    @Test
+    fun existingTimestampIsNotDuplicated() {
+        val line = "- [X] Buy milk ✅️2026-07-29"
+
+        assertEquals(
+            line,
+            TaskCompletionTimestampPolicy.appendIfEnabled(line, enabled = true, date = "2026-07-30")
+        )
+    }
+
+    @Test
+    fun trailingWhitespaceIsRemovedBeforeAppending() {
+        assertEquals(
+            "- [X] Buy milk ✅️ 2026-07-30",
+            TaskCompletionTimestampPolicy.appendIfEnabled(
+                line = "- [X] Buy milk   ",
+                enabled = true,
+                date = "2026-07-30"
+            )
+        )
+    }
+}

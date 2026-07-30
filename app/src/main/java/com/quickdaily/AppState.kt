@@ -42,6 +42,7 @@ data class DiaryConfig(
     val loggingEnabled: Boolean = false,
     val taskPeriod: String = "today",
     val taskCompletionSound: Boolean = true,
+    val taskCompletionTimestamp: Boolean = false,
     val widgetStyle: String = "dark",
     val widgetBackgroundColor: Long = 0xFF202124L,
     val widgetOpacity: Int = 100
@@ -143,6 +144,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
             loggingEnabled = prefs.getBoolean("logging_enabled", false),
             taskPeriod = prefs.getString("task_period", "today") ?: "today",
             taskCompletionSound = prefs.getBoolean(TaskCompletionSoundPolicy.PREF_KEY, TaskCompletionSoundPolicy.DEFAULT_ENABLED),
+            taskCompletionTimestamp = prefs.getBoolean(TaskCompletionTimestampPolicy.PREF_KEY, TaskCompletionTimestampPolicy.DEFAULT_ENABLED),
             widgetStyle = prefs.getString("widget_style", "dark") ?: "dark",
             widgetBackgroundColor = prefs.getLong("widget_background_color", 0xFF202124L),
             widgetOpacity = prefs.getInt("widget_opacity", 100).coerceIn(0, 100)
@@ -174,6 +176,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
             loggingEnabled = raw.loggingEnabled,
             taskPeriod = raw.taskPeriod,
             taskCompletionSound = raw.taskCompletionSound,
+            taskCompletionTimestamp = raw.taskCompletionTimestamp,
             widgetStyle = raw.widgetStyle,
             widgetBackgroundColor = raw.widgetBackgroundColor,
             widgetOpacity = raw.widgetOpacity.coerceIn(0, 100)
@@ -202,6 +205,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
             .putBoolean("logging_enabled", config.loggingEnabled)
             .putString("task_period", config.taskPeriod)
             .putBoolean(TaskCompletionSoundPolicy.PREF_KEY, config.taskCompletionSound)
+            .putBoolean(TaskCompletionTimestampPolicy.PREF_KEY, config.taskCompletionTimestamp)
             .putString("widget_style", config.widgetStyle)
             .putLong("widget_background_color", config.widgetBackgroundColor)
             .putInt("widget_opacity", config.widgetOpacity.coerceIn(0, 100))

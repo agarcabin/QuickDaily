@@ -313,6 +313,7 @@ fun SettingsScreen(
                             loggingEnabled = config.loggingEnabled,
                             taskPeriod = config.taskPeriod,
                             taskCompletionSound = config.taskCompletionSound,
+                            taskCompletionTimestamp = config.taskCompletionTimestamp,
                             widgetStyle = config.widgetStyle,
                             widgetBackgroundColor = config.widgetBackgroundColor,
                             widgetOpacity = config.widgetOpacity,
@@ -476,6 +477,7 @@ fun SettingsScreen(
         loggingEnabled = config.loggingEnabled,
         taskPeriod = config.taskPeriod,
         taskCompletionSound = config.taskCompletionSound,
+        taskCompletionTimestamp = config.taskCompletionTimestamp,
         widgetStyle = config.widgetStyle,
         widgetBackgroundColor = config.widgetBackgroundColor,
         widgetOpacity = config.widgetOpacity
@@ -1374,6 +1376,22 @@ private fun WidgetsTab(
                         )
                     }
                 )
+                HorizontalDivider()
+                ListItem(
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    headlineContent = { Text("完成时间戳") },
+                    supportingContent = {
+                        Text("从任务小部件完成任务时，在任务末尾添加 ✅️ yyyy-MM-dd")
+                    },
+                    trailingContent = {
+                        Switch(
+                            checked = config.taskCompletionTimestamp,
+                            onCheckedChange = {
+                                onConfigChange(config.copy(taskCompletionTimestamp = it))
+                            }
+                        )
+                    }
+                )
             }
         }
 
@@ -1558,10 +1576,24 @@ private fun OtherTab(
             ),
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("QuickDaily 1.7.4-beta", style = MaterialTheme.typography.titleMedium)
+                Text("QuickDaily ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleMedium)
 
                 Text("更新内容：", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                Text("1.7:\n" +
+                Text("1.8:\n" +
+                    "• 新增 小部件大小调整支持自适应\n" +
+                    "• 新增 任务小部件滴声开关\n" +
+                    "• 新增 任务小部件完成时间戳\n" +
+                    "• 新增 自定义ob配置文件路径\n" +
+                    "• 新增 系统自带侧边栏启动器触发悬浮窗\n" +
+                    "• 调整 悬浮窗光标颜色自适应\n" +
+                    "• 调整 更完整的调试日志收集\n" +
+                    "• 调整 降低小部件刷新频率，防止小部件卡死\n" +
+                    "• 调整 配置文件统一存放目录 0/Document/QuickDaily\n" +
+                    "• 调整 首页调整为悬浮窗，原首页调整为次级编辑器页面，入口在悬浮窗左上角\n" +
+                    "• 修复 快速添加（桌面图标）添加失败\n" +
+                    "• 修复 图片堆积BUG\n" +
+                    "• 修复 小部件回车换行失效\n\n" +
+                    "1.7:\n" +
                     "• 修复 日记模板路径选择器选择异常\n" +
                     "• 修复 撤销按钮对md符号失效\n" +
                     "• 修复 设置界面多余的横线\n" +

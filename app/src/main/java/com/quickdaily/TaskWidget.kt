@@ -265,7 +265,15 @@ class TaskWidget : AppWidgetProvider() {
 
             // Change - [ ] to - [x]
             val oldLine = lines[foundIdx]
-            lines[foundIdx] = oldLine.replaceFirst("- [ ] ", "- [X] ")
+            val completedLine = oldLine.replaceFirst("- [ ] ", "- [X] ")
+            lines[foundIdx] = TaskCompletionTimestampPolicy.appendIfEnabled(
+                line = completedLine,
+                enabled = prefs.getBoolean(
+                    TaskCompletionTimestampPolicy.PREF_KEY,
+                    TaskCompletionTimestampPolicy.DEFAULT_ENABLED
+                ),
+                date = com.quickdaily.util.DateUtil.todayStr("yyyy-MM-dd")
+            )
             val newBody = lines.joinToString("\n")
             val saveContent = if (parsed.hasFrontmatter) {
                 ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, newBody)
