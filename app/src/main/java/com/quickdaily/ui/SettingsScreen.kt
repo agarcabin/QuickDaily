@@ -16,6 +16,10 @@ import android.provider.Settings
 import android.provider.MediaStore
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import android.graphics.Bitmap
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.text.KeyboardActions
@@ -24,6 +28,7 @@ import androidx.compose.ui.text.input.ImeAction
 import java.io.File
 import java.io.FileOutputStream
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -33,6 +38,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
@@ -41,22 +47,36 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import com.quickdaily.R
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
+import kotlin.math.roundToInt
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.quickdaily.AppState
 import com.quickdaily.BuildConfig
 import com.quickdaily.DiaryConfig
+import com.quickdaily.EditorToolbarAction
+import com.quickdaily.EditorToolbarPolicy
+import com.quickdaily.WikilinkIndexRepository
+import com.quickdaily.HomeEntryMode
 import com.quickdaily.ObsidianConfigReadStatus
 import com.quickdaily.QuickNoteWidget
+import com.quickdaily.WidgetImageFileResolver
 import com.quickdaily.QuickDailyReadWidget
 import com.quickdaily.TaskWidget
 import com.quickdaily.ShortcutPinResultReceiver
@@ -80,6 +100,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.pager.HorizontalPager
@@ -170,6 +191,8 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val navBarColorS = MaterialTheme.colorScheme.surface.toArgb()
+    val windowSize = rememberQuickDailyWindowSize()
+    val topBarScrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     SideEffect {
         try {
             val window = (context as? Activity)?.window ?: return@SideEffect
@@ -306,14 +329,20 @@ fun SettingsScreen(
                             filterFrontmatter = config.filterFrontmatter,
                             imageStoragePath = imageStoragePath.trim(),
                             imageNamingFormat = config.imageNamingFormat,
-                            imageLinkFormat = if (appCfg?.useMarkdownLinks == true) "described" else config.imageLinkFormat,
-                            tagAutocomplete = config.tagAutocomplete,
-                            systemSidebarSupport = config.systemSidebarSupport,
+                             imageLinkFormat = if (appCfg?.useMarkdownLinks == true) "described" else config.imageLinkFormat,
+                             tagAutocomplete = config.tagAutocomplete,
+                             wikilinkAutocomplete = config.wikilinkAutocomplete,
+                             systemSidebarSupport = config.systemSidebarSupport,
+                            homeEntryMode = config.homeEntryMode,
+                            toolbarOrder = config.toolbarOrder,
+                            toolbarVisible = config.toolbarVisible,
                             imageCustomNamingFormat = config.imageCustomNamingFormat,
                             loggingEnabled = config.loggingEnabled,
                             taskPeriod = config.taskPeriod,
                             taskCompletionSound = config.taskCompletionSound,
                             taskCompletionTimestamp = config.taskCompletionTimestamp,
+                            taskShowCompleted = config.taskShowCompleted,
+                            taskShowFullContent = config.taskShowFullContent,
                             widgetStyle = config.widgetStyle,
                             widgetBackgroundColor = config.widgetBackgroundColor,
                             widgetOpacity = config.widgetOpacity,
@@ -470,14 +499,20 @@ fun SettingsScreen(
         filterFrontmatter = config.filterFrontmatter,
         imageStoragePath = imageStoragePath.trim(),
         imageNamingFormat = config.imageNamingFormat,
-        imageLinkFormat = config.imageLinkFormat,
-        imageCustomNamingFormat = config.imageCustomNamingFormat,
-        tagAutocomplete = config.tagAutocomplete,
-        systemSidebarSupport = config.systemSidebarSupport,
-        loggingEnabled = config.loggingEnabled,
+          imageLinkFormat = config.imageLinkFormat,
+          imageCustomNamingFormat = config.imageCustomNamingFormat,
+          tagAutocomplete = config.tagAutocomplete,
+          wikilinkAutocomplete = config.wikilinkAutocomplete,
+          systemSidebarSupport = config.systemSidebarSupport,
+         homeEntryMode = config.homeEntryMode,
+         toolbarOrder = config.toolbarOrder,
+         toolbarVisible = config.toolbarVisible,
+         loggingEnabled = config.loggingEnabled,
         taskPeriod = config.taskPeriod,
         taskCompletionSound = config.taskCompletionSound,
         taskCompletionTimestamp = config.taskCompletionTimestamp,
+        taskShowCompleted = config.taskShowCompleted,
+        taskShowFullContent = config.taskShowFullContent,
         widgetStyle = config.widgetStyle,
         widgetBackgroundColor = config.widgetBackgroundColor,
         widgetOpacity = config.widgetOpacity
@@ -487,31 +522,46 @@ fun SettingsScreen(
         appState.saveConfig(buildConfig())
     }
 
+    fun saveAndBack() {
+        saveFull()
+        onBack()
+    }
+
+    BackHandler(onBack = ::saveAndBack)
+
     Scaffold(
+        modifier = Modifier.nestedScroll(topBarScrollBehavior.nestedScrollConnection),
         topBar = {
-            TopAppBar(
+            LargeTopAppBar(
                 title = { Text("设置") },
                 navigationIcon = {
-                    IconButton(onClick = { saveFull(); onBack() }) {
+                    IconButton(onClick = ::saveAndBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
                     }
                 },
                 actions = {
-                    IconButton(onClick = { saveFull(); onBack() }) {
+                    IconButton(onClick = ::saveAndBack) {
                         Icon(Icons.Default.Check, "保存")
                     }
                 },
+                scrollBehavior = topBarScrollBehavior,
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
-                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                    actionIconContentColor = MaterialTheme.colorScheme.onSurface
                 )
             )
         }
     ) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            TabRow(selectedTabIndex = pagerState.currentPage) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .then(if (windowSize.isLarge) Modifier.widthIn(max = 1200.dp) else Modifier),
+        ) {
+            PrimaryTabRow(selectedTabIndex = pagerState.currentPage) {
                 tabs.forEachIndexed { index, title ->
                     Tab(
                         selected = pagerState.currentPage == index,
@@ -578,12 +628,14 @@ fun SettingsScreen(
                         onSave = { saveFull(); onBack() },
                         vaultEnabled = vaultPath.isNotBlank()
                     )
-                    1 -> EditorSettingsTab(
+                   1 -> EditorSettingsTab(
+                        vaultPath = vaultPath,
                         config = config,
                         anchorText = anchorText,
                         onAnchorTextChange = { anchorText = it },
                         onConfigChange = { newCfg -> appState.saveConfig(newCfg) },
-                        onSave = { saveFull(); onBack() }
+                        onRefreshWikilinkIndex = { WikilinkIndexRepository.refresh(context, vaultPath) },
+                        onSave = ::saveAndBack
                    )
                    2 -> key(widgetImageUri) {
                        WidgetsTab(
@@ -599,8 +651,7 @@ fun SettingsScreen(
                            onResetImage = {
                                widgetImageUri = ""
                                appState.saveConfig(config.copy(widgetImageUri = ""))
-                               val f = java.io.File(context.filesDir, "widget_image.jpg")
-                               try { f.delete() } catch (_: Exception) { }
+                               WidgetImageFileResolver.clearInternalCrops(context)
                                QuickNoteWidget.updateAllWidgets(context)
                                ShortcutHelper.updateAllShortcuts(context)
                            },
@@ -946,13 +997,16 @@ private fun DiaryStorageTab(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EditorSettingsTab(
+    vaultPath: String,
     config: DiaryConfig,
     anchorText: String,
     onAnchorTextChange: (String) -> Unit,
     onConfigChange: (DiaryConfig) -> Unit,
+    onRefreshWikilinkIndex: () -> Unit,
     onSave: () -> Unit,
 ) {
     val context = LocalContext.current
+    val wikilinkIndex by WikilinkIndexRepository.indexState.collectAsState()
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -1048,7 +1102,7 @@ private fun EditorSettingsTab(
             }
         }
 
-        Text("编辑器设置", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                Text("编辑器设置", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
         ElevatedCard(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -1056,6 +1110,26 @@ private fun EditorSettingsTab(
             ),
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
+                Text("app首页选择", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    "只影响从桌面图标启动 QuickDaily；其他快捷入口保持原行为。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    SegmentedButton(
+                        selected = HomeEntryMode.fromKey(config.homeEntryMode) == HomeEntryMode.OVERLAY,
+                        onClick = { onConfigChange(config.copy(homeEntryMode = HomeEntryMode.OVERLAY.key)) },
+                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                    ) { Text(HomeEntryMode.OVERLAY.label) }
+                    SegmentedButton(
+                        selected = HomeEntryMode.fromKey(config.homeEntryMode) == HomeEntryMode.EDITOR,
+                        onClick = { onConfigChange(config.copy(homeEntryMode = HomeEntryMode.EDITOR.key)) },
+                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                    ) { Text(HomeEntryMode.EDITOR.label) }
+                }
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
                 ListItem(colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                     headlineContent = { Text("过滤 Frontmatter") },
                     supportingContent = { Text("编辑时隐藏日记文件头部元数据。但有可能造成元数据多次写入。") },
@@ -1068,12 +1142,52 @@ private fun EditorSettingsTab(
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                 ListItem(colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                     headlineContent = { Text("标签自动补全") },
-                    supportingContent = { Text("输入#时，自动补全已有标签。开启后会影响启动速度，酌情选择。") },
+                    supportingContent = { Text("输入#时补全索引中的标签。索引需要在下方手动刷新。") },
                     trailingContent = {
                         Switch(checked = config.tagAutocomplete, onCheckedChange = {
                             onConfigChange(config.copy(tagAutocomplete = it))
                         })
                     }
+                )
+                ListItem(colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    headlineContent = { Text("双链自动补全") },
+                    supportingContent = { Text("输入[[时，补全索引中的 Markdown 页面。") },
+                    trailingContent = {
+                        Switch(checked = config.wikilinkAutocomplete, onCheckedChange = {
+                            onConfigChange(config.copy(wikilinkAutocomplete = it))
+                        })
+                    }
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                EditorToolbarSettingsEntry(
+                    config = config,
+                    onConfigChange = onConfigChange,
+                )
+                Spacer(Modifier.height(8.dp))
+                ListItem(
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                     headlineContent = { Text("双链和标签补全索引") },
+                     supportingContent = {
+                         Text(
+                             when {
+                                 vaultPath.isBlank() -> "请先设置仓库路径"
+                                 wikilinkIndex.rootPath == vaultPath && wikilinkIndex.loading -> "正在扫描 Markdown 页面和标签"
+                                 wikilinkIndex.rootPath == vaultPath && wikilinkIndex.error != null -> wikilinkIndex.error!!
+                                 wikilinkIndex.rootPath == vaultPath && wikilinkIndex.indexed && wikilinkIndex.tagsIndexed -> "已索引 ${wikilinkIndex.entries.size} 个页面，${wikilinkIndex.aliasCount} 个别称，${wikilinkIndex.tags.size} 个标签"
+                                 wikilinkIndex.rootPath == vaultPath && wikilinkIndex.indexed -> "已索引 ${wikilinkIndex.entries.size} 个页面，${wikilinkIndex.aliasCount} 个别称；标签索引请手动刷新"
+                                 else -> "尚未刷新当前仓库的双链和标签索引"
+                             }
+                         )
+                    },
+                    trailingContent = {
+                        IconButton(
+                            onClick = onRefreshWikilinkIndex,
+                            enabled = vaultPath.isNotBlank() && !wikilinkIndex.loading,
+                        ) {
+                             Icon(Icons.Default.Refresh, contentDescription = "刷新双链和标签补全索引")
+                        }
+                    },
                 )
             }
         }
@@ -1118,6 +1232,252 @@ private fun EditorSettingsTab(
             Icon(Icons.Default.Check, null, Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
             Text("保存并返回")
+        }
+    }
+}
+
+@Composable
+private fun EditorToolbarSettingsEntry(
+    config: DiaryConfig,
+    onConfigChange: (DiaryConfig) -> Unit,
+) {
+    var dialogOpen by rememberSaveable { mutableStateOf(false) }
+
+    ListItem(
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+        modifier = Modifier.clickable { dialogOpen = true },
+        headlineContent = { Text("工具栏编辑") },
+        supportingContent = {
+            Text("设置编辑器和悬浮窗工具栏的显示内容与顺序")
+        },
+        trailingContent = {
+            Icon(Icons.Default.Tune, contentDescription = "打开工具栏编辑")
+        },
+    )
+
+    if (dialogOpen) {
+        EditorToolbarSettingsDialog(
+            config = config,
+            onConfigChange = onConfigChange,
+            onDismiss = { dialogOpen = false },
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun EditorToolbarSettingsDialog(
+    config: DiaryConfig,
+    onConfigChange: (DiaryConfig) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var order by remember(config.toolbarOrder) {
+        mutableStateOf(EditorToolbarPolicy.normalizeOrder(config.toolbarOrder).mapNotNull(EditorToolbarAction::fromId))
+    }
+    var visible by remember(config.toolbarVisible) {
+        mutableStateOf(EditorToolbarPolicy.normalizeVisible(config.toolbarVisible))
+    }
+    val scrollState = rememberScrollState()
+    val itemTops = remember { mutableStateMapOf<String, Int>() }
+    val itemHeights = remember { mutableStateMapOf<String, Int>() }
+    var draggedId by remember { mutableStateOf<String?>(null) }
+    var draggedOffset by remember { mutableFloatStateOf(0f) }
+    var draggedStartTop by remember { mutableIntStateOf(0) }
+    var draggedHeight by remember { mutableIntStateOf(0) }
+    val latestOrder by rememberUpdatedState(order)
+
+    val latestVisible by rememberUpdatedState(visible)
+    val visiblePositions = remember(order, visible) {
+        EditorToolbarPolicy.visiblePositions(order, visible)
+    }
+
+    fun saveToolbarConfig(
+        nextOrder: List<EditorToolbarAction> = order,
+        nextVisible: Set<String> = visible,
+    ) {
+        onConfigChange(
+            config.copy(
+                toolbarOrder = nextOrder.map { it.id },
+                toolbarVisible = nextVisible,
+            )
+        )
+    }
+
+    fun commitVisibility(nextVisible: Set<String>) {
+        visible = nextVisible
+        saveToolbarConfig(nextOrder = order, nextVisible = nextVisible)
+    }
+
+    fun dropOrder(): List<EditorToolbarAction> {
+        val currentDraggedId = draggedId ?: return latestOrder
+        val draggedCenter = draggedStartTop + draggedOffset + draggedHeight / 2f
+        val candidates = latestOrder
+            .filter { it.id != currentDraggedId }
+            .mapNotNull { action ->
+                val top = itemTops[action.id] ?: return@mapNotNull null
+                val height = itemHeights[action.id] ?: return@mapNotNull null
+                action to (top + height / 2f)
+            }
+        val targetInfo = if (draggedOffset >= 0f) {
+            candidates.lastOrNull { draggedCenter > it.second }
+        } else {
+            candidates.firstOrNull { draggedCenter < it.second }
+        } ?: return latestOrder
+        return EditorToolbarPolicy.move(
+            latestOrder,
+            draggedId = currentDraggedId,
+            targetId = targetInfo.first.id,
+        )
+    }
+
+    fun finishDrag(commitOrder: Boolean) {
+        val finalOrder = if (commitOrder) dropOrder() else latestOrder
+        if (commitOrder) {
+            order = finalOrder
+        }
+        val finalVisible = latestVisible
+        draggedId = null
+        draggedOffset = 0f
+        saveToolbarConfig(nextOrder = finalOrder, nextVisible = finalVisible)
+    }
+
+    fun resetToolbarConfig() {
+        val defaultOrder = EditorToolbarPolicy.defaultOrder
+        val defaultVisible = EditorToolbarPolicy.defaultVisible
+        draggedId = null
+        draggedOffset = 0f
+        order = defaultOrder
+        visible = defaultVisible
+        saveToolbarConfig(nextOrder = defaultOrder, nextVisible = defaultVisible)
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(0.92f).fillMaxHeight(0.82f),
+            shape = MaterialTheme.shapes.extraLarge,
+            tonalElevation = 6.dp,
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("工具栏编辑", style = MaterialTheme.typography.titleLarge)
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "关闭")
+                    }
+                }
+                Text(
+                    "长按左侧手柄拖动调整顺序，开关控制显示隐藏。修改会立即保存。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(scrollState),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    order.forEach { action ->
+                        key(action.id) {
+                            val isDragging = draggedId == action.id
+                            ListItem(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .onGloballyPositioned { coordinates ->
+                                        itemTops[action.id] = coordinates.positionInParent().y.roundToInt()
+                                        itemHeights[action.id] = coordinates.size.height
+                                    }
+                                    // Avoid placement animation during reordering; combining it with
+                                    // the dragged offset can leave a stale item layer behind.
+                                    .zIndex(if (isDragging) 1f else 0f)
+                                    .offset { IntOffset(0, if (isDragging) draggedOffset.roundToInt() else 0) },
+                                leadingContent = {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .pointerInput(action.id) {
+                                                detectDragGesturesAfterLongPress(
+                                                    onDragStart = {
+                                                        draggedId = action.id
+                                                        draggedOffset = 0f
+                                                        draggedStartTop = itemTops[action.id] ?: 0
+                                                        draggedHeight = itemHeights[action.id] ?: 0
+                                                    },
+                                                    onDragCancel = {
+                                                        finishDrag(commitOrder = false)
+                                                    },
+                                                    onDragEnd = {
+                                                        finishDrag(commitOrder = true)
+                                                    },
+                                                    onDrag = { change, amount ->
+                                                        change.consume()
+                                                        if (draggedId != action.id) return@detectDragGesturesAfterLongPress
+                                                        draggedOffset += amount.y
+                                                    },
+                                                )
+                                            },
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.DragHandle,
+                                            contentDescription = "长按拖动排序",
+                                        )
+                                    }
+                                },
+                                headlineContent = {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    ) {
+                                        EditorToolbarActionIcon(
+                                            action = action,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp),
+                                        )
+                                        Text(action.label)
+                                    }
+                                },
+                                supportingContent = {
+                                    Text(
+                                        when (val position = visiblePositions[action.id]) {
+                                            null -> "已被隐藏"
+                                            1 -> "当前顺序第 1 项"
+                                            else -> "第 $position 项"
+                                        }
+                                    )
+                                },
+                                trailingContent = {
+                                    Switch(
+                                        checked = action.id in visible,
+                                        onCheckedChange = { checked ->
+                                            val nextVisible = if (checked) visible + action.id else visible - action.id
+                                            commitVisibility(nextVisible)
+                                        },
+                                    )
+                                },
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    OutlinedButton(onClick = { resetToolbarConfig() }) {
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("重置")
+                    }
+                }
+            }
         }
     }
 }
@@ -1392,6 +1752,38 @@ private fun WidgetsTab(
                         )
                     }
                 )
+                HorizontalDivider()
+                ListItem(
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    headlineContent = { Text("显示已完成任务") },
+                    supportingContent = {
+                        Text("开启后已完成的任务不会自动消失，默认关闭")
+                    },
+                    trailingContent = {
+                        Switch(
+                            checked = config.taskShowCompleted,
+                            onCheckedChange = {
+                                onConfigChange(config.copy(taskShowCompleted = it))
+                            }
+                        )
+                    }
+                )
+                HorizontalDivider()
+                ListItem(
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    headlineContent = { Text("显示任务所有内容") },
+                    supportingContent = {
+                        Text("开启后将显示任务的所有文本，即使超过了两行的限制，默认关闭")
+                    },
+                    trailingContent = {
+                        Switch(
+                            checked = config.taskShowFullContent,
+                            onCheckedChange = {
+                                onConfigChange(config.copy(taskShowFullContent = it))
+                            }
+                        )
+                    }
+                )
             }
         }
 
@@ -1507,32 +1899,7 @@ private fun OtherTab(
             }
         }
 
-        Text("辅助服务", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-        ElevatedCard(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-            ),
-        ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                val accReady = com.quickdaily.QuickAccessibilityService.isAvailable(context)
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Default.AccessibilityNew, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("速记辅助服务", style = MaterialTheme.typography.bodyMedium)
-                        Text(if (accReady) "已开启" else "未开启", style = MaterialTheme.typography.bodySmall, color = if (accReady) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
-                    }
-                }
-                Text("通知面板快捷磁贴点击后，需要此服务模拟返回键收起通知面板。如未开启，点击磁贴后会弹出提示并跳转设置页。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-                FilledTonalButton(
-                    onClick = { try { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }) } catch (_: Exception) { } },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(if (accReady) "前往无障碍设置" else "开启速记辅助服务")
-                }
-            }
-        }
+        PermissionRequestSection(context)
 
         Text("日志", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
         ElevatedCard(
@@ -1578,7 +1945,31 @@ private fun OtherTab(
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("QuickDaily ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleMedium)
 
+                var showAllChangelog by rememberSaveable { mutableStateOf(false) }
+                val coolapkA = buildAnnotatedString {
+                    withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary, fontSize = 14.sp)) { append("酷安社区 @附近的人") }
+                }
+                ClickableText(text = coolapkA, onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.coolapk.com/u/400522"))) })
+
+                val githubA = buildAnnotatedString {
+                    withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary, fontSize = 14.sp)) { append("GitHub @agarcabin") }
+                }
+                ClickableText(text = githubA, onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/agarcabin/QuickDaily"))) })
+
+                val qqA = buildAnnotatedString {
+                    withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary, fontSize = 14.sp)) { append("QQ群：1050092886") }
+                }
+                ClickableText(text = qqA, onClick = {
+                    val qi = Intent(Intent.ACTION_VIEW, Uri.parse("mqqapi://card/show_pslcard?src_type=internal&version=1&uin=1050092886&card_type=group&source=qrcode"))
+                    try { context.startActivity(qi) }
+                    catch (_: Exception) {
+                        try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://qm.qq.com/cgi-bin/qm/qr?from=app&p=android&jump_from=webapi&k=20251120"))) }
+                        catch (_: Exception) { android.widget.Toast.makeText(context, "请安装 QQ 或手动搜索群号 1050092886", android.widget.Toast.LENGTH_LONG).show() }
+                    }
+                })
+
                 Text("更新内容：", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                if (showAllChangelog) {
                 Text("1.8:\n" +
                     "• 新增 小部件大小调整支持自适应\n" +
                     "• 新增 任务小部件滴声开关\n" +
@@ -1659,28 +2050,32 @@ private fun OtherTab(
                     "• 正式发布！APP 更名为 QuickDaily\n" +
                     "• 开源发布到 GitHub",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-
-                val coolapkA = buildAnnotatedString {
-                    withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary, fontSize = 14.sp)) { append("酷安 @附近的人") }
+                } else {
+                    Text(
+                        "1.8:\n" +
+                            "• 新增 小部件大小调整支持自适应\n" +
+                            "• 新增 任务小部件滴声开关\n" +
+                            "• 新增 任务小部件完成时间戳\n" +
+                            "• 新增 自定义ob配置文件路径\n" +
+                            "• 新增 系统自带侧边栏启动器触发悬浮窗\n" +
+                            "• 调整 悬浮窗光标颜色自适应\n" +
+                            "• 调整 更完整的调试日志收集\n" +
+                            "• 调整 降低小部件刷新频率，防止小部件卡死\n" +
+                            "• 调整 配置文件统一存放目录 0/Document/QuickDaily\n" +
+                            "• 调整 首页调整为悬浮窗，原首页调整为次级编辑器页面，入口在悬浮窗左上角\n" +
+                            "• 修复 快速添加（桌面图标）添加失败\n" +
+                            "• 修复 图片堆积BUG\n" +
+                            "• 修复 小部件回车换行失效",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    )
                 }
-                ClickableText(text = coolapkA, onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.coolapk.com/u/400522"))) })
-
-                val githubA = buildAnnotatedString {
-                    withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary, fontSize = 14.sp)) { append("GitHub @agarcabin") }
+                TextButton(
+                    onClick = { showAllChangelog = !showAllChangelog },
+                    modifier = Modifier.align(Alignment.Start),
+                ) {
+                    Text(if (showAllChangelog) "收起内容" else "更多内容")
                 }
-                ClickableText(text = githubA, onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/agarcabin/QuickDaily"))) })
-
-                val qqA = buildAnnotatedString {
-                    withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary, fontSize = 14.sp)) { append("QQ群：1050092886") }
-                }
-                ClickableText(text = qqA, onClick = {
-                    val qi = Intent(Intent.ACTION_VIEW, Uri.parse("mqqapi://card/show_pslcard?src_type=internal&version=1&uin=1050092886&card_type=group&source=qrcode"))
-                    try { context.startActivity(qi) }
-                    catch (_: Exception) {
-                        try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://qm.qq.com/cgi-bin/qm/qr?from=app&p=android&jump_from=webapi&k=20251120"))) }
-                        catch (_: Exception) { android.widget.Toast.makeText(context, "请安装 QQ 或手动搜索群号 1050092886", android.widget.Toast.LENGTH_LONG).show() }
-                    }
-                })
             }
         }
 
@@ -1733,6 +2128,107 @@ private fun OtherTab(
             }
         }
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun PermissionRequestSection(context: android.content.Context) {
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    var refreshKey by remember { mutableIntStateOf(0) }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {
+        refreshKey++
+    }
+    val specs = remember {
+        com.quickdaily.PermissionPolicy.visibleInSettings()
+            .filter(com.quickdaily.PermissionPolicy::isApplicable)
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) refreshKey++
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    fun request(spec: com.quickdaily.PermissionSpec) {
+        when (spec.kind) {
+            com.quickdaily.PermissionKind.RUNTIME -> {
+                spec.androidPermission?.let(permissionLauncher::launch)
+            }
+            com.quickdaily.PermissionKind.OVERLAY -> {
+                try {
+                    context.startActivity(
+                        Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                            data = Uri.parse("package:${context.packageName}")
+                        }
+                    )
+                } catch (_: Exception) { }
+            }
+            com.quickdaily.PermissionKind.MANAGE_FILES -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    try {
+                        context.startActivity(
+                            Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                                data = Uri.parse("package:${context.packageName}")
+                            }
+                        )
+                    } catch (_: Exception) { }
+                }
+            }
+            com.quickdaily.PermissionKind.ACCESSIBILITY -> {
+                try {
+                    context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                } catch (_: Exception) { }
+            }
+            com.quickdaily.PermissionKind.SYSTEM -> Unit
+        }
+    }
+
+    Text("权限申请", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+    ) {
+        Column(modifier = Modifier.padding(vertical = 8.dp)) {
+            Text(
+                "以下是本APP运行所需要的所有权限，请按需授权。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            specs.forEach { spec ->
+                val status = remember(spec.id, refreshKey) {
+                    com.quickdaily.PermissionPolicy.status(context, spec)
+                }
+                val (statusText, statusColor) = when (status) {
+                    com.quickdaily.PermissionStatus.GRANTED -> "已获得" to MaterialTheme.colorScheme.primary
+                    com.quickdaily.PermissionStatus.NOT_GRANTED -> "未获得" to MaterialTheme.colorScheme.error
+                    com.quickdaily.PermissionStatus.NOT_REQUIRED -> "当前系统无需" to MaterialTheme.colorScheme.onSurfaceVariant
+                    com.quickdaily.PermissionStatus.SYSTEM_MANAGED -> "系统管理" to MaterialTheme.colorScheme.onSurfaceVariant
+                }
+                ListItem(
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    headlineContent = { Text(spec.title) },
+                    supportingContent = {
+                        Column {
+                            Text(spec.description)
+                            Text(statusText, color = statusColor, style = MaterialTheme.typography.labelSmall)
+                        }
+                    },
+                    trailingContent = {
+                        TextButton(
+                            enabled = status == com.quickdaily.PermissionStatus.NOT_GRANTED,
+                            onClick = { request(spec) },
+                        ) {
+                            Text(if (status == com.quickdaily.PermissionStatus.NOT_GRANTED) "申请" else statusText)
+                        }
+                    },
+                )
+            }
+        }
     }
 }
 

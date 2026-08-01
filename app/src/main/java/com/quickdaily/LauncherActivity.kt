@@ -22,22 +22,13 @@ class LauncherActivity : ComponentActivity() {
         BetaLogger.log("FloatingNote/Launch", "launcher onCreate action=${intent.action} categories=${intent.categories}")
 
         if (shouldOpenQuickNote()) {
-            val systemSidebarSupport = FloatingNoteEntryPolicy.isSystemSidebarSupportEnabled(this)
-            if (!systemSidebarSupport) {
-                BetaLogger.log("FloatingNote/Launch", "launcher legacy activity path")
-                FloatingNoteEntryPolicy.launchLegacyEditor(this)
-                finish()
-                overridePendingTransition(0, 0)
-                return
-            }
-
             val overlayAllowed = Settings.canDrawOverlays(this)
             BetaLogger.log("FloatingNote/Permission", "overlay_allowed=$overlayAllowed")
             val request = FloatingNoteRequest(
                 source = FloatingNoteSource.DESKTOP_LAUNCHER,
                 returnToHomeAfterClose = false
             )
-            if (QuickLaunchPolicy.shouldUseSystemOverlay(systemSidebarSupport, overlayAllowed) &&
+            if (QuickLaunchPolicy.shouldUseSystemOverlay(true, overlayAllowed) &&
                 FloatingNoteControllerProvider.forContext(this).showOrFocus(request)
             ) {
                 BetaLogger.log("FloatingNote/Launch", "launcher overlay requested")
@@ -74,7 +65,10 @@ class LauncherActivity : ComponentActivity() {
             action = intent.action,
             categories = intent.categories,
             vaultPath = vaultPath,
-            hasStorageAccess = hasStorageAccess()
+            hasStorageAccess = hasStorageAccess(),
+            homeEntryMode = getSharedPreferences("QuickDaily", 0)
+                .getString("home_entry_mode", HomeEntryMode.OVERLAY.key)
+                ?: HomeEntryMode.OVERLAY.key,
         )
         BetaLogger.log(
             "FloatingNote/Launch",

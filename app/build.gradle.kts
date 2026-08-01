@@ -1,6 +1,7 @@
 ﻿plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
@@ -12,17 +13,13 @@ android {
         applicationId = "com.quickdaily"
         minSdk = 26
         targetSdk = 35
-        versionCode = 64
-        versionName = "1.8.1-beta"
+        versionCode = 67
+        versionName = "1.8.4 - beta MD3"
     }
 
     buildFeatures {
         compose = true
         buildConfig = true
-    }
-
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.14"
     }
 
     compileOptions {
@@ -75,7 +72,7 @@ android {
 
 dependencies {
     // Compose BOM
-    val composeBom = platform("androidx.compose:compose-bom:2024.09.00")
+    val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
     implementation(composeBom)
 
     // Compose UI

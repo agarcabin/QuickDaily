@@ -57,6 +57,19 @@ class QuickLaunchPolicyTest {
     }
 
     @Test
+    fun editorHomeModeKeepsLauncherOnFullEditorPage() {
+        assertFalse(
+            QuickLaunchPolicy.shouldOpenQuickNote(
+                action = launcherAction,
+                categories = setOf(launcherCategory),
+                vaultPath = "C:/Vault",
+                hasStorageAccess = true,
+                homeEntryMode = HomeEntryMode.EDITOR.key,
+            )
+        )
+    }
+
+    @Test
     fun systemSidebarSupportUsesOverlayOnlyWhenPermissionIsGranted() {
         assertTrue(QuickLaunchPolicy.shouldUseSystemOverlay(true, true))
         assertFalse(QuickLaunchPolicy.shouldUseSystemOverlay(true, false))

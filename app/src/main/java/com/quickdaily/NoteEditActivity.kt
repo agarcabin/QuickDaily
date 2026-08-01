@@ -9,6 +9,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -42,11 +43,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
@@ -61,6 +66,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
@@ -69,16 +75,35 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.Image
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import com.quickdaily.ui.theme.*
+import com.quickdaily.ui.EditorToolbarActions
+import android.Manifest
+import android.content.pm.PackageManager
+import android.media.MediaRecorder
+import android.os.SystemClock
+import androidx.core.content.ContextCompat
+import com.quickdaily.EditorToolbarAction
+import com.quickdaily.EditorToolbarPolicy
+import com.quickdaily.EditorMediaUtil
+import com.quickdaily.TextIndentPolicy
+import com.quickdaily.EditorTextActionPolicy
+import com.quickdaily.EditorStampPolicy
+import com.quickdaily.WikilinkIndexRepository
+import com.quickdaily.WikilinkPolicy
 import android.view.MotionEvent
+import android.view.HapticFeedbackConstants
 import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
 import android.net.Uri
 import com.quickdaily.util.FileUtil
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.take
+import java.io.File
+import kotlin.math.roundToInt
 class NoteEditActivity : ComponentActivity() {
     companion object {
         const val EXTRA_RETURN_TO_HOME = "return_to_home"
@@ -89,15 +114,28 @@ class NoteEditActivity : ComponentActivity() {
     private var noteText by mutableStateOf("")
     private val selectedImages = mutableStateListOf<Uri>()
     private val pendingAttachments = mutableStateListOf<Uri>()
-    private var noteTimestampFormat by mutableStateOf("list_time")
     private var noteAddAnchorIfMissing by mutableStateOf(true)
     private var noteTimestampOrder by mutableStateOf("above")
     private var noteSaveInProgress = false
     private var noteEnterToSave by mutableStateOf(false)
+    private var noteTagAutocomplete by mutableStateOf(true)
+    private var noteWikilinkAutocomplete by mutableStateOf(true)
+    private var toolbarOrder by mutableStateOf(EditorToolbarPolicy.defaultOrder.map { it.id })
+    private var toolbarVisible by mutableStateOf(EditorToolbarPolicy.defaultVisible)
+    private var selectionRange by mutableStateOf(TextRange(0))
+    private var pendingCameraFile: File? = null
+    private var pendingCameraUri: Uri? = null
+    private var recorder: MediaRecorder? = null
+    private var recordingFile: File? = null
+    private var recordingStartedAt by mutableStateOf<Long?>(null)
+    private var recordingElapsedMs by mutableStateOf(0L)
     private var returnToHomeAfterClose = false
     private var targetRelativePath by mutableStateOf<String?>(null)
     private var targetOptions by mutableStateOf<List<FloatingNoteTargetOption>>(emptyList())
     private var dialogTitle by mutableStateOf("速记")
+    private var windowDragOrigin: FloatingNotePosition? = null
+    private var windowDragX = 0f
+    private var windowDragY = 0f
 
     private val imagePicker = registerForActivityResult(
         ActivityResultContracts.GetMultipleContents()
@@ -112,19 +150,25 @@ class NoteEditActivity : ComponentActivity() {
             try {
                 contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 val fileName = ImageUtil.getDisplayName(this, it).ifBlank { "attachment" }
-                noteText += "\n![[${it}]]"
-                pendingAttachments.add(it)
+                insertPendingAttachment(it)
                 BetaLogger.log("NoteEdit", "attachment selected name=$fileName uri=$it count=${pendingAttachments.size}")
             } catch (_: Exception) {
-                noteText += "\n![[${it}]]"
-                pendingAttachments.add(it)
+                insertPendingAttachment(it)
                 BetaLogger.log("NoteEdit", "attachment selected without persisted permission uri=$it count=${pendingAttachments.size}")
             }
         }
     }
 
+    private fun insertPendingAttachment(uri: Uri) {
+        val next = EditorMediaUtil.insertLink(noteText, selectionRange, "![[${uri}]]")
+        noteText = next.text
+        selectionRange = next.selection
+        pendingAttachments.add(uri)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        BetaLogger.init(this, "NoteEditActivity")
         returnToHomeAfterClose = intent.getBooleanExtra(EXTRA_RETURN_TO_HOME, false)
         targetRelativePath = intent.getStringExtra(EXTRA_TARGET_RELATIVE_PATH)
             ?.trim()
@@ -134,31 +178,62 @@ class NoteEditActivity : ComponentActivity() {
             ?.trim()
             ?.takeIf { it.isNotBlank() }
             ?: FloatingNoteTargetStore.titleFor(this, targetRelativePath)
+        BetaLogger.log(
+            "FloatingNote/Selection",
+            "open source=${intent.getStringExtra("floating_source").orEmpty()} target=${targetRelativePath.orEmpty()} title=$dialogTitle options=${targetOptions.size}",
+        )
         val prefillTxt = intent.getStringExtra("prefill_text") ?: ""
-        if (prefillTxt.isNotBlank()) noteText = prefillTxt
-        val prefs = getSharedPreferences("QuickDaily", 0)
-        // Scan existing tags for autocomplete
-        val vaultPath = prefs.getString("vault_path", "") ?: ""
-        if (vaultPath.isNotBlank()) {
-            lifecycleScope.launch(Dispatchers.IO) {
-                com.quickdaily.util.TagScanner.getTags(vaultPath)
-            }
+        if (prefillTxt.isNotBlank()) {
+            noteText = prefillTxt
+            selectionRange = TextRange(prefillTxt.length)
         }
-        noteTimestampFormat = prefs.getString("timestamp_format", "list_time") ?: "list_time"
+        val prefs = getSharedPreferences("QuickDaily", 0)
         noteAddAnchorIfMissing = prefs.getBoolean("add_anchor_if_missing", true)
         noteTimestampOrder = prefs.getString("timestamp_order", "above") ?: "above"
         noteEnterToSave = prefs.getBoolean("enter_to_save", true)
+        noteTagAutocomplete = prefs.getBoolean("tag_autocomplete", true)
+        noteWikilinkAutocomplete = prefs.getBoolean("wikilink_autocomplete", true)
+        toolbarOrder = EditorToolbarPolicy.migrateOrder(
+            prefs.getString(EditorToolbarPolicy.PREF_ORDER, null),
+            prefs.getInt(EditorToolbarPolicy.PREF_SCHEMA_VERSION, 0) < EditorToolbarPolicy.CURRENT_SCHEMA_VERSION,
+        )
+        toolbarVisible = if (prefs.contains(EditorToolbarPolicy.PREF_VISIBLE)) {
+            EditorToolbarPolicy.migrateVisible(
+                EditorToolbarPolicy.parseVisible(prefs.getString(EditorToolbarPolicy.PREF_VISIBLE, null)),
+                prefs.getInt(EditorToolbarPolicy.PREF_SCHEMA_VERSION, 0) < EditorToolbarPolicy.CURRENT_SCHEMA_VERSION,
+            )
+        } else {
+            EditorToolbarPolicy.defaultVisible
+        }
+        lifecycleScope.launch {
+            while (isActive) {
+                recordingStartedAt?.let { recordingElapsedMs = SystemClock.elapsedRealtime() - it }
+                delay(250)
+            }
+        }
         val dm = resources.displayMetrics
         val w = (dm.widthPixels * 0.88f).toInt()
         val h = (dm.heightPixels * 0.35f).toInt()
-        val yOff = (dm.heightPixels * 0.25f).toInt()
+        val fallbackPosition = FloatingNotePositionPolicy.defaultPosition(
+            dm.widthPixels,
+            dm.heightPixels,
+            w,
+            h,
+        )
+        val position = FloatingNotePositionPolicy.clamp(
+            FloatingNotePositionPolicy.load(this, fallbackPosition),
+            dm.widthPixels,
+            dm.heightPixels,
+            w,
+            h,
+        )
 
         window?.apply {
             addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
             addFlags(WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH)
             val lp = attributes
-            lp.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            lp.x = 0; lp.y = yOff; lp.width = w; lp.height = h
+            lp.gravity = Gravity.TOP or Gravity.START
+            lp.x = position.x; lp.y = position.y; lp.width = w; lp.height = h
             lp.dimAmount = 0.0f
             lp.format = android.graphics.PixelFormat.TRANSLUCENT
             lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_DIM_BEHIND.inv()
@@ -176,17 +251,24 @@ class NoteEditActivity : ComponentActivity() {
                         text = noteText,
                         onTextChange = { noteText = it },
                         enterToSave = noteEnterToSave,
+                        tagAutocomplete = noteTagAutocomplete,
+                        wikilinkAutocomplete = noteWikilinkAutocomplete,
                         title = dialogTitle,
                         targetPath = targetRelativePath,
                         targetOptions = targetOptions,
                         onTargetChange = { option ->
                             targetRelativePath = option.path
                             dialogTitle = option.title
+                            BetaLogger.log(
+                                "FloatingNote/Selection",
+                                "selected path=${option.path.orEmpty()} title=${option.title} menuTitle=${option.menuTitle}",
+                            )
                         },
                         onAddCustomPage = {
                             customPagePicker.launch(arrayOf("text/*", "application/octet-stream", "*/*"))
                         },
                         onRemoveTarget = { path ->
+                            BetaLogger.log("FloatingNote/Selection", "remove path=$path")
                             if (targetRelativePath == path) {
                                 targetRelativePath = null
                                 dialogTitle = FloatingNoteTargetStore.titleFor(this@NoteEditActivity, null)
@@ -209,11 +291,22 @@ class NoteEditActivity : ComponentActivity() {
                         onPickImages = {
                 imagePicker.launch("image/*")
             },
-                       onPickAttachment = {
-               attachmentPicker.launch(arrayOf("*/*"))
-           },
+                         onPickAttachment = {
+                attachmentPicker.launch(arrayOf("*/*"))
+            },
+                         onTakePhoto = { requestPhoto() },
+                         onToggleRecording = { toggleRecording() },
+                         toolbarOrder = toolbarOrder,
+                         toolbarVisible = toolbarVisible,
+                         recording = recorder != null,
+                         recordingDurationMs = recordingElapsedMs,
+                         initialSelection = selectionRange,
+                         onSelectionChange = { selectionRange = it },
+                         onMoveWindowStart = ::beginWindowMove,
+                         onMoveWindow = ::moveWindow,
+                         onMoveWindowEnd = ::endWindowMove,
 
-                        onRemoveImage = { index -> selectedImages.removeAt(index) }
+                         onRemoveImage = { index -> selectedImages.removeAt(index) }
                         )
                     }
                 }
@@ -221,15 +314,176 @@ class NoteEditActivity : ComponentActivity() {
         }
     }
 
+    private fun beginWindowMove() {
+        val attrs = window?.attributes ?: return
+        windowDragOrigin = FloatingNotePosition(attrs.x, attrs.y)
+        windowDragX = 0f
+        windowDragY = 0f
+    }
+
+    private fun moveWindow(dx: Float, dy: Float) {
+        val currentWindow = window ?: return
+        val attrs = currentWindow.attributes
+        val origin = windowDragOrigin ?: FloatingNotePosition(attrs.x, attrs.y).also {
+            windowDragOrigin = it
+        }
+        windowDragX += dx
+        windowDragY += dy
+        val dm = resources.displayMetrics
+        val position = FloatingNotePositionPolicy.clamp(
+            FloatingNotePosition(
+                x = origin.x + windowDragX.roundToInt(),
+                y = origin.y + windowDragY.roundToInt(),
+            ),
+            dm.widthPixels,
+            dm.heightPixels,
+            attrs.width,
+            attrs.height,
+        )
+        if (attrs.x != position.x || attrs.y != position.y) {
+            attrs.x = position.x
+            attrs.y = position.y
+            currentWindow.attributes = attrs
+        }
+    }
+
+    private fun endWindowMove() {
+        val attrs = window?.attributes
+        if (attrs != null) {
+            FloatingNotePositionPolicy.save(this, FloatingNotePosition(attrs.x, attrs.y))
+        }
+        windowDragOrigin = null
+        windowDragX = 0f
+        windowDragY = 0f
+    }
+
+    private val cameraLauncher = registerForActivityResult(
+        ActivityResultContracts.TakePicture()
+    ) { success ->
+        val uri = pendingCameraUri
+        pendingCameraUri = null
+        val file = pendingCameraFile
+        pendingCameraFile = null
+        if (success && uri != null) {
+            lifecycleScope.launch(Dispatchers.IO) {
+                val link = runCatching { EditorMediaUtil.imageLink(this@NoteEditActivity, uri) }.getOrNull()
+                withContext(Dispatchers.Main) { if (link != null) insertMediaLink(link) }
+            }
+        } else {
+            file?.delete()
+        }
+    }
+
+    private val cameraPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) takePhotoNow()
+        else Toast.makeText(this, "请允许相机权限后再拍照", Toast.LENGTH_SHORT).show()
+    }
+
+    private val audioPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) startRecordingNow()
+        else Toast.makeText(this, "请允许录音权限后再录音", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun insertMediaLink(link: String) {
+        val next = EditorMediaUtil.insertLink(noteText, selectionRange, link)
+        noteText = next.text
+        selectionRange = next.selection
+    }
+
+    private fun requestPhoto() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            takePhotoNow()
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
+    private fun takePhotoNow() {
+        val file = runCatching { CaptureFileUtil.newImageFile(this) }.getOrNull()
+        if (file == null) {
+            Toast.makeText(this, "无法创建照片文件", Toast.LENGTH_SHORT).show()
+            return
+        }
+        pendingCameraFile = file
+        pendingCameraUri = CaptureFileUtil.fileUri(this, file)
+        pendingCameraUri?.let(cameraLauncher::launch)
+    }
+
+    private fun toggleRecording() {
+        if (recorder != null) {
+            stopRecording()
+        } else if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            startRecordingNow()
+        } else {
+            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    private fun startRecordingNow() {
+        if (recorder != null) return
+        val file = runCatching { CaptureFileUtil.newAudioFile(this) }.getOrNull() ?: return
+        val nextRecorder = runCatching {
+            MediaRecorder().apply {
+                setAudioSource(MediaRecorder.AudioSource.MIC)
+                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                setOutputFile(file.absolutePath)
+                prepare()
+                start()
+            }
+        }.getOrNull()
+        if (nextRecorder == null) {
+            file.delete()
+            Toast.makeText(this, "无法开始录音", Toast.LENGTH_SHORT).show()
+            return
+        }
+        recorder = nextRecorder
+        recordingFile = file
+        recordingStartedAt = SystemClock.elapsedRealtime()
+    }
+
+    private fun stopRecording() {
+        val activeRecorder = recorder ?: return
+        val file = recordingFile
+        recorder = null
+        recordingFile = null
+        recordingStartedAt = null
+        recordingElapsedMs = 0L
+        val stopped = runCatching { activeRecorder.stop() }.isSuccess
+        runCatching { activeRecorder.reset() }
+        runCatching { activeRecorder.release() }
+        if (!stopped || file == null) {
+            file?.delete()
+            return
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            val link = runCatching { EditorMediaUtil.audioLink(this@NoteEditActivity, file) }.getOrNull()
+            if (link != null) file.delete()
+            withContext(Dispatchers.Main) {
+                if (link != null) insertMediaLink(link) else Toast.makeText(this@NoteEditActivity, "录音保存失败，临时文件已保留", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     private val customPagePicker = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
+        if (uri == null) {
+            BetaLogger.log("FloatingNote/Picker", "custom page picker cancelled")
+        }
         val path = uri?.let { TaskWidgetConfigStore.filePathFromUri(this, it) }
         if (path != null) {
+            BetaLogger.log("FloatingNote/Picker", "custom page selected uri=$uri path=$path")
             TaskWidgetConfigStore.recordCustomPage(this, path)
             targetRelativePath = path
             dialogTitle = FloatingNoteTargetStore.titleFor(this, path)
             targetOptions = FloatingNoteTargetStore.options(this, targetRelativePath)
+        } else if (uri != null) {
+            BetaLogger.log("FloatingNote/Picker", "custom page rejected uri=$uri")
         }
     }
 
@@ -244,6 +498,7 @@ class NoteEditActivity : ComponentActivity() {
     }
 
     private fun finishEditor() {
+        stopRecording()
         if (returnToHomeAfterClose) {
             startActivity(MainActivity.editorIntent(this, targetRelativePath))
         }
@@ -251,6 +506,7 @@ class NoteEditActivity : ComponentActivity() {
     }
 
     private fun appendToDiary(text: String) {
+        stopRecording()
         if (noteSaveInProgress) return
         if (!hasRealContent(text) && selectedImages.isEmpty() && pendingAttachments.isEmpty()) {
             finishEditor()
@@ -363,6 +619,8 @@ fun NoteEditDialog(
     text: String,
     onTextChange: (String) -> Unit,
     enterToSave: Boolean,
+    tagAutocomplete: Boolean = true,
+    wikilinkAutocomplete: Boolean = true,
     title: String = "速记",
     targetPath: String? = null,
     targetOptions: List<FloatingNoteTargetOption> = emptyList(),
@@ -378,6 +636,17 @@ fun NoteEditDialog(
     attachmentUris: List<Uri>,
     onPickImages: () -> Unit,
     onPickAttachment: () -> Unit,
+    onTakePhoto: () -> Unit = {},
+    onToggleRecording: () -> Unit = {},
+    toolbarOrder: List<String> = EditorToolbarPolicy.defaultOrder.map { it.id },
+    toolbarVisible: Set<String> = EditorToolbarPolicy.defaultVisible,
+    recording: Boolean = false,
+    recordingDurationMs: Long = 0L,
+    initialSelection: TextRange? = null,
+    onSelectionChange: (TextRange) -> Unit = {},
+    onMoveWindowStart: () -> Unit = {},
+    onMoveWindow: (dx: Float, dy: Float) -> Unit = { _, _ -> },
+    onMoveWindowEnd: () -> Unit = {},
     onRemoveImage: (Int) -> Unit,
     onTiming: (stage: String, detail: String?) -> Unit = { _, _ -> }
 ) {
@@ -390,12 +659,15 @@ fun NoteEditDialog(
     var focusRequested by remember { mutableStateOf(false) }
     var imeShowRequested by remember { mutableStateOf(false) }
     var targetMenuExpanded by remember { mutableStateOf(false) }
-    var tfv by remember { mutableStateOf(TextFieldValue(text, TextRange(text.length))) }
+    var wikilinkPopupDismissKey by remember { mutableStateOf<String?>(null) }
+    var tfv by remember { mutableStateOf(TextFieldValue(text, initialSelection ?: TextRange(text.length))) }
     val localUndoStack = remember { mutableStateListOf<String>() }
     val localRedoStack = remember { mutableStateListOf<String>() }
     var lastUndoTime by remember { mutableLongStateOf(0L) }
     val neCtx = LocalContext.current
     val neView = LocalView.current
+    val clipboardManager = LocalClipboardManager.current
+    var recentWikilinks by remember { mutableStateOf(WikilinkRecentStore.load(neCtx)) }
 
     fun recordUndo(previousText: String, force: Boolean = false) {
         val now = System.currentTimeMillis()
@@ -416,6 +688,7 @@ fun NoteEditDialog(
         recordUndo(oldText, forceUndo)
         tfv = newValue
         onTextChange(newValue.text)
+        onSelectionChange(newValue.selection)
     }
 
     SideEffect {
@@ -431,15 +704,19 @@ fun NoteEditDialog(
             .take(1)
             .collect { onTiming("ime_visible", null) }
     }
-    LaunchedEffect(text) { if (text != tfv.text) tfv = TextFieldValue(text, TextRange(text.length)) }
-    val tagVaultPath = neCtx.getSharedPreferences("QuickDaily", 0).getString("vault_path", "") ?: ""
-    var noteTagList by remember(tagVaultPath) { mutableStateOf(emptyList<String>()) }
-    LaunchedEffect(tagVaultPath) {
-        noteTagList = if (tagVaultPath.isBlank()) emptyList() else withContext(Dispatchers.IO) {
-            com.quickdaily.util.TagScanner.getTags(tagVaultPath)
+    LaunchedEffect(text, initialSelection) {
+        if (text != tfv.text || (initialSelection != null && tfv.selection != initialSelection)) {
+            tfv = TextFieldValue(text, initialSelection ?: TextRange(text.length))
         }
     }
-    val tagCompletion = remember(tfv.text, tfv.selection, noteTagList) {
+    val tagVaultPath = neCtx.getSharedPreferences("QuickDaily", 0).getString("vault_path", "") ?: ""
+    val wikilinkIndex by WikilinkIndexRepository.indexState.collectAsState()
+    val completionIndex = wikilinkIndex.takeIf {
+        it.rootPath == tagVaultPath && it.indexed && it.tagsIndexed && it.error == null
+    }
+    val noteTagList = completionIndex?.tags.orEmpty()
+    val tagCompletion = remember(tfv.text, tfv.selection, noteTagList, tagAutocomplete, completionIndex) {
+        if (!tagAutocomplete || completionIndex == null) return@remember Triple(false, "", 0)
         val currentText = tfv.text
         val cursor = tfv.selection.start
         if (cursor > 0 && cursor <= currentText.length) {
@@ -477,14 +754,142 @@ fun NoteEditDialog(
         }
     }
 
+    LaunchedEffect(tagVaultPath) {
+        WikilinkIndexRepository.ensureIndexed(neCtx, tagVaultPath)
+    }
+    LaunchedEffect(wikilinkIndex.error) {
+        wikilinkIndex.error?.let { message ->
+            Toast.makeText(neCtx, message, Toast.LENGTH_SHORT).show()
+        }
+    }
+    val wikilinkTrigger = remember(tfv.text, tfv.selection, wikilinkIndex, wikilinkAutocomplete) {
+        if (!wikilinkAutocomplete || tagVaultPath.isBlank() || wikilinkIndex.rootPath != tagVaultPath || wikilinkIndex.error != null) {
+            null
+        } else {
+            WikilinkPolicy.trigger(tfv.text, tfv.selection.start)
+        }
+    }
+    val noteMatchingWikilinks = remember(wikilinkIndex.candidates, wikilinkTrigger, recentWikilinks) {
+        val trigger = wikilinkTrigger ?: return@remember emptyList<WikilinkCandidate>()
+        if (trigger.query.isBlank()) {
+            recentWikilinks.take(WikilinkCandidatePolicy.DEFAULT_LIMIT)
+        } else {
+            WikilinkPolicy.filterWikilinkCandidates(wikilinkIndex.candidates, trigger.query)
+        }
+    }
+    val aliasCounts = remember(wikilinkIndex.aliases) {
+        wikilinkIndex.aliases.groupingBy { it.alias }.eachCount()
+    }
+    val wikilinkTriggerKey = wikilinkTrigger?.let { "${it.start}:${it.replaceEnd}:${it.query}" }
+
+    fun selectWikilink(candidate: WikilinkCandidate) {
+        val currentTrigger = wikilinkTrigger ?: return
+        val replacement = candidate.insertionText
+        val newText = tfv.text.substring(0, currentTrigger.start) + replacement + tfv.text.substring(currentTrigger.replaceEnd)
+        applyTextChange(TextFieldValue(newText, TextRange(currentTrigger.start + replacement.length)), forceUndo = true)
+        WikilinkRecentStore.record(neCtx, candidate)
+        recentWikilinks = listOf(candidate) + recentWikilinks.filterNot { it.stableKey == candidate.stableKey }
+            .take(9)
+    }
+
+    fun applyTextAction(result: EditorTextActionResult) {
+        result.clipboardText?.let { clipboardManager.setText(AnnotatedString(it)) }
+        applyTextChange(TextFieldValue(result.text, result.selection), forceUndo = true)
+    }
+
     fun saveOrClose() {
         onTiming("enter_action", "hasTagCandidates=${noteMatchingTags.isNotEmpty()}")
         if (noteMatchingTags.isNotEmpty()) {
             noteSelectTag(noteMatchingTags.first())
+        } else if (noteMatchingWikilinks.isNotEmpty()) {
+            selectWikilink(noteMatchingWikilinks.first())
         } else if (tfv.text.isNotBlank() || imageUris.isNotEmpty() || hasAttachments) {
             onSave()
         } else {
             onClose()
+        }
+    }
+
+    fun handleToolbarAction(action: EditorToolbarAction) {
+        when (action) {
+            EditorToolbarAction.IMAGE -> onPickImages()
+            EditorToolbarAction.CAMERA -> onTakePhoto()
+            EditorToolbarAction.RECORD -> onToggleRecording()
+            EditorToolbarAction.ATTACHMENT -> onPickAttachment()
+            EditorToolbarAction.INDENT -> {
+                val result = TextIndentPolicy.indent(tfv.text, tfv.selection)
+                applyTextChange(TextFieldValue(result.text, result.selection), forceUndo = true)
+            }
+            EditorToolbarAction.OUTDENT -> {
+                val result = TextIndentPolicy.outdent(tfv.text, tfv.selection)
+                applyTextChange(TextFieldValue(result.text, result.selection), forceUndo = true)
+            }
+            EditorToolbarAction.CUT_LINE -> applyTextAction(
+                EditorTextActionPolicy.cutLine(tfv.text, tfv.selection)
+            )
+            EditorToolbarAction.MOVE_LINE_UP -> applyTextAction(
+                EditorTextActionPolicy.moveLineUp(tfv.text, tfv.selection)
+            )
+            EditorToolbarAction.MOVE_LINE_DOWN -> applyTextAction(
+                EditorTextActionPolicy.moveLineDown(tfv.text, tfv.selection)
+            )
+            EditorToolbarAction.TIMESTAMP -> {
+                applyTextAction(EditorTextActionPolicy.insert(tfv.text, tfv.selection, EditorStampPolicy.toolbarTimestampInsertion()))
+            }
+            EditorToolbarAction.DATE_STAMP -> applyTextAction(
+                EditorTextActionPolicy.insert(tfv.text, tfv.selection, EditorStampPolicy.dateInsertion())
+            )
+            EditorToolbarAction.WIKILINK -> applyTextAction(
+                EditorTextActionPolicy.insert(tfv.text, tfv.selection, "[[")
+            )
+            EditorToolbarAction.TASK -> {
+                val newText = taskToggleAtCursor(tfv)
+                applyTextChange(TextFieldValue(newText, TextRange(newText.length)), forceUndo = true)
+            }
+            EditorToolbarAction.HEADING -> applyTextChange(cycleHeading(tfv), forceUndo = true)
+            EditorToolbarAction.LIST -> {
+                val t = tfv.text
+                val c = tfv.selection.start
+                val ls = t.lastIndexOf('\n', c - 1) + 1
+                val cl = t.substring(ls)
+                val (nt, nc) = if (cl.startsWith("- ")) {
+                    t.substring(0, ls) + cl.removePrefix("- ") to (c - 2).coerceAtLeast(ls)
+                } else {
+                    t.substring(0, ls) + "- " + cl to c + 2
+                }
+                applyTextChange(TextFieldValue(nt, TextRange(nc)), forceUndo = true)
+            }
+            EditorToolbarAction.BOLD -> {
+                val t = tfv.text
+                val c = tfv.selection.start
+                if (c >= 2 && c + 2 <= t.length && t.substring(c - 2, c) == "**" && t.substring(c, c + 2) == "**") {
+                    applyTextChange(TextFieldValue(t.substring(0, c - 2) + t.substring(c + 2), TextRange(c - 2)), forceUndo = true)
+                } else {
+                    applyTextChange(TextFieldValue(t.substring(0, c) + "****" + t.substring(c), TextRange(c + 2)), forceUndo = true)
+                }
+            }
+            EditorToolbarAction.UNDO -> {
+                if (localUndoStack.isNotEmpty()) {
+                    val cur = tfv.text
+                    localRedoStack.add(cur)
+                    if (localRedoStack.size > 50) localRedoStack.removeAt(0)
+                    val prev = localUndoStack.removeAt(localUndoStack.lastIndex)
+                    applyTextChange(TextFieldValue(prev, TextRange(prev.length)))
+                    lastUndoTime = 0L
+                    BetaLogger.log("Toolbar", "undo")
+                }
+            }
+            EditorToolbarAction.REDO -> {
+                if (localRedoStack.isNotEmpty()) {
+                    val cur = tfv.text
+                    localUndoStack.add(cur)
+                    if (localUndoStack.size > 50) localUndoStack.removeAt(0)
+                    val next = localRedoStack.removeAt(localRedoStack.lastIndex)
+                    applyTextChange(TextFieldValue(next, TextRange(next.length)))
+                    lastUndoTime = 0L
+                    BetaLogger.log("Toolbar", "redo")
+                }
+            }
         }
     }
 
@@ -496,36 +901,69 @@ fun NoteEditDialog(
     ) {
         Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().padding(10.dp)) {
-                    Box(Modifier.fillMaxWidth()) {
-                TextButton(
-                    onClick = {
-                        onHome()
-                    },
-                    modifier = Modifier.align(Alignment.CenterStart)
-                ) {
-                    Text("首页", color = floater.primary, style = MaterialTheme.typography.labelSmall)
-                }
-                Row(
-                    modifier = Modifier.align(Alignment.Center),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        title.ifBlank { "速记" },
-                        style = MaterialTheme.typography.labelMedium,
-                        color = floater.onSurfaceVariant,
-                    )
-                    IconButton(onClick = { targetMenuExpanded = true }) {
-                        Icon(
-                            Icons.Default.KeyboardArrowDown,
-                            contentDescription = "选择记录页面",
-                            tint = floater.onSurfaceVariant,
-                        )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier.weight(1f),
+                            contentAlignment = Alignment.CenterStart,
+                        ) {
+                            TextButton(onClick = onHome) {
+                                Text("编辑页", color = floater.primary, style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.weight(2f),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .widthIn(min = 0.dp)
+                                    .heightIn(min = 48.dp)
+                                    .pointerInput(Unit) {
+                                        detectDragGesturesAfterLongPress(
+                                            onDragStart = {
+                                                onMoveWindowStart()
+                                                neView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                            },
+                                            onDragCancel = onMoveWindowEnd,
+                                            onDrag = { change, amount ->
+                                                change.consume()
+                                                onMoveWindow(amount.x, amount.y)
+                                            },
+                                            onDragEnd = onMoveWindowEnd,
+                                        )
+                                    },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    title.ifBlank { "速记" },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = floater.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            IconButton(onClick = { targetMenuExpanded = true }) {
+                                Icon(
+                                    Icons.Default.KeyboardArrowDown,
+                                    contentDescription = "选择记录页面",
+                                    tint = floater.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        Box(
+                            modifier = Modifier.weight(1f),
+                            contentAlignment = Alignment.CenterEnd,
+                        ) {
+                            TextButton(onClick = onClose) {
+                                Text("关闭", color = floater.onBackgroundVariant, style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
                     }
-                }
-                TextButton(onClick = {
-                    onClose()
-                }, modifier = Modifier.align(Alignment.CenterEnd)) { Text("关闭", color = floater.onBackgroundVariant, style = MaterialTheme.typography.labelSmall) }
-            }
 
             if (targetMenuExpanded && !useInlineTargetMenu) {
                 Dialog(onDismissRequest = { targetMenuExpanded = false }) {
@@ -600,6 +1038,7 @@ fun NoteEditDialog(
                         if (oldText != newText) recordUndo(oldText)
                         tfv = newTfv
                         onTextChange(newText)
+                        onSelectionChange(newTfv.selection)
                     }
             },
                 keyboardOptions = KeyboardOptions(
@@ -609,7 +1048,10 @@ fun NoteEditDialog(
                         androidx.compose.ui.text.input.ImeAction.Default
                     }
                 ),
-                keyboardActions = KeyboardActions(onDone = { if (enterToSave) saveOrClose() }),
+                keyboardActions = KeyboardActions(onDone = {
+                    if (noteMatchingWikilinks.isNotEmpty()) selectWikilink(noteMatchingWikilinks.first())
+                    else if (enterToSave) saveOrClose()
+                }),
                 textStyle = TextStyle(fontSize = 15.sp, lineHeight = 22.sp, color = floater.onBackground),
                 cursorBrush = SolidColor(FloatingCursorPolicy.colorFor(floater.background)),
                 modifier = Modifier
@@ -626,7 +1068,19 @@ fun NoteEditDialog(
                         }
                     }
                     .onPreviewKeyEvent { event ->
-                        if (enterToSave &&
+                        if (event.type == KeyEventType.KeyDown &&
+                            event.key == Key.Escape &&
+                            wikilinkTriggerKey != null
+                        ) {
+                            wikilinkPopupDismissKey = wikilinkTriggerKey
+                            true
+                        } else if (event.type == KeyEventType.KeyDown &&
+                            event.key == Key.Enter &&
+                            noteMatchingWikilinks.isNotEmpty()
+                        ) {
+                            selectWikilink(noteMatchingWikilinks.first())
+                            true
+                        } else if (enterToSave &&
                             event.type == KeyEventType.KeyDown &&
                             (event.key == Key.Enter || event.key == Key.NumPadEnter)
                         ) {
@@ -659,91 +1113,72 @@ fun NoteEditDialog(
                 }
             }
 
-            // ── 底部工具栏（5个按钮，平替之前的 +[图片] 和 +[任务]）──
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start, verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onPickImages, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.Image, "图片", tint = floater.primary, modifier = Modifier.size(20.dp))
-                }
-                IconButton(onClick = {
-                    val newText = taskToggleAtCursor(tfv)
-                    applyTextChange(TextFieldValue(newText, TextRange(newText.length)), forceUndo = true)
-                }, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.CheckBoxOutlineBlank, "任务", tint = floater.primary, modifier = Modifier.size(20.dp))
-                }
-                IconButton(onClick = {
-                    applyTextChange(cycleHeading(tfv), forceUndo = true)
-                }, modifier = Modifier.size(dim.iconXl)) {
-                    Text("#", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = floater.primary)
-                }
-                IconButton(onClick = {
-                    val t = tfv.text; val c = tfv.selection.start
-                    val ls = t.lastIndexOf('\n', c - 1) + 1
-                    val cl = t.substring(ls)
-                    val (nt, nc) = if (cl.startsWith("- ")) {
-                        t.substring(0, ls) + cl.removePrefix("- ") to (c - 2).coerceAtLeast(ls)
-                    } else {
-                        t.substring(0, ls) + "- " + cl to c + 2
+            if (wikilinkTrigger != null &&
+                (wikilinkIndex.loading || noteMatchingWikilinks.isNotEmpty()) &&
+                wikilinkTriggerKey != wikilinkPopupDismissKey
+            ) {
+                if (wikilinkIndex.loading) {
+                    Text(
+                        "正在建立双链索引…",
+                        modifier = Modifier.padding(vertical = 4.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = floater.onBackgroundDim,
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 120.dp),
+                    ) {
+                        items(noteMatchingWikilinks, key = { it.stableKey }) { candidate ->
+                            TextButton(
+                                onClick = { selectWikilink(candidate) },
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 32.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                            ) {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalAlignment = Alignment.Start,
+                                ) {
+                                    Text(
+                                        candidate.displayText,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = floater.primary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    if (candidate.alias != null && aliasCounts[candidate.alias] ?: 0 > 1) {
+                                        Text(
+                                            candidate.targetPath,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = floater.onBackgroundDim,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
-                    applyTextChange(TextFieldValue(nt, TextRange(nc)), forceUndo = true)
-                }, modifier = Modifier.size(36.dp)) {
-                    Text("-", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = floater.primary)
                 }
-                IconButton(onClick = {
-                    val t = tfv.text; val c = tfv.selection.start
-                    if (c >= 2 && c + 2 <= t.length && t.substring(c - 2, c) == "**" && t.substring(c, c + 2) == "**") {
-                        val nt = t.substring(0, c - 2) + t.substring(c + 2)
-                        applyTextChange(TextFieldValue(nt, TextRange(c - 2)), forceUndo = true)
-                    } else {
-                        val nt = t.substring(0, c) + "****" + t.substring(c)
-                        applyTextChange(TextFieldValue(nt, TextRange(c + 2)), forceUndo = true)
-                    }
-                }, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.FormatBold, "加粗", tint = floater.primary, modifier = Modifier.size(20.dp))
-                }
-                // 附件
-                IconButton(onClick = onPickAttachment, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.AttachFile, "附件", tint = floater.primary, modifier = Modifier.size(20.dp))
-                }
-                // 撤销
-                IconButton(
-                    onClick = {
-                        if (localUndoStack.isNotEmpty()) {
-                            val cur = tfv.text
-                            localRedoStack.add(cur)
-                            if (localRedoStack.size > 50) localRedoStack.removeAt(0)
-                            val prev = localUndoStack.removeAt(localUndoStack.lastIndex)
-                            tfv = TextFieldValue(prev, TextRange(prev.length))
-                            onTextChange(prev)
-                            lastUndoTime = 0L
-                            BetaLogger.log("Toolbar", "undo")
+            }
+
+            // ── 共享内容工具栏；保存按钮固定在右侧 ──
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                EditorToolbarActions(
+                    order = toolbarOrder,
+                    visible = toolbarVisible,
+                    tint = floater.primary,
+                    modifier = Modifier.weight(1f),
+                    recording = recording,
+                    recordingDurationMs = recordingDurationMs,
+                    enabled = { action ->
+                        when (action) {
+                            EditorToolbarAction.UNDO -> localUndoStack.isNotEmpty()
+                            EditorToolbarAction.REDO -> localRedoStack.isNotEmpty()
+                            else -> true
                         }
                     },
-                    modifier = Modifier.size(36.dp),
-                    enabled = localUndoStack.isNotEmpty()
-                ) {
-                    Icon(Icons.Default.Undo, "撤销", tint = floater.primary, modifier = Modifier.size(20.dp))
-                }
-                // 重做
-                IconButton(
-                    onClick = {
-                        if (localRedoStack.isNotEmpty()) {
-                            val cur = tfv.text
-                            localUndoStack.add(cur)
-                            if (localUndoStack.size > 50) localUndoStack.removeAt(0)
-                            val next = localRedoStack.removeAt(localRedoStack.lastIndex)
-                            tfv = TextFieldValue(next, TextRange(next.length))
-                            onTextChange(next)
-                            lastUndoTime = 0L
-                            BetaLogger.log("Toolbar", "redo")
-                        }
-                    },
-                    modifier = Modifier.size(36.dp),
-                    enabled = localRedoStack.isNotEmpty()
-                ) {
-                    Icon(Icons.Default.Redo, "重做", tint = floater.primary, modifier = Modifier.size(20.dp))
-                }
-                // 关闭键盘
-                Spacer(Modifier.weight(1f))
+                    onAction = ::handleToolbarAction,
+                )
                 IconButton(
                     onClick = {
                         val t = tfv.text
@@ -792,9 +1227,10 @@ private fun TargetSelectionSurface(
 ) {
     val floater = LocalFloaterColors.current
     val dim = LocalAppDimensions.current
+    val motionPolicy = LocalQuickDailyMotion.current
 
     Surface(
-        modifier = modifier,
+        modifier = modifier.animateContentSize(animationSpec = motionPolicy.spatialSpec()),
         color = floater.background,
         shape = RoundedCornerShape(dim.radiusXl),
         shadowElevation = 8.dp,

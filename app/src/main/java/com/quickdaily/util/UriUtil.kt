@@ -63,7 +63,7 @@ object UriUtil {
         }
     }
 
-    private fun docIdToPath(docId: String): String? {
+    internal fun docIdToPath(docId: String): String? {
         if (docId.startsWith("raw:", ignoreCase = true)) {
             return docId.substringAfter(':').takeIf { it.isNotBlank() }
         }
@@ -71,9 +71,23 @@ object UriUtil {
         if (split.size != 2) return null
 
         val (storage, subPath) = split
+        val normalizedSubPath = subPath.trim()
         return when (storage.lowercase()) {
-            "primary" -> "/storage/emulated/0/$subPath"
-            else -> "/storage/$storage/$subPath"  // SD 卡等外部存储
+            "primary" -> {
+                // Some vendor document providers return an already absolute path
+                // as the primary document ID, e.g. primary:/storage/emulated/0/foo.md.
+                // Do not prepend the primary root a second time in that case.
+                val primaryRoot = "/storage/emulated/0"
+                if (
+                    normalizedSubPath.equals(primaryRoot, ignoreCase = true) ||
+                    normalizedSubPath.startsWith("$primaryRoot/", ignoreCase = true)
+                ) {
+                    normalizedSubPath
+                } else {
+                    "$primaryRoot/${normalizedSubPath.trimStart('/')}"
+                }
+            }
+            else -> "/storage/$storage/${normalizedSubPath.trimStart('/')}" // SD 卡等外部存储
         }
     }
 }

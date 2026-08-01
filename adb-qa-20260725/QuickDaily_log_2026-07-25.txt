@@ -1,0 +1,12 @@
+===== QuickDaily Beta Debug Log =====
+device.manufacturer=Xiaomi
+device.brand=Redmi
+device.model=22041211AC
+android.release=16
+android.sdk=36
+android.incremental=OS3.0.300.4.WONCNXM
+android.display=BP2A.250605.031.A3
+android.fingerprint=Redmi/rubens/rubens:16/BP2A.250605.031.A3/OS3.0.300.4.WONCNXM:user/release-keys
+=====================================
+[2026-07-25 01:05:05.259] [BetaLogger] configured: external=true path=/storage/emulated/0/Documents/QuickDaily/QuickDaily_log_2026-07-25.txt
+[2026-07-25 01:05:10.110] [ScanTags] found 163 tags

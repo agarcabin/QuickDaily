@@ -173,6 +173,40 @@ object ImageUtil {
         }
     }
 
+    /** Copies a locally-created capture (for example an M4A recording) into the vault. */
+    fun copyLocalFileToVault(
+        sourceFile: File,
+        vaultPath: String,
+        storagePath: String,
+        namingFormat: String,
+        customNamingFormat: String = "",
+    ): String? {
+        return try {
+            if (!sourceFile.isFile) return null
+            val ext = sourceFile.extension.takeIf { it.isNotBlank() }?.let { ".${it}" } ?: ".bin"
+            val fileName = generateFileName(
+                namingFormat,
+                sourceFile.nameWithoutExtension,
+                ext,
+                customNamingFormat,
+            )
+            val dir = storagePath.trim('/').takeIf { it.isNotBlank() }.orEmpty()
+            val destDir = if (dir.isNotEmpty()) {
+                File(vaultPath.trimEnd('/'), dir)
+            } else {
+                File(vaultPath.trimEnd('/'))
+            }
+            if (!destDir.exists() && !destDir.mkdirs()) return null
+            val destFile = File(destDir, fileName)
+            sourceFile.inputStream().use { input ->
+                FileOutputStream(destFile).use { output -> input.copyTo(output) }
+            }
+            if (dir.isNotEmpty()) "$dir/$fileName" else fileName
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     /**
      * 批量处理图片并生成 Markdown 引用列表。
      */

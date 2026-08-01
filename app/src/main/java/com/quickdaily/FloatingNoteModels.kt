@@ -8,6 +8,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.TextRange
 import androidx.core.content.ContextCompat
 import com.quickdaily.util.DateUtil
 
@@ -48,11 +49,15 @@ object FloatingNoteTargetStore {
         val customPaths = (TaskWidgetConfigStore.recentCustomPaths(context) + currentPath.orEmpty())
             .filter { it.isNotBlank() }
             .distinct()
+        BetaLogger.log(
+            "FloatingNote/Targets",
+            "options currentPath=${currentPath.orEmpty()} customCount=${customPaths.size} customPaths=${customPaths.joinToString("|")}",
+        )
         return listOf(
             FloatingNoteTargetOption(
                 path = null,
                 title = titleFor(context, null),
-                menuTitle = "今日日记",
+                menuTitle = "日记",
             )
         ) + customPaths.map { path ->
             FloatingNoteTargetOption(path, titleFor(context, path))
@@ -124,6 +129,8 @@ class FloatingNoteEditorState(context: Context) {
     var targetRelativePath by mutableStateOf<String?>(null)
     var displayTitle by mutableStateOf<String?>(null)
     var isSaving by mutableStateOf(false)
+    var selectionStart by mutableStateOf(0)
+    var selectionEnd by mutableStateOf(0)
 
     fun hasContent(): Boolean =
         hasRealContent(text) || selectedImages.isNotEmpty() || pendingAttachments.isNotEmpty()
@@ -137,6 +144,8 @@ object FloatingNoteDraftStore {
     private const val KEY_RETURN_HOME = "floating_draft_return_home"
     private const val KEY_TARGET_PATH = "floating_draft_target_path"
     private const val KEY_DISPLAY_TITLE = "floating_draft_display_title"
+    private const val KEY_SELECTION_START = "floating_draft_selection_start"
+    private const val KEY_SELECTION_END = "floating_draft_selection_end"
     private const val SEPARATOR = "\u001f"
 
     fun loadInto(context: Context, state: FloatingNoteEditorState, request: FloatingNoteRequest) {
@@ -174,6 +183,12 @@ object FloatingNoteDraftStore {
             request.displayTitle ?: FloatingNoteTargetStore.titleFor(context, state.targetRelativePath)
         }
         state.enterToSave = prefs.getBoolean("enter_to_save", true)
+        val selection = TextRange(
+            prefs.getInt(KEY_SELECTION_START, state.text.length).coerceIn(0, state.text.length),
+            prefs.getInt(KEY_SELECTION_END, state.text.length).coerceIn(0, state.text.length),
+        )
+        state.selectionStart = selection.start
+        state.selectionEnd = selection.end
 
         // A new prefill is accepted only when no persisted draft exists.
         if (FloatingNotePolicy.shouldApplyPrefill(
@@ -184,6 +199,8 @@ object FloatingNoteDraftStore {
             )
         ) {
             state.text = request.prefillText
+            state.selectionStart = state.text.length
+            state.selectionEnd = state.text.length
         }
         persist(context, state)
     }
@@ -197,6 +214,8 @@ object FloatingNoteDraftStore {
             .putBoolean(KEY_RETURN_HOME, state.returnToHomeAfterClose)
             .putString(KEY_TARGET_PATH, state.targetRelativePath)
             .putString(KEY_DISPLAY_TITLE, state.displayTitle)
+            .putInt(KEY_SELECTION_START, state.selectionStart.coerceIn(0, state.text.length))
+            .putInt(KEY_SELECTION_END, state.selectionEnd.coerceIn(0, state.text.length))
             .apply()
     }
 
@@ -209,6 +228,8 @@ object FloatingNoteDraftStore {
             .remove(KEY_RETURN_HOME)
             .remove(KEY_TARGET_PATH)
             .remove(KEY_DISPLAY_TITLE)
+            .remove(KEY_SELECTION_START)
+            .remove(KEY_SELECTION_END)
             .apply()
     }
 
@@ -237,6 +258,36 @@ object FloatingNoteDraftStore {
         )
         state.targetRelativePath = path
         state.displayTitle = FloatingNoteTargetStore.titleFor(context, path)
+        persist(context, state)
+    }
+
+    fun updateSelection(context: Context, selection: TextRange) {
+        val state = FloatingNoteEditorState(context)
+        loadInto(
+            context,
+            state,
+            FloatingNoteRequest(FloatingNoteSource.SIDEBAR, returnToHomeAfterClose = false),
+        )
+        state.selectionStart = selection.start.coerceIn(0, state.text.length)
+        state.selectionEnd = selection.end.coerceIn(0, state.text.length)
+        persist(context, state)
+    }
+
+    fun insertLink(context: Context, link: String) {
+        val state = FloatingNoteEditorState(context)
+        loadInto(
+            context,
+            state,
+            FloatingNoteRequest(FloatingNoteSource.SIDEBAR, returnToHomeAfterClose = false),
+        )
+        val next = EditorMediaUtil.insertLink(
+            state.text,
+            TextRange(state.selectionStart, state.selectionEnd),
+            link,
+        )
+        state.text = next.text
+        state.selectionStart = next.selection.start
+        state.selectionEnd = next.selection.end
         persist(context, state)
     }
 

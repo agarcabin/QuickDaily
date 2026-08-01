@@ -7,7 +7,7 @@ import org.junit.Test
 
 class TaskWidgetTaskParserTest {
     @Test
-    fun uncheckedRootKeepsCheckedChildrenVisibleAndIndented() {
+    fun showCompletedOptInKeepsCheckedChildrenVisibleAndIndented() {
         val body = listOf(
             "- [ ] 出差",
             "\t- [ ] 订票",
@@ -20,12 +20,29 @@ class TaskWidgetTaskParserTest {
             body,
             "/vault/2026-07-30.md",
             "2026-07-30",
+            showCompleted = true,
         )
 
-        assertEquals(listOf("出差", "订票", "已确认酒店", "普通任务"), items.map { it.text })
-        assertEquals(listOf(0, 1, 2, 0), items.map { it.indentLevel })
+        assertEquals(6, items.size)
+        assertEquals(listOf(0, 1, 2, 0, 0, 1), items.map { it.indentLevel })
         assertTrue(items[2].checked)
         assertEquals("2026-07-30", items[0].date)
+    }
+
+    @Test
+    fun completedTasksAndTheirTreesAreHiddenByDefault() {
+        val body = """
+            - [ ] Parent
+              - [x] Completed child
+                - [ ] Hidden grandchild
+            - [x] Completed parent
+              - [ ] Hidden child
+            - [ ] Other
+        """.trimIndent()
+
+        val items = TaskWidgetTaskParser.parseVisible(body, "/vault/page.md")
+
+        assertEquals(listOf("Parent", "Other"), items.map { it.text })
     }
 
     @Test

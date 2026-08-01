@@ -25,12 +25,25 @@ object TaskWidgetTaskParser {
         body: String,
         sourcePath: String,
         date: String? = null,
+        showCompleted: Boolean = false,
     ): List<TaskWidgetItem> {
         val allTasks = parse(body, sourcePath, date)
-        val completedRoots = allTasks
-            .filter { it.rootLineIndex == it.lineIndex && it.checked }
-            .mapTo(hashSetOf()) { it.rootLineIndex }
-        return allTasks.filterNot { it.rootLineIndex in completedRoots }
+        if (showCompleted) return allTasks
+
+        var hiddenAtLevel: Int? = null
+        return buildList {
+            allTasks.forEach { item ->
+                if (hiddenAtLevel != null && item.indentLevel <= hiddenAtLevel!!) {
+                    hiddenAtLevel = null
+                }
+                if (hiddenAtLevel != null) return@forEach
+                if (item.checked) {
+                    hiddenAtLevel = item.indentLevel
+                    return@forEach
+                }
+                add(item)
+            }
+        }
     }
 
     fun parse(

@@ -1,10 +1,15 @@
 ﻿package com.quickdaily.ui
 
 import android.app.Activity
+import android.Manifest
+import android.content.pm.PackageManager
+import android.media.MediaRecorder
 import android.os.Build
+import android.os.SystemClock
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
@@ -22,6 +27,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.AttachFile
 import com.quickdaily.BetaLogger
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalClipboardManager
 import android.view.inputmethod.InputMethodManager
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -37,22 +43,44 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.lifecycleScope
 import com.quickdaily.AppState
 import com.quickdaily.markdown.MdRenderer
 import com.quickdaily.markdown.toggleTaskCheck
 import com.quickdaily.util.ImageUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import com.quickdaily.CaptureFileUtil
+import com.quickdaily.EditorMediaUtil
+import com.quickdaily.EditorToolbarAction
+import com.quickdaily.TextIndentPolicy
+import com.quickdaily.EditorTextActionPolicy
+import com.quickdaily.EditorStampPolicy
+import com.quickdaily.ui.theme.LocalQuickDailyMotion
+import com.quickdaily.WikilinkIndexRepository
+import com.quickdaily.WikilinkCandidate
+import com.quickdaily.WikilinkCandidatePolicy
+import com.quickdaily.WikilinkRecentStore
+import com.quickdaily.WikilinkPolicy
 import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
+import androidx.compose.animation.animateContentSize
 import androidx.compose.ui.graphics.Path
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -64,6 +92,8 @@ fun EditorScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val windowSize = rememberQuickDailyWindowSize()
+    val motionPolicy = LocalQuickDailyMotion.current
     // Bug2: 设置导航栏颜色与工具栏一致（提前 capture，避免 @Composable 访问问题）
     val navBarColor = MaterialTheme.colorScheme.surface.toArgb()
     val diaryContent by appState.diaryContent.collectAsState()
@@ -71,11 +101,16 @@ fun EditorScreen(
     val todayPath by appState.todayPath.collectAsState()
     val editorTargetRelativePath by appState.editorTargetRelativePath.collectAsState()
     val config by appState.config.collectAsState()
-    val allTags by appState.tags.collectAsState()
     val canUndo by appState.canUndo.collectAsState()
     val canRedo by appState.canRedo.collectAsState()
-        val view = LocalView.current
-val title = todayPath.substringAfterLast("/").removeSuffix(".md")
+    val wikilinkIndex by WikilinkIndexRepository.indexState.collectAsState()
+    val completionIndex = wikilinkIndex.takeIf {
+        it.rootPath == config.vaultPath && it.indexed && it.tagsIndexed && it.error == null
+    }
+    val allTags = completionIndex?.tags.orEmpty()
+    val view = LocalView.current
+    val title = todayPath.substringAfterLast("/").removeSuffix(".md")
+    val clipboardManager = LocalClipboardManager.current
     SideEffect {
         try {
             val window = (context as? Activity)?.window ?: return@SideEffect
@@ -89,27 +124,139 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
 
     var showPreview by remember { mutableStateOf(false) }
     var textFieldValue by remember { mutableStateOf(TextFieldValue("")) }
+    var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
+    var pendingCameraFile by remember { mutableStateOf<java.io.File?>(null) }
+    var recorder by remember { mutableStateOf<MediaRecorder?>(null) }
+    var recordingFile by remember { mutableStateOf<java.io.File?>(null) }
+    var recordingStartedAt by remember { mutableStateOf<Long?>(null) }
+    var recordingElapsedMs by remember { mutableLongStateOf(0L) }
+    var wikilinkPopupDismissKey by remember { mutableStateOf<String?>(null) }
+    var recentWikilinks by remember { mutableStateOf(WikilinkRecentStore.load(context)) }
+
+    fun applyInsertedLink(link: String) {
+        val next = EditorMediaUtil.insertLink(textFieldValue.text, textFieldValue.selection, link)
+        textFieldValue = next
+        appState.onContentChanged(next.text, forceUndoPoint = true)
+    }
+
+    fun insertImage(uri: Uri) {
+        scope.launch(Dispatchers.IO) {
+            val link = runCatching { EditorMediaUtil.imageLink(context, uri) }.getOrNull()
+            withContext(Dispatchers.Main) {
+                if (link != null) applyInsertedLink(link)
+            }
+        }
+    }
+
+    fun finishRecording() {
+        val activeRecorder = recorder ?: return
+        val file = recordingFile
+        recorder = null
+        recordingFile = null
+        recordingStartedAt = null
+        recordingElapsedMs = 0L
+        val stopped = runCatching { activeRecorder.stop() }.isSuccess
+        runCatching { activeRecorder.reset() }
+        runCatching { activeRecorder.release() }
+        if (!stopped || file == null) {
+            file?.delete()
+            return
+        }
+        val host = context as? androidx.activity.ComponentActivity
+        (host?.lifecycleScope ?: scope).launch(Dispatchers.IO) {
+            val link = runCatching { EditorMediaUtil.audioLink(context, file) }.getOrNull()
+            if (link != null) file.delete()
+            withContext(Dispatchers.Main) {
+                if (link != null) applyInsertedLink(link)
+                else Toast.makeText(context, "录音保存失败，临时文件已保留", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    fun startRecordingNow() {
+        if (recorder != null) return
+        val file = runCatching { CaptureFileUtil.newAudioFile(context) }.getOrNull() ?: return
+        val nextRecorder = runCatching {
+            MediaRecorder().apply {
+                setAudioSource(MediaRecorder.AudioSource.MIC)
+                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                setOutputFile(file.absolutePath)
+                prepare()
+                start()
+            }
+        }.getOrNull()
+        if (nextRecorder == null) {
+            file.delete()
+            Toast.makeText(context, "无法开始录音", Toast.LENGTH_SHORT).show()
+            return
+        }
+        recorder = nextRecorder
+        recordingFile = file
+        recordingStartedAt = SystemClock.elapsedRealtime()
+    }
+
+    val cameraLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicture()
+    ) { success ->
+        val uri = pendingCameraUri
+        val file = pendingCameraFile
+        pendingCameraUri = null
+        pendingCameraFile = null
+        if (success && uri != null) insertImage(uri)
+        else file?.delete()
+    }
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            val file = runCatching { CaptureFileUtil.newImageFile(context) }.getOrNull()
+            if (file == null) {
+                Toast.makeText(context, "无法创建照片文件", Toast.LENGTH_SHORT).show()
+            } else {
+                val uri = CaptureFileUtil.fileUri(context, file)
+                pendingCameraFile = file
+                pendingCameraUri = uri
+                cameraLauncher.launch(uri)
+            }
+        } else {
+            Toast.makeText(context, "请允许相机权限后再拍照", Toast.LENGTH_SHORT).show()
+        }
+    }
+    val audioPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) startRecordingNow()
+        else Toast.makeText(context, "请允许录音权限后再录音", Toast.LENGTH_SHORT).show()
+    }
+
+    fun toggleRecording() {
+        if (recorder != null) {
+            finishRecording()
+        } else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            startRecordingNow()
+        } else {
+            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    LaunchedEffect(recordingStartedAt) {
+        while (recordingStartedAt != null) {
+            recordingElapsedMs = SystemClock.elapsedRealtime() - (recordingStartedAt ?: break)
+            delay(250)
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { finishRecording() }
+    }
 
     // 图片选择器（跟悬浮窗一样）
     val imagePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetMultipleContents()
     ) { uris: List<Uri> ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
-        scope.launch(Dispatchers.IO) {
-            val links = ImageUtil.processImages(
-                context, uris, config.vaultPath,
-                config.imageStoragePath, config.imageNamingFormat,
-                config.imageLinkFormat, config.imageCustomNamingFormat
-            )
-            withContext(Dispatchers.Main) {
-                val text = textFieldValue.text
-                val cursor = textFieldValue.selection.start
-                val imagesText = links.joinToString("\n")
-                val newText = text.substring(0, cursor) + imagesText + "\n" + text.substring(cursor)
-                textFieldValue = TextFieldValue(newText, TextRange(cursor + imagesText.length + 1))
-                appState.onContentChanged(newText, forceUndoPoint = true)
-            }
-        }
+        uris.forEach(::insertImage)
     }
     // 附件选择器
     val attachmentPicker = rememberLauncherForActivityResult(
@@ -147,19 +294,21 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
                 "![[" + relativePath + "]]"
             }
             withContext(Dispatchers.Main) {
-                val text = textFieldValue.text
-                val cursor = textFieldValue.selection.start
-                val newText = text.substring(0, cursor) + link + "\n" + text.substring(cursor)
-                textFieldValue = TextFieldValue(newText, TextRange(cursor + link.length + 1))
-                appState.onContentChanged(newText, forceUndoPoint = true)
+                val next = EditorMediaUtil.insertLink(
+                    textFieldValue.text,
+                    textFieldValue.selection,
+                    link,
+                )
+                textFieldValue = next
+                appState.onContentChanged(next.text, forceUndoPoint = true)
             }
         }
     }
 
 
     // -- Tag autocomplete --
-    val tagCompletion = remember(textFieldValue, config) {
-        if (!config.tagAutocomplete) return@remember Triple(false, "", 0)
+    val tagCompletion = remember(textFieldValue, config, allTags) {
+        if (!config.tagAutocomplete || completionIndex == null) return@remember Triple(false, "", 0)
         val text = textFieldValue.text
         val cursor = textFieldValue.selection.start
         if (cursor > 0 && cursor <= text.length) {
@@ -214,6 +363,58 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
         }
     }
 
+    LaunchedEffect(config.vaultPath) {
+        WikilinkIndexRepository.ensureIndexed(context, config.vaultPath)
+    }
+    LaunchedEffect(wikilinkIndex.error) {
+        wikilinkIndex.error?.let { message ->
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        }
+    }
+    val wikilinkTrigger = remember(textFieldValue.text, textFieldValue.selection, config, wikilinkIndex) {
+        if (!config.wikilinkAutocomplete || config.vaultPath.isBlank() || wikilinkIndex.rootPath != config.vaultPath || wikilinkIndex.error != null) {
+            null
+        } else {
+            WikilinkPolicy.trigger(textFieldValue.text, textFieldValue.selection.start)
+        }
+    }
+    val matchingWikilinks = remember(wikilinkIndex.candidates, wikilinkTrigger, recentWikilinks) {
+        val trigger = wikilinkTrigger ?: return@remember emptyList<WikilinkCandidate>()
+        if (trigger.query.isBlank()) {
+            recentWikilinks.take(WikilinkCandidatePolicy.DEFAULT_LIMIT)
+        } else {
+            WikilinkPolicy.filterWikilinkCandidates(wikilinkIndex.candidates, trigger.query)
+        }
+    }
+    val aliasCounts = remember(wikilinkIndex.aliases) {
+        wikilinkIndex.aliases.groupingBy { it.alias }.eachCount()
+    }
+
+    fun selectWikilink(candidate: WikilinkCandidate) {
+        val currentTrigger = wikilinkTrigger ?: return
+        val replacement = candidate.insertionText
+        val text = textFieldValue.text
+        val newText = text.substring(0, currentTrigger.start) + replacement + text.substring(currentTrigger.replaceEnd)
+        val cursor = currentTrigger.start + replacement.length
+        textFieldValue = TextFieldValue(newText, TextRange(cursor))
+        appState.onContentChanged(newText, forceUndoPoint = true)
+        WikilinkRecentStore.record(context, candidate)
+        recentWikilinks = listOf(candidate) + recentWikilinks.filterNot { it.stableKey == candidate.stableKey }
+            .take(9)
+    }
+
+    fun applyTextAction(result: com.quickdaily.EditorTextActionResult) {
+        result.clipboardText?.let { clipboardManager.setText(AnnotatedString(it)) }
+        if (result.text != textFieldValue.text) {
+            textFieldValue = TextFieldValue(result.text, result.selection)
+            appState.onContentChanged(result.text, forceUndoPoint = true)
+        } else {
+            textFieldValue = TextFieldValue(result.text, result.selection)
+        }
+    }
+
+    val wikilinkTriggerKey = wikilinkTrigger?.let { "${it.start}:${it.replaceEnd}:${it.query}" }
+
     LaunchedEffect(editorTargetRelativePath) { appState.loadEditorTarget(editorTargetRelativePath) }
     LaunchedEffect(diaryContent) {
         if (diaryContent != textFieldValue.text) textFieldValue = TextFieldValue(diaryContent)
@@ -242,7 +443,7 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
                     }) {
                         Text("打开Obsidian",
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onPrimary)
+                            color = MaterialTheme.colorScheme.primary)
                     }
 
                     IconButton(onClick = { showPreview = !showPreview }) {
@@ -251,9 +452,10 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
                     IconButton(onClick = onSettingsClick) { Icon(Icons.Default.Settings, null) }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    actionIconContentColor = MaterialTheme.colorScheme.onSurface
                 )
             )
                 HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
@@ -262,116 +464,180 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
         bottomBar = {
             if (!showPreview) {
                 Surface(
-                    shadowElevation = 8.dp,
-                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 2.dp,
+                    shadowElevation = 0.dp,
+                    color = MaterialTheme.colorScheme.surfaceContainer,
                     // 小白条上方 + 输入法上方
                     modifier = Modifier.fillMaxWidth().imePadding()
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 4.dp, vertical = 2.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .padding(
+                                horizontal = if (windowSize.isLarge) 12.dp else 4.dp,
+                                vertical = 4.dp,
+                            ),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // 图片 - 拉起安卓图片选择器
-                        ToolbarIconButton(
-                            icon = { Icon(Icons.Default.Image, "插入图片", modifier = Modifier.size(22.dp)) },
-                            onClick = { onExternalLaunch(); imagePicker.launch("image/*") }
-                        )
-                        // 任务 - 三态循环
-                        ToolbarIconButton(
-                            icon = { Icon(Icons.Default.CheckBoxOutlineBlank, "插入任务", modifier = Modifier.size(22.dp)) },
-                            onClick = {
-                                val t = textFieldValue.text; val c = textFieldValue.selection.start
-                                val ls = t.lastIndexOf('\n', c - 1) + 1; val le = t.indexOf('\n', c).let { if (it < 0) t.length else it }
-                                val line = t.substring(ls, le)
-                                val re = Regex("""^\s*(-\s*\[\s*([ xX])\s*\])\s*""")
-                                val m = re.find(line)
-                                val (nt, nc) = if (m != null) {
-                                    val chk = m.groupValues[2]; val rest = line.substring(m.value.length).trimStart()
-                                    if (chk.trim().isEmpty()) {
-                                        t.substring(0, ls) + "- [x] $rest" + t.substring(le) to (ls + 6)
-                                    } else {
-                                        t.substring(0, ls) + rest + t.substring(le) to ls
+                        Box(Modifier.weight(1f)) {
+                            EditorToolbarActions(
+                                order = config.toolbarOrder,
+                                visible = config.toolbarVisible,
+                                tint = MaterialTheme.colorScheme.primary,
+                                enabled = { action ->
+                                    when (action) {
+                                        EditorToolbarAction.UNDO -> canUndo
+                                        EditorToolbarAction.REDO -> canRedo
+                                        else -> true
                                     }
-                                } else {
-                                    t.substring(0, ls) + "- [ ] $line" + t.substring(le) to (ls + 6)
-                                }
-                                textFieldValue = TextFieldValue(nt, TextRange(nc))
-                                appState.onContentChanged(nt, forceUndoPoint = true)
-                            }
-                        )
-                        // #号 - 标题循环
-                        ToolbarIconButton(
-                            icon = { Text("#", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
-                            onClick = {
-                                val text = textFieldValue.text
-                                val pos = textFieldValue.selection.start
-                                val lineStart = text.lastIndexOf("\n", pos - 1) + 1
-                                val lineEnd = text.indexOf("\n", pos).let { if (it < 0) text.length else it }
-                                val line = text.substring(lineStart, lineEnd)
-                                val trimmed = line.trimStart()
-                                val newTrimmed = when {
-                                    trimmed.startsWith("### ") -> trimmed.removePrefix("### ")
-                                    trimmed.startsWith("## ") -> "### " + trimmed.removePrefix("## ")
-                                    trimmed.startsWith("# ") -> "## " + trimmed.removePrefix("# ")
-                                    else -> "# " + trimmed
-                                }
-                                val indent = line.substring(0, line.length - trimmed.length)
-                                val newLine = indent + newTrimmed
-                                val nt = text.substring(0, lineStart) + newLine + text.substring(lineEnd)
-                                val nc = lineStart + newLine.length
-                                textFieldValue = TextFieldValue(nt, TextRange(nc))
-                                appState.onContentChanged(nt, forceUndoPoint = true)
-                            }
-                        )
-                        // -号 - 行首切换-
-                        ToolbarIconButton(
-                            icon = { Text("-", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
-                            onClick = {
-                                val t = textFieldValue.text; val c = textFieldValue.selection.start
-                                val ls = t.lastIndexOf('\n', c - 1) + 1
-                                val cl = t.substring(ls)
-                                val (nt, nc) = if (cl.startsWith("- ")) {
-                                    t.substring(0, ls) + cl.removePrefix("- ") to (c - 2).coerceAtLeast(ls)
-                                } else {
-                                    t.substring(0, ls) + "- " + cl to c + 2
-                                }
-                                textFieldValue = TextFieldValue(nt, TextRange(nc))
-                                appState.onContentChanged(nt, forceUndoPoint = true)
-                            }
-                        )
-                        // 加粗 - 切换****
-                        ToolbarIconButton(
-                            icon = { Icon(Icons.Default.FormatBold, "加粗", modifier = Modifier.size(22.dp)) },
-                            onClick = {
-                                val t = textFieldValue.text; val c = textFieldValue.selection.start
-                                if (c >= 2 && c + 2 <= t.length && t.substring(c - 2, c) == "**" && t.substring(c, c + 2) == "**") {
-                                    val nt = t.substring(0, c - 2) + t.substring(c + 2)
-                                    textFieldValue = TextFieldValue(nt, TextRange(c - 2)); appState.onContentChanged(nt, forceUndoPoint = true)
-                                } else {
-                                    val nt = t.substring(0, c) + "****" + t.substring(c)
-                                    textFieldValue = TextFieldValue(nt, TextRange(c + 2)); appState.onContentChanged(nt, forceUndoPoint = true)
-                                }
-                            }
-                        )
-                        // 附件
-                        ToolbarIconButton(
-                            icon = { Icon(Icons.Default.AttachFile, "插入附件", modifier = Modifier.size(22.dp)) },
-                            onClick = { onExternalLaunch(); attachmentPicker.launch("*/*") }
-                        )
-                        // 撤销
-                        ToolbarIconButton(
-                            icon = { Icon(Icons.Default.Undo, "撤销", modifier = Modifier.size(22.dp)) },
-                            onClick = { appState.undo(); BetaLogger.log("Toolbar", "undo") },
-                            enabled = canUndo
-                        )
-                        // 重做
-                        ToolbarIconButton(
-                            icon = { Icon(Icons.Default.Redo, "重做", modifier = Modifier.size(22.dp)) },
-                            onClick = { appState.redo(); BetaLogger.log("Toolbar", "redo") },
-                            enabled = canRedo
-                        )
-                        // 关闭键盘
+                                },
+                                recording = recorder != null,
+                                recordingDurationMs = recordingElapsedMs,
+                                buttonSize = 48.dp,
+                                onAction = { action ->
+                                    when (action) {
+                                        EditorToolbarAction.IMAGE -> {
+                                            onExternalLaunch()
+                                            imagePicker.launch("image/*")
+                                        }
+                                        EditorToolbarAction.CAMERA -> {
+                                            onExternalLaunch()
+                                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                                                val file = runCatching { CaptureFileUtil.newImageFile(context) }.getOrNull()
+                                                if (file == null) {
+                                                    Toast.makeText(context, "无法创建照片文件", Toast.LENGTH_SHORT).show()
+                                                } else {
+                                                    val uri = CaptureFileUtil.fileUri(context, file)
+                                                    pendingCameraFile = file
+                                                    pendingCameraUri = uri
+                                                    cameraLauncher.launch(uri)
+                                                }
+                                            } else {
+                                                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                                            }
+                                        }
+                                        EditorToolbarAction.RECORD -> toggleRecording()
+                                        EditorToolbarAction.ATTACHMENT -> {
+                                            onExternalLaunch()
+                                            attachmentPicker.launch("*/*")
+                                        }
+                                        EditorToolbarAction.INDENT -> {
+                                            val result = TextIndentPolicy.indent(textFieldValue.text, textFieldValue.selection)
+                                            textFieldValue = TextFieldValue(result.text, result.selection)
+                                            appState.onContentChanged(result.text, forceUndoPoint = true)
+                                        }
+                                        EditorToolbarAction.OUTDENT -> {
+                                            val result = TextIndentPolicy.outdent(textFieldValue.text, textFieldValue.selection)
+                                            textFieldValue = TextFieldValue(result.text, result.selection)
+                                            appState.onContentChanged(result.text, forceUndoPoint = true)
+                                        }
+                                        EditorToolbarAction.CUT_LINE -> applyTextAction(
+                                            EditorTextActionPolicy.cutLine(textFieldValue.text, textFieldValue.selection)
+                                        )
+                                        EditorToolbarAction.MOVE_LINE_UP -> applyTextAction(
+                                            EditorTextActionPolicy.moveLineUp(textFieldValue.text, textFieldValue.selection)
+                                        )
+                                        EditorToolbarAction.MOVE_LINE_DOWN -> applyTextAction(
+                                            EditorTextActionPolicy.moveLineDown(textFieldValue.text, textFieldValue.selection)
+                                        )
+                                        EditorToolbarAction.TIMESTAMP -> {
+                                            applyTextAction(
+                                                EditorTextActionPolicy.insert(
+                                                    textFieldValue.text,
+                                                    textFieldValue.selection,
+                                                    EditorStampPolicy.toolbarTimestampInsertion(),
+                                                )
+                                            )
+                                        }
+                                        EditorToolbarAction.DATE_STAMP -> applyTextAction(
+                                            EditorTextActionPolicy.insert(
+                                                textFieldValue.text,
+                                                textFieldValue.selection,
+                                                EditorStampPolicy.dateInsertion(),
+                                            )
+                                        )
+                                        EditorToolbarAction.WIKILINK -> applyTextAction(
+                                            EditorTextActionPolicy.insert(textFieldValue.text, textFieldValue.selection, "[[")
+                                        )
+                                        EditorToolbarAction.TASK -> {
+                                            val t = textFieldValue.text
+                                            val c = textFieldValue.selection.start
+                                            val ls = t.lastIndexOf('\n', c - 1) + 1
+                                            val le = t.indexOf('\n', c).let { if (it < 0) t.length else it }
+                                            val line = t.substring(ls, le)
+                                            val re = Regex("""^\s*(-\s*\[\s*([ xX])\s*\])\s*""")
+                                            val m = re.find(line)
+                                            val (nt, nc) = if (m != null) {
+                                                val chk = m.groupValues[2]
+                                                val rest = line.substring(m.value.length).trimStart()
+                                                if (chk.trim().isEmpty()) {
+                                                    t.substring(0, ls) + "- [x] $rest" + t.substring(le) to (ls + 6)
+                                                } else {
+                                                    t.substring(0, ls) + rest + t.substring(le) to ls
+                                                }
+                                            } else {
+                                                t.substring(0, ls) + "- [ ] $line" + t.substring(le) to (ls + 6)
+                                            }
+                                            textFieldValue = TextFieldValue(nt, TextRange(nc))
+                                            appState.onContentChanged(nt, forceUndoPoint = true)
+                                        }
+                                        EditorToolbarAction.HEADING -> {
+                                            val text = textFieldValue.text
+                                            val pos = textFieldValue.selection.start
+                                            val lineStart = text.lastIndexOf("\n", pos - 1) + 1
+                                            val lineEnd = text.indexOf("\n", pos).let { if (it < 0) text.length else it }
+                                            val line = text.substring(lineStart, lineEnd)
+                                            val trimmed = line.trimStart()
+                                            val newTrimmed = when {
+                                                trimmed.startsWith("### ") -> trimmed.removePrefix("### ")
+                                                trimmed.startsWith("## ") -> "### " + trimmed.removePrefix("## ")
+                                                trimmed.startsWith("# ") -> "## " + trimmed.removePrefix("# ")
+                                                else -> "# " + trimmed
+                                            }
+                                            val indent = line.substring(0, line.length - trimmed.length)
+                                            val newLine = indent + newTrimmed
+                                            val nt = text.substring(0, lineStart) + newLine + text.substring(lineEnd)
+                                            textFieldValue = TextFieldValue(nt, TextRange(lineStart + newLine.length))
+                                            appState.onContentChanged(nt, forceUndoPoint = true)
+                                        }
+                                        EditorToolbarAction.LIST -> {
+                                            val t = textFieldValue.text
+                                            val c = textFieldValue.selection.start
+                                            val ls = t.lastIndexOf('\n', c - 1) + 1
+                                            val cl = t.substring(ls)
+                                            val (nt, nc) = if (cl.startsWith("- ")) {
+                                                t.substring(0, ls) + cl.removePrefix("- ") to (c - 2).coerceAtLeast(ls)
+                                            } else {
+                                                t.substring(0, ls) + "- " + cl to c + 2
+                                            }
+                                            textFieldValue = TextFieldValue(nt, TextRange(nc))
+                                            appState.onContentChanged(nt, forceUndoPoint = true)
+                                        }
+                                        EditorToolbarAction.BOLD -> {
+                                            val t = textFieldValue.text
+                                            val c = textFieldValue.selection.start
+                                            val nt = if (c >= 2 && c + 2 <= t.length && t.substring(c - 2, c) == "**" && t.substring(c, c + 2) == "**") {
+                                                t.substring(0, c - 2) + t.substring(c + 2)
+                                            } else {
+                                                t.substring(0, c) + "****" + t.substring(c)
+                                            }
+                                            val nc = if (nt.length < t.length) c - 2 else c + 2
+                                            textFieldValue = TextFieldValue(nt, TextRange(nc))
+                                            appState.onContentChanged(nt, forceUndoPoint = true)
+                                        }
+                                        EditorToolbarAction.UNDO -> {
+                                            appState.undo()
+                                            BetaLogger.log("Toolbar", "undo")
+                                        }
+                                        EditorToolbarAction.REDO -> {
+                                            appState.redo()
+                                            BetaLogger.log("Toolbar", "redo")
+                                        }
+                                    }
+                                },
+                            )
+                        }
                         ToolbarIconButton(
                             icon = { Icon(Icons.Default.KeyboardArrowDown, "关闭键盘", modifier = Modifier.size(22.dp)) },
                             onClick = {
@@ -426,7 +692,7 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
                         .padding(16.dp)
                         .onSizeChanged { viewportH = it.height }
                 ) {
-                    BasicTextField(
+                        BasicTextField(
                         value = textFieldValue,
                         onValueChange = { newValue ->
                             textFieldValue = newValue
@@ -434,7 +700,23 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
                         },
                         onTextLayout = { textLayoutResult = it },
                         textStyle = TextStyle(fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface, lineHeight = 24.sp),
-                        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 400.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .defaultMinSize(minHeight = 400.dp)
+                            .onPreviewKeyEvent { event ->
+                                if (event.type == KeyEventType.KeyDown && event.key == Key.Escape && wikilinkTriggerKey != null) {
+                                    wikilinkPopupDismissKey = wikilinkTriggerKey
+                                    true
+                                } else if (event.type == KeyEventType.KeyDown &&
+                                    event.key == Key.Enter &&
+                                    matchingWikilinks.isNotEmpty()
+                                ) {
+                                    selectWikilink(matchingWikilinks.first())
+                                    true
+                                } else {
+                                    false
+                                }
+                            },
                         decorationBox = { innerField ->
                             if (textFieldValue.text.isEmpty()) Text("开始写今天的日记...", color = Color.Gray, fontSize = 16.sp)
                             innerField()
@@ -457,7 +739,10 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
                         properties = PopupProperties(focusable = false, dismissOnBackPress = true, dismissOnClickOutside = true)
                     ) {
                         Surface(
-                            modifier = Modifier.widthIn(max = 300.dp).heightIn(max = 200.dp),
+                            modifier = Modifier
+                                .widthIn(max = 300.dp)
+                                .heightIn(max = 200.dp)
+                                .animateContentSize(animationSpec = motionPolicy.spatialSpec()),
                             shadowElevation = 6.dp,
                             shape = MaterialTheme.shapes.small,
                             color = MaterialTheme.colorScheme.surface
@@ -476,6 +761,77 @@ val title = todayPath.substringAfterLast("/").removeSuffix(".md")
                                     }
                                 }
             }
+                        }
+                    }
+                }
+                if (wikilinkTrigger != null &&
+                    (wikilinkIndex.loading || matchingWikilinks.isNotEmpty()) &&
+                    wikilinkTriggerKey != wikilinkPopupDismissKey
+                ) {
+                    val cursorPos = textFieldValue.selection.start
+                    val layoutResult = textLayoutResult
+                    val cr = layoutResult?.takeIf { cursorPos <= it.layoutInput.text.length }?.getCursorRect(cursorPos)
+                    val density = LocalDensity.current
+                    val padPx = with(density) { 16.dp.toPx() }
+                    val sy = scrollState.value
+                    val popupX = ((cr?.left?.toInt() ?: 0) + padPx.toInt()).coerceAtLeast(8)
+                    val popupY = ((cr?.bottom?.toInt() ?: 0) + padPx.toInt() - sy + 8).coerceAtLeast(0)
+                    Popup(
+                        alignment = Alignment.TopStart,
+                        offset = IntOffset(popupX, popupY),
+                        properties = PopupProperties(
+                            focusable = false,
+                            dismissOnBackPress = true,
+                            dismissOnClickOutside = true,
+                        )
+                    ) {
+                        Surface(
+                            modifier = Modifier
+                                .widthIn(max = 300.dp)
+                                .heightIn(max = 240.dp)
+                                .animateContentSize(animationSpec = motionPolicy.spatialSpec()),
+                            shadowElevation = 6.dp,
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.surface,
+                        ) {
+                            Column(Modifier.verticalScroll(rememberScrollState()).padding(vertical = 2.dp)) {
+                                if (wikilinkIndex.loading && matchingWikilinks.isEmpty()) {
+                                    Text(
+                                        "正在建立双链索引…",
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                } else {
+                                    matchingWikilinks.forEach { candidate ->
+                                        TextButton(
+                                            onClick = { selectWikilink(candidate) },
+                                            modifier = Modifier.fillMaxWidth().heightIn(min = 32.dp),
+                                        ) {
+                                            Column(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalAlignment = Alignment.Start,
+                                            ) {
+                                                Text(
+                                                    candidate.displayText,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                )
+                                                if (candidate.alias != null && aliasCounts[candidate.alias] ?: 0 > 1) {
+                                                    Text(
+                                                        candidate.targetPath,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

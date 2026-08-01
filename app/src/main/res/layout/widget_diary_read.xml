@@ -35,7 +35,8 @@
             android:id="@+id/btn_home"
             android:layout_width="28dp"
             android:layout_height="28dp"
-            android:src="@drawable/ic_home_white"
+            android:contentDescription="打开编辑页"
+            android:src="@drawable/ic_edit_white"
             android:background="@null"
             android:scaleType="centerInside" />
 

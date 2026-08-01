@@ -12,6 +12,7 @@ class QuickDailyReadWidgetService : RemoteViewsService() {
     }
 
     override fun onGetViewFactory(intent: Intent): RemoteViewsService.RemoteViewsFactory {
+        BetaLogger.init(applicationContext, "QuickDailyReadWidgetService")
         val widgetId = intent.getIntExtra(android.appwidget.AppWidgetManager.EXTRA_APPWIDGET_ID, -1)
         BetaLogger.log(
             "ReadWidgetSvc",
@@ -46,7 +47,7 @@ class ReadViewsFactory(private val context: Context, private val widgetId: Int) 
             val size = WidgetSizePolicy.forWidget(
                 android.appwidget.AppWidgetManager.getInstance(context), widgetId
             )
-            ReadWidgetViews.create(context, it, position, size)
+            ReadWidgetViews.create(context, it, size)
         }
             ?: RemoteViews(context.packageName, R.layout.widget_diary_read_line)
 

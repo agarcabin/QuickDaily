@@ -12,6 +12,18 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -22,6 +34,7 @@ import androidx.lifecycle.lifecycleScope
 import com.quickdaily.ui.EditorScreen
 import com.quickdaily.ui.SettingsScreen
 import com.quickdaily.ui.theme.QuickDailyTheme
+import com.quickdaily.ui.theme.rememberQuickDailyMotionPolicy
 import com.quickdaily.util.ImageUtil
 import com.quickdaily.util.DiaryAppendUtil
 import com.quickdaily.BetaLogger
@@ -79,18 +92,62 @@ class MainActivity : ComponentActivity() {
         setContent {
             QuickDailyTheme {
                 val navigator = remember { Navigator(firstLaunch) }
-
-                when (navigator.screen) {
-                    Screen.EDITOR -> EditorScreen(
-                        appState = appState,
-                        onSettingsClick = { navigator.screen = Screen.SETTINGS },
-                        onExternalLaunch = { externalLaunching = true }
-                    )
-                    Screen.SETTINGS -> SettingsScreen(
-                        appState = appState,
-                        onBack = { navigator.screen = Screen.EDITOR },
-                        onExternalLaunch = { externalLaunching = true }
-                    )
+                val motionPolicy = rememberQuickDailyMotionPolicy()
+                val reducedMotion = motionPolicy.reducedMotion
+                val firstLaunchEntrance = remember(firstLaunch) {
+                    MutableTransitionState(!firstLaunch).apply { targetState = true }
+                }
+                AnimatedVisibility(
+                    visibleState = firstLaunchEntrance,
+                    enter = if (reducedMotion) EnterTransition.None else {
+                        slideInHorizontally(
+                            animationSpec = motionPolicy.spatialSpec(),
+                            initialOffsetX = { it },
+                        ) + fadeIn(animationSpec = motionPolicy.effectSpec())
+                    },
+                    label = "settingsInitialEntrance",
+                ) {
+                    AnimatedContent(
+                        targetState = navigator.screen,
+                        contentKey = { it },
+                        transitionSpec = {
+                            if (reducedMotion) {
+                                ContentTransform(EnterTransition.None, ExitTransition.None)
+                            } else if (targetState == Screen.SETTINGS) {
+                                (slideIntoContainer(
+                                    towards = AnimatedContentTransitionScope.SlideDirection.Left,
+                                    animationSpec = motionPolicy.spatialSpec(),
+                                ) + fadeIn(animationSpec = motionPolicy.effectSpec())) togetherWith
+                                    (slideOutOfContainer(
+                                        towards = AnimatedContentTransitionScope.SlideDirection.Left,
+                                        animationSpec = motionPolicy.spatialSpec(),
+                                    ) + fadeOut(animationSpec = motionPolicy.effectSpec()))
+                            } else {
+                                (slideIntoContainer(
+                                    towards = AnimatedContentTransitionScope.SlideDirection.Right,
+                                    animationSpec = motionPolicy.spatialSpec(),
+                                ) + fadeIn(animationSpec = motionPolicy.effectSpec())) togetherWith
+                                    (slideOutOfContainer(
+                                        towards = AnimatedContentTransitionScope.SlideDirection.Right,
+                                        animationSpec = motionPolicy.spatialSpec(),
+                                    ) + fadeOut(animationSpec = motionPolicy.effectSpec()))
+                            }.using(SizeTransform(clip = false))
+                        },
+                        label = "settingsNavigation",
+                    ) { screen ->
+                        when (screen) {
+                            Screen.EDITOR -> EditorScreen(
+                                appState = appState,
+                                onSettingsClick = { navigator.screen = Screen.SETTINGS },
+                                onExternalLaunch = { externalLaunching = true }
+                            )
+                            Screen.SETTINGS -> SettingsScreen(
+                                appState = appState,
+                                onBack = { navigator.screen = Screen.EDITOR },
+                                onExternalLaunch = { externalLaunching = true }
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -354,7 +411,8 @@ class MainActivity : ComponentActivity() {
             action = intent?.action,
             categories = intent?.categories,
             vaultPath = appState.config.value.vaultPath,
-            hasStorageAccess = hasStorageAccess()
+            hasStorageAccess = hasStorageAccess(),
+            homeEntryMode = appState.config.value.homeEntryMode,
         )
     }
 
@@ -371,20 +429,12 @@ class MainActivity : ComponentActivity() {
 
     private fun launchQuickNoteFromLauncher(): Boolean {
         return try {
-            val systemSidebarSupport = FloatingNoteEntryPolicy.isSystemSidebarSupportEnabled(this)
-            if (!systemSidebarSupport) {
-                BetaLogger.log("FloatingNote/Launch", "main launcher legacy activity path")
-                FloatingNoteEntryPolicy.launchLegacyEditor(this)
-                finishAndRemoveTask()
-                return true
-            }
-
             val overlayAllowed = Settings.canDrawOverlays(this)
             val request = FloatingNoteRequest(
                 source = FloatingNoteSource.DESKTOP_LAUNCHER,
                 returnToHomeAfterClose = false
             )
-            if (!QuickLaunchPolicy.shouldUseSystemOverlay(systemSidebarSupport, overlayAllowed) ||
+            if (!QuickLaunchPolicy.shouldUseSystemOverlay(true, overlayAllowed) ||
                 !FloatingNoteControllerProvider.forContext(this).showOrFocus(request)
             ) {
                 awaitingFloatingPermission = true

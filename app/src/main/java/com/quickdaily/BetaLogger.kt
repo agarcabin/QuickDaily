@@ -23,11 +23,12 @@ object BetaLogger {
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val writeMutex = Mutex()
 
-    fun init(context: Context) {
+    fun init(context: Context, source: String = "init") {
         try {
             val prefs = context.getSharedPreferences("QuickDaily", 0)
             if (prefs.getBoolean("logging_enabled", false)) {
                 configure(context, enabled = true, useExternal = true)
+                logConfigSnapshot(context, source)
             } else {
                 disable()
             }
@@ -91,7 +92,28 @@ object BetaLogger {
             headerWritten = hasDeviceHeader(file)
             this.enabled = true
             log("BetaLogger", "configured: external=$useExternal path=${file.absolutePath}")
+            logConfigSnapshot(context, "configure")
         } catch (_: Exception) { }
+    }
+
+    fun logConfigSnapshot(context: Context, source: String) {
+        if (!enabled) return
+        val prefs = context.getSharedPreferences("QuickDaily", Context.MODE_PRIVATE)
+        val customPages = TaskWidgetConfigStore.recentCustomPaths(context).joinToString("|")
+        log(
+            "ConfigSnapshot",
+            "source=$source loggingEnabled=${prefs.getBoolean("logging_enabled", false)} " +
+                "vaultPath=${prefs.getString("vault_path", "").orEmpty()} " +
+                "diaryFolder=${prefs.getString("diary_folder", "Daily").orEmpty()} " +
+                "dateFormat=${prefs.getString("date_format", "YYYY-MM-DD").orEmpty()} " +
+                "filterFrontmatter=${prefs.getBoolean("filter_frontmatter", false)} " +
+                "renderMarkdown=${prefs.getBoolean("render_markdown", true)} " +
+                "taskCompletionTimestamp=${prefs.getBoolean(TaskCompletionTimestampPolicy.PREF_KEY, TaskCompletionTimestampPolicy.DEFAULT_ENABLED)} " +
+                "taskCompletionSound=${prefs.getBoolean(TaskCompletionSoundPolicy.PREF_KEY, TaskCompletionSoundPolicy.DEFAULT_ENABLED)} " +
+                "taskShowCompleted=${prefs.getBoolean(TaskWidgetDisplayPolicy.SHOW_COMPLETED_PREF_KEY, TaskWidgetDisplayPolicy.DEFAULT_SHOW_COMPLETED)} " +
+                "systemSidebarSupport=${prefs.getBoolean(FloatingNoteEntryPolicy.PREF_SYSTEM_SIDEBAR_SUPPORT, false)} " +
+                "customPages=$customPages",
+        )
     }
 
     private fun disable() {

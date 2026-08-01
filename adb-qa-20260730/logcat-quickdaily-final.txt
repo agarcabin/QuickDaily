@@ -1,0 +1,278 @@
+﻿
+07-30 22:58:35.295  2019  3242 I ActivityManager: Enqueued broadcast Intent { act=com.quickdaily.REFRESH_TASKS flg=0x40
+0000 cmp=com.quickdaily/.TaskWidget (has extras) }: 0
+07-30 22:58:35.296  2019  2180 I SmartPower: com.quickdaily/10468(9135): idle->background(18538ms) R(broadcast start In
+tent { act=com.quickdaily.REFRESH_TASKS flg=0x400010 xflg=0x1 cmp=com.quickdaily/.TaskWidget (has extras) }) adj=400.
+07-30 22:58:35.300  2019  2857 I AppWidgetServiceImpl: updateAppWidgetInstanceLocked widget: AppWidgetId{116:Host{HostI
+d{user:0, app:10135, hostId:1024, pkg:com.miui.home}}:Provider{ProviderId{user:0, app:10468, cmp:ComponentInfo{com.quic
+kdaily/com.quickdaily.TaskWidget}}}} from uid: 10468 pid: 9135
+07-30 22:58:35.300  2019  2591 D AppWidgetServiceImpl: Trying to notify widget update for package com.quickdaily with w
+idget id: 116
+07-30 22:58:35.338  2019  3242 I AppWidgetServiceImpl: updateAppWidgetInstanceLocked widget: AppWidgetId{116:Host{HostI
+d{user:0, app:10135, hostId:1024, pkg:com.miui.home}}:Provider{ProviderId{user:0, app:10468, cmp:ComponentInfo{com.quic
+kdaily/com.quickdaily.TaskWidget}}}} from uid: 10468 pid: 9135
+07-30 22:58:35.338  2019  2591 D AppWidgetServiceImpl: Trying to notify widget update for package com.quickdaily with w
+idget id: 116
+07-30 22:58:35.345  2019  3242 I AppWidgetServiceImpl: updateAppWidgetInstanceLocked widget: AppWidgetId{120:Host{HostI
+d{user:0, app:10135, hostId:1024, pkg:com.miui.home}}:Provider{ProviderId{user:0, app:10468, cmp:ComponentInfo{com.quic
+kdaily/com.quickdaily.TaskWidget}}}} from uid: 10468 pid: 9135
+07-30 22:58:35.345  2019  2591 D AppWidgetServiceImpl: Trying to notify widget update for package com.quickdaily with w
+idget id: 120
+07-30 22:58:36.797  2019  2857 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:36.802  2019  2857 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:36.806  2019  2857 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:36.814  2019  2857 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:36.818  2019  2857 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:37.360  2019  3242 I AppWidgetServiceImpl: updateAppWidgetInstanceLocked widget: AppWidgetId{116:Host{HostI
+d{user:0, app:10135, hostId:1024, pkg:com.miui.home}}:Provider{ProviderId{user:0, app:10468, cmp:ComponentInfo{com.quic
+kdaily/com.quickdaily.TaskWidget}}}} from uid: 10468 pid: 9135
+07-30 22:58:37.362  2019  2591 D AppWidgetServiceImpl: Trying to notify widget update for package com.quickdaily with w
+idget id: 116
+07-30 22:58:37.370  2019  3430 I AppWidgetServiceImpl: updateAppWidgetInstanceLocked widget: AppWidgetId{120:Host{HostI
+d{user:0, app:10135, hostId:1024, pkg:com.miui.home}}:Provider{ProviderId{user:0, app:10468, cmp:ComponentInfo{com.quic
+kdaily/com.quickdaily.TaskWidget}}}} from uid: 10468 pid: 9135
+07-30 22:58:37.371  2019  2591 D AppWidgetServiceImpl: Trying to notify widget update for package com.quickdaily with w
+idget id: 120
+07-30 22:58:38.297  2019  2566 I SmartPower: com.quickdaily/10468(9135): background->idle(3001ms) R(broadcast start Int
+ent { act=com.quickdaily.REFRESH_TASKS flg=0x400010 xflg=0x1 cmp=com.quickdaily/.TaskWidget (has extras) }) adj=400.
+07-30 22:58:39.427  2019  3228 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:39.439  2019  2163 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:40.459  2019  3228 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:40.473  2019  2163 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:40.479  2019  2857 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:40.495  2019  2163 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:40.505  2019  3228 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:40.510  2019  3228 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:52.869  2019  3430 I SmartPower: com.quickdaily/10468(9135): idle->background(14573ms) R(pending intent bro
+adcastIntent) adj=400.
+07-30 22:58:52.883  2019  3228 I AppWidgetServiceImpl: updateAppWidgetInstanceLocked widget: AppWidgetId{115:Host{HostI
+d{user:0, app:10135, hostId:1024, pkg:com.miui.home}}:Provider{ProviderId{user:0, app:10468, cmp:ComponentInfo{com.quic
+kdaily/com.quickdaily.QuickDailyReadWidget}}}} from uid: 10468 pid: 9135
+07-30 22:58:52.884  2019  2591 D AppWidgetServiceImpl: Trying to notify widget update for package com.quickdaily with w
+idget id: 115
+07-30 22:58:52.902  2019  3228 I AppWidgetServiceImpl: updateAppWidgetInstanceLocked widget: AppWidgetId{116:Host{HostI
+d{user:0, app:10135, hostId:1024, pkg:com.miui.home}}:Provider{ProviderId{user:0, app:10468, cmp:ComponentInfo{com.quic
+kdaily/com.quickdaily.TaskWidget}}}} from uid: 10468 pid: 9135
+07-30 22:58:52.902  2019  2591 D AppWidgetServiceImpl: Trying to notify widget update for package com.quickdaily with w
+idget id: 116
+07-30 22:58:52.911  2019  3228 I AppWidgetServiceImpl: updateAppWidgetInstanceLocked widget: AppWidgetId{120:Host{HostI
+d{user:0, app:10135, hostId:1024, pkg:com.miui.home}}:Provider{ProviderId{user:0, app:10468, cmp:ComponentInfo{com.quic
+kdaily/com.quickdaily.TaskWidget}}}} from uid: 10468 pid: 9135
+07-30 22:58:52.912  2019  2591 D AppWidgetServiceImpl: Trying to notify widget update for package com.quickdaily with w
+idget id: 120
+07-30 22:58:54.628  2019  3430 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:54.632  2019  3430 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:54.635  2019  3430 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:54.643  2019  3430 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:54.646  2019  3430 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:55.860  2019  3246 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:55.870  2019  2163 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:56.893  2019  3246 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:56.905  2019  2163 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:56.916  2019  3236 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:56.928  2019  2163 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:56.936  2019  2857 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:56.939  2019  3236 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:58:57.333  2019  2897 D SSRU-CpuResourceTracker: [deal]doCpuMonitor:AppCpuState{uid=10468, pkgName='com.quickd
+aily', usages=0.574, duringTime=240234, details={com.quickdaily=0.574}, state=0, stateUpdateTime={1=11399961}, restrict
+er=0}
+07-30 22:58:57.871  2019  2566 I SmartPower: com.quickdaily/10468(9135): background->idle(5001ms) R(pending intent broa
+dcastIntent) adj=400.
+07-30 22:59:04.937  2019  3236 I SmartPower: com.quickdaily/10468(9135): idle->background(7067ms) R(pending intent broa
+dcastIntent) adj=400.
+07-30 22:59:04.963  2019  2857 I AppWidgetServiceImpl: updateAppWidgetInstanceLocked widget: AppWidgetId{115:Host{HostI
+d{user:0, app:10135, hostId:1024, pkg:com.miui.home}}:Provider{ProviderId{user:0, app:10468, cmp:ComponentInfo{com.quic
+kdaily/com.quickdaily.QuickDailyReadWidget}}}} from uid: 10468 pid: 9135
+07-30 22:59:04.963  2019  2591 D AppWidgetServiceImpl: Trying to notify widget update for package com.quickdaily with w
+idget id: 115
+07-30 22:59:04.976  2019  2857 I AppWidgetServiceImpl: updateAppWidgetInstanceLocked widget: AppWidgetId{116:Host{HostI
+d{user:0, app:10135, hostId:1024, pkg:com.miui.home}}:Provider{ProviderId{user:0, app:10468, cmp:ComponentInfo{com.quic
+kdaily/com.quickdaily.TaskWidget}}}} from uid: 10468 pid: 9135
+07-30 22:59:04.976  2019  2591 D AppWidgetServiceImpl: Trying to notify widget update for package com.quickdaily with w
+idget id: 116
+07-30 22:59:04.982  2019  2857 I AppWidgetServiceImpl: updateAppWidgetInstanceLocked widget: AppWidgetId{120:Host{HostI
+d{user:0, app:10135, hostId:1024, pkg:com.miui.home}}:Provider{ProviderId{user:0, app:10468, cmp:ComponentInfo{com.quic
+kdaily/com.quickdaily.TaskWidget}}}} from uid: 10468 pid: 9135
+07-30 22:59:04.983  2019  2591 D AppWidgetServiceImpl: Trying to notify widget update for package com.quickdaily with w
+idget id: 120
+07-30 22:59:05.099  2019  3228 E AppOps  : attributionTag  not declared in manifest of com.quickdaily
+07-30 22:59:05.100  2019  2857 E AppOps  : attributionTag  not declared in manifest of com.quickdaily
+07-30 22:59:05.356  2019  3228 E AppOps  : attributionTag  not declared in manifest of com.quickdaily
+07-30 22:59:05.357  2019  2857 E AppOps  : attributionTag  not declared in manifest of com.quickdaily
+07-30 22:59:09.950  2019  2566 I SmartPower: com.quickdaily/10468(9135): background->idle(5012ms) R(broadcast end Inten
+t { act=com.quickdaily.TOGGLE_TASK flg=0x10000010 xflg=0x4 cmp=com.quickdaily/.TaskWidget bnds=[102,1615][165,1678] (ha
+s extras) }) adj=400.
+07-30 22:59:37.188  2019  3242 I ActivityManager: Enqueued broadcast Intent { act=com.quickdaily.READ_MIDNIGHT_REFRESH 
+flg=0x400000 cmp=com.quickdaily/.QuickDailyReadWidget }: 0
+07-30 22:59:37.190  2019  2180 I SmartPower: com.quickdaily/10468(9135): idle->background(27240ms) R(broadcast start In
+tent { act=com.quickdaily.READ_MIDNIGHT_REFRESH flg=0x400010 xflg=0x1 cmp=com.quickdaily/.QuickDailyReadWidget }) adj=4
+00.
+07-30 22:59:37.206  2019  3242 I AppWidgetServiceImpl: updateAppWidgetInstanceLocked widget: AppWidgetId{115:Host{HostI
+d{user:0, app:10135, hostId:1024, pkg:com.miui.home}}:Provider{ProviderId{user:0, app:10468, cmp:ComponentInfo{com.quic
+kdaily/com.quickdaily.QuickDailyReadWidget}}}} from uid: 10468 pid: 9135
+07-30 22:59:37.206  2019  2591 D AppWidgetServiceImpl: Trying to notify widget update for package com.quickdaily with w
+idget id: 115
+07-30 22:59:37.272  2019  3242 I ActivityManager: Enqueued broadcast Intent { act=com.quickdaily.REFRESH_TASKS flg=0x40
+0000 cmp=com.quickdaily/.TaskWidget (has extras) }: 0
+07-30 22:59:37.276  2019  2857 I AppWidgetServiceImpl: updateAppWidgetInstanceLocked widget: AppWidgetId{116:Host{HostI
+d{user:0, app:10135, hostId:1024, pkg:com.miui.home}}:Provider{ProviderId{user:0, app:10468, cmp:ComponentInfo{com.quic
+kdaily/com.quickdaily.TaskWidget}}}} from uid: 10468 pid: 9135
+07-30 22:59:37.276  2019  2591 D AppWidgetServiceImpl: Trying to notify widget update for package com.quickdaily with w
+idget id: 116
+07-30 22:59:37.324  2019  3242 I AppWidgetServiceImpl: updateAppWidgetInstanceLocked widget: AppWidgetId{116:Host{HostI
+d{user:0, app:10135, hostId:1024, pkg:com.miui.home}}:Provider{ProviderId{user:0, app:10468, cmp:ComponentInfo{com.quic
+kdaily/com.quickdaily.TaskWidget}}}} from uid: 10468 pid: 9135
+07-30 22:59:37.324  2019  2591 D AppWidgetServiceImpl: Trying to notify widget update for package com.quickdaily with w
+idget id: 116
+07-30 22:59:37.332  2019  3242 I AppWidgetServiceImpl: updateAppWidgetInstanceLocked widget: AppWidgetId{120:Host{HostI
+d{user:0, app:10135, hostId:1024, pkg:com.miui.home}}:Provider{ProviderId{user:0, app:10468, cmp:ComponentInfo{com.quic
+kdaily/com.quickdaily.TaskWidget}}}} from uid: 10468 pid: 9135
+07-30 22:59:37.332  2019  2591 D AppWidgetServiceImpl: Trying to notify widget update for package com.quickdaily with w
+idget id: 120
+07-30 22:59:39.339  2019  3246 I AppWidgetServiceImpl: updateAppWidgetInstanceLocked widget: AppWidgetId{116:Host{HostI
+d{user:0, app:10135, hostId:1024, pkg:com.miui.home}}:Provider{ProviderId{user:0, app:10468, cmp:ComponentInfo{com.quic
+kdaily/com.quickdaily.TaskWidget}}}} from uid: 10468 pid: 9135
+07-30 22:59:39.340  2019  2591 D AppWidgetServiceImpl: Trying to notify widget update for package com.quickdaily with w
+idget id: 116
+07-30 22:59:39.346  2019  3246 I AppWidgetServiceImpl: updateAppWidgetInstanceLocked widget: AppWidgetId{120:Host{HostI
+d{user:0, app:10135, hostId:1024, pkg:com.miui.home}}:Provider{ProviderId{user:0, app:10468, cmp:ComponentInfo{com.quic
+kdaily/com.quickdaily.TaskWidget}}}} from uid: 10468 pid: 9135
+07-30 22:59:39.347  2019  2591 D AppWidgetServiceImpl: Trying to notify widget update for package com.quickdaily with w
+idget id: 120
+07-30 22:59:39.646  2019  3246 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:59:39.651  2019  3246 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:59:39.655  2019  3246 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:59:39.663  2019  3246 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:59:39.666  2019  3246 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:59:40.191  2019  2566 I SmartPower: com.quickdaily/10468(9135): background->idle(3001ms) R(broadcast start Int
+ent { act=com.quickdaily.READ_MIDNIGHT_REFRESH flg=0x400010 xflg=0x1 cmp=com.quickdaily/.QuickDailyReadWidget }) adj=40
+0.
+07-30 22:59:41.548 17456 17456 D AndroidRuntime: callMain: return with no error.
+07-30 22:59:41.549 17456 17456 D AndroidRuntime: Shutting down VM
+07-30 22:59:41.592  2019  2355 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:59:41.607  2019  2163 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:59:42.620  2019  2355 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:59:42.635  2019  3255 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:59:42.639  2019  2163 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:59:42.647  2019  2163 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:59:42.655  2019  2355 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+07-30 22:59:42.661  2019  3255 D BarFollowAnimation: isAppTaskBarOnTop win:Window{bd324da u0 com.miui.home/com.miui.hom
+e.launcher.Launcher} (mCurrentTopTask:Task{b96e151 #18947 type=standard I=com.quickdaily/.TaskWidgetConfigActivity} : f
+alse); (mAssociatedTask:null : false); (mHomeTask:Task{641682a #1 type=home} : true); mReparentToOriginParent:true mLas
+tAppBarVisible:false mLastHomeBarVisible:true
+
+

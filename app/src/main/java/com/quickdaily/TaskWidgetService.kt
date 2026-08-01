@@ -12,6 +12,7 @@ class TaskWidgetService : RemoteViewsService() {
     }
 
     override fun onGetViewFactory(intent: Intent): RemoteViewsService.RemoteViewsFactory {
+        BetaLogger.init(applicationContext, "TaskWidgetService")
         val widgetId = intent.getIntExtra(android.appwidget.AppWidgetManager.EXTRA_APPWIDGET_ID, -1)
         BetaLogger.log(
             "TaskWidgetSvc",

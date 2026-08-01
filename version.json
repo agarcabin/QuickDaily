@@ -1,5 +1,5 @@
 ﻿{
-    "version": "1.8.1-beta",
+    "version": "1.8.4 - beta MD3",
     "url": "https://github.com/agarcabin/QuickDaily/releases/latest",
-    "body": "QuickDaily 1.8.1-beta\n• 新增 任务小部件支持缩进子任务及父子任务完成联动\n• 新增 任务小部件按实例独立选择今日/本周/本月/自定义页面\n• 新增 自定义页面任务的编辑、Obsidian打开和速记浮窗路由\n• 新增 任务小部件首页按钮和范围下拉按钮\n• 保留 QuickDaily 1.8 的全部功能"
+    "body": "QuickDaily 1.8.4 - beta MD3\n• 修复 速记附件在空文本、光标起始位置和选区插入时闪退\n• 修复 悬浮窗拍照时窗口覆盖相机画面，拍照完成后恢复草稿\n• 新增 双链 alias 别称索引、缓存和最近选择记录\n• 优化 双链补全候选数量、别称冲突显示和编辑器弹窗样式\n• 新增 自定义图标 PNG 透明通道支持，兼容已有 JPG\n• 新增 Material 3 Expressive 主题、动态取色、深色模式和统一动效\n• 优化 编辑器、设置页、Widget 配置和图片裁剪控制界面\n• 保留 QuickDaily 1.8.3-beta 的全部功能"
 }

@@ -23,6 +23,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.quickdaily.WidgetContentLoader
 
 // ── Renderer ────────────────────────────────────────────
 
@@ -63,7 +64,11 @@ fun MdRenderer(
                             .clickable(enabled = onToggleCheckbox != null) {
                                 onToggleCheckbox?.invoke(line.index)
                             }
-                            .padding(vertical = 2.dp)
+                            .padding(
+                                start = (line.indentLevel * WidgetContentLoader.SUBTASK_INDENT_DP).dp,
+                                top = 2.dp,
+                                bottom = 2.dp,
+                            )
                     ) {
                         Icon(
                             imageVector = if (line.checked) Icons.Outlined.CheckBox
@@ -224,7 +229,7 @@ sealed class MdLine {
     data object Blank : MdLine()
     data class Heading(val level: Int, val text: String) : MdLine()
     data class Image(val path: String, val alt: String) : MdLine()
-    data class Task(val index: Int, val checked: Boolean, val text: String) : MdLine()
+    data class Task(val index: Int, val checked: Boolean, val text: String, val indentLevel: Int = 0) : MdLine()
     data class Bullet(val text: String) : MdLine()
     data class Plain(val text: String) : MdLine()
 }
@@ -240,6 +245,7 @@ fun parseLines(markdown: String): List<MdLine> {
     val lines = markdown.split("\n")
     val result = mutableListOf<MdLine>()
     var taskIndex = 0
+    val taskIndentStack = ArrayDeque<TaskIndentEntry>()
 
     for (line in lines) {
         val trimmed = line.trim()
@@ -265,9 +271,18 @@ fun parseLines(markdown: String): List<MdLine> {
             }
             // 任务勾选（必须在普通列表之前判断）
             trimmed.startsWith("- [ ]") || trimmed.startsWith("- [x]") || trimmed.startsWith("- [X]") -> {
+                val leadingWhitespace = line.takeWhile { it == ' ' || it == '\t' }
+                val indentColumns = leadingWhitespace.fold(0) { total, char ->
+                    total + if (char == '\t') 4 else 1
+                }
+                while (taskIndentStack.isNotEmpty() && taskIndentStack.last().indentColumns >= indentColumns) {
+                    taskIndentStack.removeLast()
+                }
+                val indentLevel = taskIndentStack.lastOrNull()?.let { it.level + 1 } ?: 0
                 val checked = trimmed[3] == 'x' || trimmed[3] == 'X'
                 val text = trimmed.drop(6).trimStart()
-                result.add(MdLine.Task(taskIndex++, checked, text))
+                result.add(MdLine.Task(taskIndex++, checked, text, indentLevel))
+                taskIndentStack.addLast(TaskIndentEntry(indentColumns, indentLevel))
             }
             // 无序列表
             trimmed.startsWith("- ") -> {
@@ -284,6 +299,11 @@ fun parseLines(markdown: String): List<MdLine> {
     }
     return result
 }
+
+private data class TaskIndentEntry(
+    val indentColumns: Int,
+    val level: Int,
+)
 
 // ── 编辑器中切换勾选 ────────────────────────────────────
 

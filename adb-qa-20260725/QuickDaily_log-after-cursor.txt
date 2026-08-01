@@ -1,0 +1,32 @@
+===== QuickDaily Beta Debug Log =====
+device.manufacturer=Xiaomi
+device.brand=Redmi
+device.model=22041211AC
+android.release=16
+android.sdk=36
+android.incremental=OS3.0.300.4.WONCNXM
+android.display=BP2A.250605.031.A3
+android.fingerprint=Redmi/rubens/rubens:16/BP2A.250605.031.A3/OS3.0.300.4.WONCNXM:user/release-keys
+=====================================
+[2026-07-25 01:05:05.259] [BetaLogger] configured: external=true path=/storage/emulated/0/Documents/QuickDaily/QuickDaily_log_2026-07-25.txt
+[2026-07-25 01:05:10.110] [ScanTags] found 163 tags
+[2026-07-25 01:08:06.734] [BetaLogger] configured: external=true path=/storage/emulated/0/Documents/QuickDaily/QuickDaily_log_2026-07-25.txt
+[2026-07-25 01:08:06.735] [FloatingNote/Launch] launcher onCreate action=android.intent.action.MAIN categories={android.intent.category.LAUNCHER}
+[2026-07-25 01:08:06.741] [FloatingNote/Launch] route result=true vault_configured=true storage=true
+[2026-07-25 01:08:06.741] [FloatingNote/Launch] launcher legacy activity path
+[2026-07-25 01:08:06.810] [TaskWidget] onUpdate widgetIds=116
+[2026-07-25 01:08:06.813] [WidgetRefresh] request type=tasks immediate=true replacedPending=false elapsedSinceRunMs=1784912886813 scheduledDelayMs=0
+[2026-07-25 01:08:06.814] [TaskWidget] onReceive action=android.appwidget.action.APPWIDGET_UPDATE widgetId=-1
+[2026-07-25 01:08:06.913] [ReadWidget] onReceive action=android.appwidget.action.APPWIDGET_UPDATE widgetId=-1
+[2026-07-25 01:08:06.913] [WidgetRefresh] run start type=tasks
+[2026-07-25 01:08:06.913] [ReadWidget] onUpdate widgetIds=115
+[2026-07-25 01:08:06.914] [TaskWidget] refreshNow widgetCount=1 period=month widgetIds=116
+[2026-07-25 01:08:06.921] [WidgetRefresh] request type=read immediate=true replacedPending=false elapsedSinceRunMs=1784912886921 scheduledDelayMs=0
+[2026-07-25 01:08:06.940] [WidgetRefresh] run start type=read
+[2026-07-25 01:08:06.941] [ReadWidget] refreshNow widgetCount=1 widgetIds=115
+[2026-07-25 01:08:06.950] [ReadWidget] load success count=31 path=/storage/emulated/0/Documents/.Obsidian库/Obsidian库/日记/2026-07-25.md
+[2026-07-25 01:08:06.973] [ReadWidget] direct collection submitted widgetCount=1
+[2026-07-25 01:08:06.973] [WidgetRefresh] run success type=read durationMs=33
+[2026-07-25 01:08:06.998] [TaskWidget] load success count=2 path=/storage/emulated/0/Documents/.Obsidian库/Obsidian库/日记/2026-06-26.md
+[2026-07-25 01:08:07.000] [TaskWidget] direct collection submitted widgetCount=1
+[2026-07-25 01:08:07.001] [WidgetRefresh] run success type=tasks durationMs=88

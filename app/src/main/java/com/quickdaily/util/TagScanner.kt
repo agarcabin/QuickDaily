@@ -48,6 +48,19 @@ object TagScanner {
         cachedTags = null
     }
 
+    /** Extract tags from one Markdown document without touching the vault cache. */
+    fun extractTags(content: String): List<String> {
+        val parsed = ContentUtil.parseFrontmatter(content)
+        val tags = linkedSetOf<String>()
+        if (parsed.hasFrontmatter) {
+            tags.addAll(parseFrontmatterTags(parsed.frontmatter))
+        }
+        val body = if (parsed.hasFrontmatter) parsed.body else content
+        val sample = if (body.length <= INLINE_SAMPLE_SIZE) body else body.substring(0, INLINE_SAMPLE_SIZE)
+        tags.addAll(parseInlineTags(sample))
+        return tags.toList()
+    }
+
     // ── Scan ───────────────────────────────────────────────
 
     private fun scan(vaultPath: String): List<String> {
@@ -66,18 +79,7 @@ object TagScanner {
 
         for (file in mdFiles) {
             try {
-                val content = file.readText(Charsets.UTF_8)
-                val parsed = ContentUtil.parseFrontmatter(content)
-
-                // Frontmatter tags
-                if (parsed.hasFrontmatter) {
-                    tags.addAll(parseFrontmatterTags(parsed.frontmatter))
-                }
-
-                // Inline tags from body (only scan first 4k for perf)
-                val body = if (parsed.hasFrontmatter) parsed.body else content
-                val sample = if (body.length <= INLINE_SAMPLE_SIZE) body else body.substring(0, INLINE_SAMPLE_SIZE)
-                tags.addAll(parseInlineTags(sample))
+                tags.addAll(extractTags(file.readText(Charsets.UTF_8)))
             } catch (_: Exception) {
                 // skip unreadable / binary / corrupt files
             }

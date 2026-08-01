@@ -39,11 +39,17 @@ data class DiaryConfig(
     val imageLinkFormat: String = "described",
     val imageCustomNamingFormat: String = "yyyy-MM-dd_HHmmss_{filename}{ext}",
     val tagAutocomplete: Boolean = true,
+    val wikilinkAutocomplete: Boolean = true,
     val systemSidebarSupport: Boolean = false,
+    val homeEntryMode: String = HomeEntryMode.OVERLAY.key,
+    val toolbarOrder: List<String> = EditorToolbarPolicy.defaultOrder.map { it.id },
+    val toolbarVisible: Set<String> = EditorToolbarPolicy.defaultVisible,
     val loggingEnabled: Boolean = false,
     val taskPeriod: String = "today",
     val taskCompletionSound: Boolean = true,
     val taskCompletionTimestamp: Boolean = false,
+    val taskShowCompleted: Boolean = TaskWidgetDisplayPolicy.DEFAULT_SHOW_COMPLETED,
+    val taskShowFullContent: Boolean = TaskWidgetDisplayPolicy.DEFAULT_SHOW_FULL_CONTENT,
     val widgetStyle: String = "dark",
     val widgetBackgroundColor: Long = 0xFF202124L,
     val widgetOpacity: Int = 100
@@ -144,11 +150,37 @@ class AppState(application: Application) : AndroidViewModel(application) {
             imageLinkFormat = prefs.getString("image_link_format", "described") ?: "described",
             imageCustomNamingFormat = prefs.getString("image_custom_naming_format", "yyyy-MM-dd_HHmmss_{filename}{ext}") ?: "yyyy-MM-dd_HHmmss_{filename}{ext}",
             tagAutocomplete = prefs.getBoolean("tag_autocomplete", true),
+            wikilinkAutocomplete = prefs.getBoolean("wikilink_autocomplete", true),
             systemSidebarSupport = prefs.getBoolean(FloatingNoteEntryPolicy.PREF_SYSTEM_SIDEBAR_SUPPORT, false),
+            homeEntryMode = HomeEntryMode.fromKey(prefs.getString("home_entry_mode", HomeEntryMode.OVERLAY.key)).key,
+            toolbarOrder = if (prefs.contains(EditorToolbarPolicy.PREF_ORDER)) {
+                EditorToolbarPolicy.migrateOrder(
+                    prefs.getString(EditorToolbarPolicy.PREF_ORDER, null),
+                    prefs.getInt(EditorToolbarPolicy.PREF_SCHEMA_VERSION, 0) < EditorToolbarPolicy.CURRENT_SCHEMA_VERSION,
+                )
+            } else {
+                EditorToolbarPolicy.defaultOrder.map { it.id }
+            },
+            toolbarVisible = if (prefs.contains(EditorToolbarPolicy.PREF_VISIBLE)) {
+                EditorToolbarPolicy.migrateVisible(
+                    EditorToolbarPolicy.parseVisible(prefs.getString(EditorToolbarPolicy.PREF_VISIBLE, null)),
+                    prefs.getInt(EditorToolbarPolicy.PREF_SCHEMA_VERSION, 0) < EditorToolbarPolicy.CURRENT_SCHEMA_VERSION,
+                )
+            } else {
+                EditorToolbarPolicy.defaultVisible
+            },
             loggingEnabled = prefs.getBoolean("logging_enabled", false),
             taskPeriod = prefs.getString("task_period", "today") ?: "today",
             taskCompletionSound = prefs.getBoolean(TaskCompletionSoundPolicy.PREF_KEY, TaskCompletionSoundPolicy.DEFAULT_ENABLED),
             taskCompletionTimestamp = prefs.getBoolean(TaskCompletionTimestampPolicy.PREF_KEY, TaskCompletionTimestampPolicy.DEFAULT_ENABLED),
+            taskShowCompleted = prefs.getBoolean(
+                TaskWidgetDisplayPolicy.SHOW_COMPLETED_PREF_KEY,
+                TaskWidgetDisplayPolicy.DEFAULT_SHOW_COMPLETED,
+            ),
+            taskShowFullContent = prefs.getBoolean(
+                TaskWidgetDisplayPolicy.SHOW_FULL_CONTENT_PREF_KEY,
+                TaskWidgetDisplayPolicy.DEFAULT_SHOW_FULL_CONTENT,
+            ),
             widgetStyle = prefs.getString("widget_style", "dark") ?: "dark",
             widgetBackgroundColor = prefs.getLong("widget_background_color", 0xFF202124L),
             widgetOpacity = prefs.getInt("widget_opacity", 100).coerceIn(0, 100)
@@ -176,11 +208,17 @@ class AppState(application: Application) : AndroidViewModel(application) {
             imageLinkFormat = raw.imageLinkFormat,
             imageCustomNamingFormat = raw.imageCustomNamingFormat,
             tagAutocomplete = raw.tagAutocomplete,
+            wikilinkAutocomplete = raw.wikilinkAutocomplete,
             systemSidebarSupport = raw.systemSidebarSupport,
+            homeEntryMode = HomeEntryMode.fromKey(raw.homeEntryMode).key,
+            toolbarOrder = EditorToolbarPolicy.normalizeOrder(raw.toolbarOrder),
+            toolbarVisible = EditorToolbarPolicy.normalizeVisible(raw.toolbarVisible),
             loggingEnabled = raw.loggingEnabled,
             taskPeriod = raw.taskPeriod,
             taskCompletionSound = raw.taskCompletionSound,
             taskCompletionTimestamp = raw.taskCompletionTimestamp,
+            taskShowCompleted = raw.taskShowCompleted,
+            taskShowFullContent = raw.taskShowFullContent,
             widgetStyle = raw.widgetStyle,
             widgetBackgroundColor = raw.widgetBackgroundColor,
             widgetOpacity = raw.widgetOpacity.coerceIn(0, 100)
@@ -205,16 +243,31 @@ class AppState(application: Application) : AndroidViewModel(application) {
             .putString("image_link_format", config.imageLinkFormat)
             .putString("image_custom_naming_format", config.imageCustomNamingFormat)
             .putBoolean("tag_autocomplete", config.tagAutocomplete)
+            .putBoolean("wikilink_autocomplete", config.wikilinkAutocomplete)
             .putBoolean(FloatingNoteEntryPolicy.PREF_SYSTEM_SIDEBAR_SUPPORT, config.systemSidebarSupport)
+            .putString("home_entry_mode", config.homeEntryMode)
+            .putString(EditorToolbarPolicy.PREF_ORDER, EditorToolbarPolicy.serializeOrder(config.toolbarOrder))
+            .putString(EditorToolbarPolicy.PREF_VISIBLE, EditorToolbarPolicy.serializeVisible(config.toolbarVisible))
+            .putInt(EditorToolbarPolicy.PREF_SCHEMA_VERSION, EditorToolbarPolicy.CURRENT_SCHEMA_VERSION)
             .putBoolean("logging_enabled", config.loggingEnabled)
             .putString("task_period", config.taskPeriod)
             .putBoolean(TaskCompletionSoundPolicy.PREF_KEY, config.taskCompletionSound)
             .putBoolean(TaskCompletionTimestampPolicy.PREF_KEY, config.taskCompletionTimestamp)
+            .putBoolean(TaskWidgetDisplayPolicy.SHOW_COMPLETED_PREF_KEY, config.taskShowCompleted)
+            .putBoolean(TaskWidgetDisplayPolicy.SHOW_FULL_CONTENT_PREF_KEY, config.taskShowFullContent)
             .putString("widget_style", config.widgetStyle)
             .putLong("widget_background_color", config.widgetBackgroundColor)
             .putInt("widget_opacity", config.widgetOpacity.coerceIn(0, 100))
             .commit()
         _config.value = config
+        BetaLogger.log(
+            "Config/Save",
+            "vaultPath=${config.vaultPath} diaryFolder=${config.diaryFolder} dateFormat=${config.dateFormat} " +
+                "filterFrontmatter=${config.filterFrontmatter} loggingEnabled=${config.loggingEnabled} " +
+                "taskCompletionSound=${config.taskCompletionSound} taskCompletionTimestamp=${config.taskCompletionTimestamp} " +
+                "taskShowCompleted=${config.taskShowCompleted} taskShowFullContent=${config.taskShowFullContent} " +
+                "systemSidebarSupport=${config.systemSidebarSupport}",
+        )
         loadEditorTarget(_editorTargetRelativePath.value)
     }
 
@@ -376,7 +429,6 @@ class AppState(application: Application) : AndroidViewModel(application) {
             _canUndo.value = false
             _canRedo.value = false
             _lastUndoPushTime = 0L
-            scanTags()
             _isLoaded.value = true
             autoSave?.cancel()
             autoSave = Debounce(scope = viewModelScope, onFire = { saveNow() })

@@ -61,9 +61,9 @@
                 android:layout_width="28dp"
                 android:layout_height="28dp"
                 android:background="@null"
-                android:contentDescription="打开首页"
+                android:contentDescription="打开编辑页"
                 android:scaleType="centerInside"
-                android:src="@drawable/ic_home_white" />
+                android:src="@drawable/ic_edit_white" />
 
             <ImageButton
                 android:id="@+id/btn_add_task"

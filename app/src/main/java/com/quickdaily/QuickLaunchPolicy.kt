@@ -12,12 +12,14 @@ internal object QuickLaunchPolicy {
         action: String?,
         categories: Set<String>?,
         vaultPath: String,
-        hasStorageAccess: Boolean
+        hasStorageAccess: Boolean,
+        homeEntryMode: String = HomeEntryMode.OVERLAY.key,
     ): Boolean {
         return action == Intent.ACTION_MAIN &&
             categories?.contains(Intent.CATEGORY_LAUNCHER) == true &&
             vaultPath.isNotBlank() &&
-            hasStorageAccess
+            hasStorageAccess &&
+            HomeEntryMode.fromKey(homeEntryMode) == HomeEntryMode.OVERLAY
     }
 
     fun shouldUseSystemOverlay(

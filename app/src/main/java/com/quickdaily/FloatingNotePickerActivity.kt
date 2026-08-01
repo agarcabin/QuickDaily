@@ -3,11 +3,23 @@ package com.quickdaily
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.Manifest
+import android.content.pm.PackageManager
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 
 /** Short-lived bridge because a Service cannot own Activity Result launchers. */
 class FloatingNotePickerActivity : ComponentActivity() {
+    private var pendingCameraFile: File? = null
+    private var pendingCameraUri: Uri? = null
+
     private val imagePicker = registerForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
         if (uris.isNotEmpty()) FloatingNoteDraftStore.addImages(this, uris)
         refreshOverlayAndFinish()
@@ -24,18 +36,94 @@ class FloatingNotePickerActivity : ComponentActivity() {
     private val pagePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         val path = uri?.let { TaskWidgetConfigStore.filePathFromUri(this, it) }
         if (path != null) {
+            BetaLogger.log("FloatingNote/Picker", "overlay custom page selected uri=$uri path=$path")
             FloatingNoteDraftStore.setTarget(this, path)
+        } else if (uri == null) {
+            BetaLogger.log("FloatingNote/Picker", "overlay custom page picker cancelled")
+        } else {
+            BetaLogger.log("FloatingNote/Picker", "overlay custom page rejected uri=$uri")
+        }
+        refreshOverlayAndFinish()
+    }
+
+    private val cameraPicker = registerForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+        val uri = pendingCameraUri
+        val file = pendingCameraFile
+        pendingCameraUri = null
+        pendingCameraFile = null
+        if (!success || uri == null) {
+            file?.delete()
+            refreshOverlayAndFinish()
+            return@registerForActivityResult
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            val link = runCatching { EditorMediaUtil.imageLink(this@FloatingNotePickerActivity, uri) }.getOrNull()
+            withContext(Dispatchers.Main) {
+                if (link != null) {
+                    FloatingNoteDraftStore.insertLink(this@FloatingNotePickerActivity, link)
+                } else {
+                    Toast.makeText(this@FloatingNotePickerActivity, "照片保存失败", Toast.LENGTH_SHORT).show()
+                }
+                file?.delete()
+                refreshOverlayAndFinish()
+            }
+        }
+    }
+
+    private val cameraPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) takePhotoNow() else {
+            Toast.makeText(this, "请允许相机权限后再拍照", Toast.LENGTH_SHORT).show()
+            refreshOverlayAndFinish()
+        }
+    }
+
+    private val recordPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            startService(FloatingNoteService.startRecordingIntent(this))
+        } else {
+            Toast.makeText(this, "请允许录音权限后再录音", Toast.LENGTH_SHORT).show()
         }
         refreshOverlayAndFinish()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        when (intent.getStringExtra(EXTRA_MODE)) {
+        BetaLogger.init(this, "FloatingNotePickerActivity")
+        val mode = intent.getStringExtra(EXTRA_MODE)
+        BetaLogger.log("FloatingNote/Picker", "open mode=${mode.orEmpty()}")
+        when (mode) {
             MODE_ATTACHMENT -> attachmentPicker.launch(arrayOf("*/*"))
             MODE_CUSTOM_PAGE -> pagePicker.launch(arrayOf("text/*", "application/octet-stream", "*/*"))
+            MODE_CAMERA -> if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                takePhotoNow()
+            } else {
+                cameraPermission.launch(Manifest.permission.CAMERA)
+            }
+            MODE_RECORD_PERMISSION -> if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                startService(FloatingNoteService.startRecordingIntent(this))
+                refreshOverlayAndFinish()
+            } else {
+                recordPermission.launch(Manifest.permission.RECORD_AUDIO)
+            }
             else -> imagePicker.launch("image/*")
         }
+    }
+
+    private fun takePhotoNow() {
+        val file = runCatching { CaptureFileUtil.newImageFile(this) }.getOrNull()
+        if (file == null) {
+            Toast.makeText(this, "无法创建照片文件", Toast.LENGTH_SHORT).show()
+            refreshOverlayAndFinish()
+            return
+        }
+        pendingCameraFile = file
+        val uri = CaptureFileUtil.fileUri(this, file)
+        pendingCameraUri = uri
+        cameraPicker.launch(uri)
     }
 
     private fun refreshOverlayAndFinish() {
@@ -48,5 +136,7 @@ class FloatingNotePickerActivity : ComponentActivity() {
         const val MODE_IMAGES = "images"
         const val MODE_ATTACHMENT = "attachment"
         const val MODE_CUSTOM_PAGE = "custom_page"
+        const val MODE_CAMERA = "camera"
+        const val MODE_RECORD_PERMISSION = "record_permission"
     }
 }

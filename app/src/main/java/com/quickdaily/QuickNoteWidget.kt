@@ -40,8 +40,6 @@ class QuickNoteWidget : AppWidgetProvider() {
 
     companion object {
         private const val CORNER_RADIUS_DP = 16f
-        private const val WIDGET_IMAGE_FILE = "widget_image.jpg"
-        private const val IMAGE_TEMPLATE_FILE = "widget_image.jpg"
         private const val IMAGE_SIZE = 300
 
         fun updateAllWidgets(context: Context) {
@@ -63,16 +61,8 @@ class QuickNoteWidget : AppWidgetProvider() {
             )
             views.setOnClickPendingIntent(R.id.quicknote_root, pendingIntent)
 
-            val hasCustomImage = context.getSharedPreferences("QuickDaily", 0)
-                .getString("widget_image_uri", "")?.isNotEmpty() == true
-
-            if (hasCustomImage) {
-                val templateFile = File(context.filesDir, IMAGE_TEMPLATE_FILE)
-                val perWidgetFile = File(context.filesDir, "widget_image_${widgetId}.jpg")
-                if (templateFile.exists()) {
-                    try { templateFile.copyTo(perWidgetFile, overwrite = true) } catch (_: Exception) { }
-                }
-                val imageFile = if (perWidgetFile.exists()) perWidgetFile else File(context.filesDir, WIDGET_IMAGE_FILE)
+            val imageFile = WidgetImageFileResolver.resolve(context)
+            if (imageFile != null) {
                 if (imageFile.exists()) {
                     try {
                         val bitmap: Bitmap? = BitmapFactory.decodeFile(imageFile.absolutePath)

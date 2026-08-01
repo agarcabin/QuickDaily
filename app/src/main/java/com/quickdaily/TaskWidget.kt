@@ -14,8 +14,6 @@ import android.os.Handler
 import android.os.Looper
 import android.widget.RemoteViews
 import android.widget.Toast
-import com.quickdaily.util.ContentUtil
-import com.quickdaily.util.FileUtil
 
 class TaskWidget : AppWidgetProvider() {
     override fun onUpdate(
@@ -23,6 +21,7 @@ class TaskWidget : AppWidgetProvider() {
         appWidgetManager: AppWidgetManager,
         appWidgetIds: IntArray,
     ) {
+        BetaLogger.init(context)
         BetaLogger.log("TaskWidget", "onUpdate widgetIds=${appWidgetIds.joinToString()}")
         appWidgetIds.forEach { updateWidget(context, appWidgetManager, it, null) }
         WidgetRefreshCoordinator.refreshTasks(context, immediate = true)
@@ -35,17 +34,21 @@ class TaskWidget : AppWidgetProvider() {
         newOptions: android.os.Bundle,
     ) {
         super.onAppWidgetOptionsChanged(context, appWidgetManager, appWidgetId, newOptions)
+        BetaLogger.init(context)
         BetaLogger.log("TaskWidget", "size changed widgetId=$appWidgetId options=$newOptions")
         updateWidget(context, appWidgetManager, appWidgetId, null)
         WidgetRefreshCoordinator.refreshTasks(context, immediate = true)
     }
 
     override fun onDeleted(context: Context, appWidgetIds: IntArray) {
+        BetaLogger.init(context)
+        BetaLogger.log("TaskWidget", "onDeleted widgetIds=${appWidgetIds.joinToString()}")
         appWidgetIds.forEach { TaskWidgetConfigStore.clear(context, it) }
         super.onDeleted(context, appWidgetIds)
     }
 
     override fun onReceive(context: Context, intent: Intent) {
+        BetaLogger.init(context)
         super.onReceive(context, intent)
         val widgetId = intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, INVALID_WIDGET_ID)
         BetaLogger.log("TaskWidget", "onReceive action=${intent.action} widgetId=$widgetId")
@@ -78,7 +81,7 @@ class TaskWidget : AppWidgetProvider() {
     }
 
     companion object {
-        private const val ACTION_TOGGLE_TASK = "com.quickdaily.TOGGLE_TASK"
+        internal const val ACTION_TOGGLE_TASK = "com.quickdaily.TOGGLE_TASK"
         private const val ACTION_REFRESH = "com.quickdaily.REFRESH_TASKS"
         private const val ACTION_SCOPE = "com.quickdaily.SELECT_TASK_SCOPE"
         private const val ACTION_ADD_TASK = "com.quickdaily.ADD_TASK"
@@ -125,6 +128,10 @@ class TaskWidget : AppWidgetProvider() {
             val views = RemoteViews(context.packageName, R.layout.widget_tasks)
             val appearance = WidgetAppearance.colors(context)
             val size = WidgetSizePolicy.forWidget(appWidgetManager, widgetId)
+            BetaLogger.log(
+                "TaskWidget/Render",
+                "widgetId=$widgetId scope=${config.scope.key} customPath=${config.customRelativePath} size=$size result=${result?.javaClass?.simpleName ?: "loading"}",
+            )
             WidgetAppearance.applyRoot(views, R.id.widget_root, appearance)
             WidgetSizePolicy.applyTaskChrome(views, size)
 
@@ -308,53 +315,21 @@ class TaskWidget : AppWidgetProvider() {
             lineIndex: Int,
             expectedRaw: String,
         ) {
-            val content = FileUtil.read(path)
-            if (content.isEmpty()) {
-                BetaLogger.log("TaskWidget", "toggle aborted empty path=$path")
-                return
-            }
-            val parsed = ContentUtil.parseFrontmatter(content)
-            val body = if (parsed.hasFrontmatter) parsed.body else content
-            val lines = body.lines().toMutableList()
-            if (lineIndex !in lines.indices || (expectedRaw.isNotBlank() && lines[lineIndex] != expectedRaw)) {
-                BetaLogger.log("TaskWidget", "toggle aborted stale line path=$path line=$lineIndex")
-                WidgetRefreshCoordinator.refreshTasks(context, immediate = true)
-                return
-            }
-
-            val item = TaskWidgetTaskParser.parse(body, path).firstOrNull { it.lineIndex == lineIndex }
-            val toggledLine = TaskWidgetTaskParser.toggleLine(lines[lineIndex])
-            if (item == null || toggledLine == null) {
-                BetaLogger.log("TaskWidget", "toggle aborted non-task path=$path line=$lineIndex")
+            val result = TaskToggleUseCase.toggle(
+                context = context,
+                path = path,
+                lineIndex = lineIndex,
+                expectedRaw = expectedRaw,
+                logTag = "TaskWidget",
+            )
+            if (!result.succeeded) {
+                if (result.failureReason == "stale_line") {
+                    WidgetRefreshCoordinator.refreshTasks(context, immediate = true)
+                }
                 return
             }
 
-            var savedLine = toggledLine
-            if (!item.checked) {
-                savedLine = TaskCompletionTimestampPolicy.appendIfEnabled(
-                    line = toggledLine,
-                    enabled = context.getSharedPreferences("QuickDaily", 0).getBoolean(
-                        TaskCompletionTimestampPolicy.PREF_KEY,
-                        TaskCompletionTimestampPolicy.DEFAULT_ENABLED,
-                    ),
-                    date = com.quickdaily.util.DateUtil.todayStr("yyyy-MM-dd"),
-                )
-            }
-            lines[lineIndex] = savedLine
-            val newBody = lines.joinToString("\n")
-            val saveContent = if (parsed.hasFrontmatter) {
-                ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, newBody)
-            } else {
-                newBody
-            }
-            val saveSucceeded = FileUtil.write(path, saveContent)
-            if (!saveSucceeded) {
-                BetaLogger.log("TaskWidget", "toggle failed to write path=$path line=$lineIndex")
-                return
-            }
-            BetaLogger.log("TaskWidget", "toggle saved path=$path line=$lineIndex checked=${!item.checked}")
-
-            if (!item.checked && TaskCompletionSoundPolicy.shouldPlay(
+            if (result.beforeChecked == false && TaskCompletionSoundPolicy.shouldPlay(
                     enabled = context.getSharedPreferences("QuickDaily", 0).getBoolean(
                         TaskCompletionSoundPolicy.PREF_KEY,
                         TaskCompletionSoundPolicy.DEFAULT_ENABLED,

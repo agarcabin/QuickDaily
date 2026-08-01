@@ -143,8 +143,8 @@ object ShortcutHelper {
      * 加载快捷方式图标：优先使用用户自定义图片，否则用 App 默认图标。
      */
     private fun loadShortcutIcon(context: Context): Icon {
-        val imageFile = File(context.filesDir, "widget_image.jpg")
-        if (imageFile.exists()) {
+        val imageFile = com.quickdaily.WidgetImageFileResolver.resolve(context)
+        if (imageFile != null) {
             val bitmap = BitmapFactory.decodeFile(imageFile.absolutePath)
             if (bitmap != null) {
                 val square = centerCropSquare(bitmap)

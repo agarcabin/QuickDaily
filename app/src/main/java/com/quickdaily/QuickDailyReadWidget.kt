@@ -9,17 +9,14 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.media.MediaActionSound
 import android.os.Build
 import android.widget.RemoteViews
-import com.quickdaily.BetaLogger
 import com.quickdaily.util.DateUtil
-import com.quickdaily.util.FileUtil
-import com.quickdaily.util.ContentUtil
 
 class QuickDailyReadWidget : AppWidgetProvider() {
 
     override fun onUpdate(ctx: Context, manager: AppWidgetManager, ids: IntArray) {
+        BetaLogger.init(ctx)
         BetaLogger.log("ReadWidget", "onUpdate widgetIds=${ids.joinToString()}")
         for (id in ids) {
             try { updateWidget(ctx, manager, id, null) } catch (_: Exception) { }
@@ -34,27 +31,34 @@ class QuickDailyReadWidget : AppWidgetProvider() {
         newOptions: android.os.Bundle
     ) {
         super.onAppWidgetOptionsChanged(context, appWidgetManager, appWidgetId, newOptions)
+        BetaLogger.init(context)
         BetaLogger.log("ReadWidget", "size changed widgetId=$appWidgetId options=$newOptions")
         updateWidget(context, appWidgetManager, appWidgetId, null)
         WidgetRefreshCoordinator.refreshRead(context, immediate = true)
     }
 
     override fun onReceive(context: Context, intent: Intent) {
+        BetaLogger.init(context)
         BetaLogger.log("ReadWidget", "onReceive action=${intent.action} widgetId=${intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1)}")
         try { super.onReceive(context, intent) } catch (_: Exception) { }
         if (ACTION_TOGGLE_MARKDOWN == intent.action) {
             val prefs = context.getSharedPreferences("QuickDaily", 0)
             val current = prefs.getBoolean("render_markdown", true)
             prefs.edit().putBoolean("render_markdown", !current).commit()
+            BetaLogger.log("ReadWidget/Render", "renderMarkdown changed from=$current to=${!current}")
             refreshAllWidgets(context, immediate = true)
-    } else if (ACTION_MIDNIGHT_REFRESH == intent.action) {
-        refreshAllWidgets(context, immediate = true)
-    } else if (ACTION_TOGGLE_TASK == intent.action) {
-        val taskIdx = intent.getIntExtra("task_index", -1)
-        if (taskIdx >= 0) {
-            toggleTaskInDiary(context, taskIdx)
+        } else if (ACTION_MIDNIGHT_REFRESH == intent.action) {
+            refreshAllWidgets(context, immediate = true)
+        } else if (ACTION_TOGGLE_TASK == intent.action) {
+            val path = intent.getStringExtra(TaskWidget.EXTRA_TASK_PATH).orEmpty()
+            val lineIndex = intent.getIntExtra(TaskWidget.EXTRA_TASK_LINE, -1)
+            val expectedRaw = intent.getStringExtra(TaskWidget.EXTRA_TASK_RAW).orEmpty()
+            if (path.isNotBlank() && lineIndex >= 0) {
+                toggleTask(context, path, lineIndex, expectedRaw)
+            } else {
+                BetaLogger.log("ReadWidget", "toggle ignored invalid path=$path line=$lineIndex")
+            }
         }
-    }
     }
 
     companion object {
@@ -98,51 +102,24 @@ class QuickDailyReadWidget : AppWidgetProvider() {
             } catch (e: Exception) { BetaLogger.log("ReadWidget", "refreshNow failed exception=${e.javaClass.simpleName} message=${e.message}") }
         }
 
-        private fun toggleTaskInDiary(context: Context, lineIndex: Int) {
-            try {
-                val prefs = context.getSharedPreferences("QuickDaily", 0)
-                val vaultPath = prefs.getString("vault_path", "") ?: ""
-                if (vaultPath.isBlank()) return
-                val diaryFolder = prefs.getString("diary_folder", "Daily") ?: "Daily"
-                val dateFormat = prefs.getString("date_format", "YYYY-MM-DD") ?: "YYYY-MM-DD"
-                val date = DateUtil.todayStr(dateFormat)
-                val path = vaultPath.trimEnd('/') + "/" + diaryFolder.trimEnd('/') + "/" + date + ".md"
-                val content = FileUtil.read(path)
-                if (content.isEmpty()) return
-
-                val filterFm = prefs.getBoolean("filter_frontmatter", false)
-                val parsed = ContentUtil.parseFrontmatter(content)
-                val displayContent = if (filterFm && parsed.hasFrontmatter) parsed.body else content
-
-                val displayLines = displayContent.lines().toMutableList()
-                if (lineIndex >= displayLines.size) return
-
-                val targetLine = displayLines[lineIndex]
-                val trimmed = targetLine.trim()
-
-                val newLine = when {
-                    trimmed.startsWith("- [ ] ") -> targetLine.replaceFirst("- [ ] ", "- [x] ")
-                    trimmed.startsWith("- [ ]") -> targetLine.replaceFirst("- [ ]", "- [x]")
-                    trimmed.startsWith("- [x] ") -> targetLine.replaceFirst("- [x] ", "- [ ] ")
-                    trimmed.startsWith("- [X] ") -> targetLine.replaceFirst("- [X] ", "- [ ] ")
-                    trimmed.startsWith("- [x]") -> targetLine.replaceFirst("- [x]", "- [ ]")
-                    trimmed.startsWith("- [X]") -> targetLine.replaceFirst("- [X]", "- [ ]")
-                    else -> return
-                }
-
-                displayLines[lineIndex] = newLine
-                val newDisplayContent = displayLines.joinToString("\n")
-                val saveContent = if (filterFm && parsed.hasFrontmatter) {
-                    ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, newDisplayContent)
-                } else {
-                    newDisplayContent
-                }
-
-                FileUtil.write(path, saveContent)
-
-                // Refresh both widgets
+        private fun toggleTask(
+            context: Context,
+            path: String,
+            lineIndex: Int,
+            expectedRaw: String,
+        ) {
+            val result = TaskToggleUseCase.toggle(
+                context = context,
+                path = path,
+                lineIndex = lineIndex,
+                expectedRaw = expectedRaw,
+                logTag = "ReadWidget",
+            )
+            if (result.succeeded) {
                 WidgetRefreshCoordinator.refreshAll(context, immediate = true)
-            } catch (_: Exception) { }
+            } else if (result.failureReason == "stale_line") {
+                WidgetRefreshCoordinator.refreshRead(context, immediate = true)
+            }
         }
 
         private fun updateWidget(
@@ -154,10 +131,14 @@ class QuickDailyReadWidget : AppWidgetProvider() {
             val views = RemoteViews(ctx.packageName, R.layout.widget_diary_read)
             val appearance = WidgetAppearance.colors(ctx)
             val size = WidgetSizePolicy.forWidget(manager, widgetId)
+            BetaLogger.log(
+                "ReadWidget/Render",
+                "widgetId=$widgetId size=$size result=${result?.javaClass?.simpleName ?: "loading"}",
+            )
             WidgetAppearance.applyRoot(views, R.id.widget_root, appearance)
             WidgetSizePolicy.applyReadChrome(views, size)
 
-            // Home button
+            // Editor page button
             val homeIntent = Intent(ctx, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             }

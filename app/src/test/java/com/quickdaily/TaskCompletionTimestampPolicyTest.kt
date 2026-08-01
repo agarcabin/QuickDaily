@@ -47,4 +47,31 @@ class TaskCompletionTimestampPolicyTest {
             )
         )
     }
+
+    @Test
+    fun removeStripsOnlyTheTrailingTimestampAndKeepsTaskText() {
+        assertEquals(
+            "- [ ] Buy milk",
+            TaskCompletionTimestampPolicy.removeIfPresent("- [ ] Buy milk ✅️2026-07-30"),
+        )
+    }
+
+    @Test
+    fun removeAcceptsTheExistingSpacedAndVariationSelectorFormats() {
+        assertEquals(
+            "  - [x] Child",
+            TaskCompletionTimestampPolicy.removeIfPresent("  - [x] Child ✅️ 2026-07-30"),
+        )
+        assertEquals(
+            "- [x] Task",
+            TaskCompletionTimestampPolicy.removeIfPresent("- [x] Task ✅ 2026-07-30"),
+        )
+    }
+
+    @Test
+    fun removeLeavesLinesWithoutTimestampUnchanged() {
+        val line = "\t- [x] No timestamp"
+
+        assertEquals(line, TaskCompletionTimestampPolicy.removeIfPresent(line))
+    }
 }

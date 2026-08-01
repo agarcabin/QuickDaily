@@ -43,6 +43,10 @@ object TaskWidgetConfigStore {
             if (config.scope == TaskWidgetScope.CUSTOM && config.customRelativePath.isNotBlank()) {
                 recordCustomPage(context, config.customRelativePath)
             }
+            BetaLogger.log(
+                "TaskWidgetConfig",
+                "load widgetId=$widgetId source=stored scope=${config.scope.key} path=${config.customRelativePath}",
+            )
             return config
         }
 
@@ -51,11 +55,15 @@ object TaskWidgetConfigStore {
         val migratedScope = TaskWidgetScope.fromKey(prefs.getString("task_period", "today"))
         val migrated = TaskWidgetConfig(migratedScope)
         save(context, widgetId, migrated)
+        BetaLogger.log(
+            "TaskWidgetConfig",
+            "load widgetId=$widgetId source=migrated scope=${migrated.scope.key} path=${migrated.customRelativePath}",
+        )
         return migrated
     }
 
     fun save(context: Context, widgetId: Int, config: TaskWidgetConfig) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val committed = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
             .putString(scopeKey(widgetId), config.scope.key)
             .putString(pathKey(widgetId), config.customRelativePath.trim())
@@ -63,6 +71,10 @@ object TaskWidgetConfigStore {
         if (config.scope == TaskWidgetScope.CUSTOM && config.customRelativePath.isNotBlank()) {
             recordCustomPage(context, config.customRelativePath)
         }
+        BetaLogger.log(
+            "TaskWidgetConfig",
+            "save widgetId=$widgetId scope=${config.scope.key} path=${config.customRelativePath} committed=$committed",
+        )
     }
 
     fun clear(context: Context, widgetId: Int) {
@@ -71,6 +83,7 @@ object TaskWidgetConfigStore {
             .remove(scopeKey(widgetId))
             .remove(pathKey(widgetId))
             .apply()
+        BetaLogger.log("TaskWidgetConfig", "clear widgetId=$widgetId")
     }
 
     fun customFilePath(context: Context, config: TaskWidgetConfig): String? {
@@ -79,16 +92,30 @@ object TaskWidgetConfigStore {
         val vaultPath = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString("vault_path", "")
             .orEmpty()
-        return VaultPathUtil.resolveTarget(vaultPath, config.customRelativePath)
+        val resolved = VaultPathUtil.resolveTarget(vaultPath, config.customRelativePath)
+        BetaLogger.log(
+            "TaskWidgetConfig",
+            "resolve custom scope=${config.scope.key} relative=${config.customRelativePath} vault=$vaultPath resolved=${resolved.orEmpty()}",
+        )
+        return resolved
     }
 
     /** Return the selected absolute filesystem path; it may be outside the vault. */
     fun filePathFromUri(context: Context, uri: Uri): String? {
-        val selectedPath = UriUtil.documentUriToPath(context, uri) ?: return null
-        if (!isMarkdownPath(selectedPath)) return null
-        return runCatching {
+        val selectedPath = UriUtil.documentUriToPath(context, uri)
+        if (selectedPath == null) {
+            BetaLogger.log("PageSelection/Picker", "uri=$uri result=unresolved")
+            return null
+        }
+        if (!isMarkdownPath(selectedPath)) {
+            BetaLogger.log("PageSelection/Picker", "uri=$uri result=not_markdown path=$selectedPath")
+            return null
+        }
+        val canonical = runCatching {
             File(selectedPath).canonicalFile.takeIf { it.isFile }?.path
         }.getOrNull()
+        BetaLogger.log("PageSelection/Picker", "uri=$uri result=${canonical.orEmpty()} path=$selectedPath")
+        return canonical
     }
 
     fun displayName(config: TaskWidgetConfig): String =
@@ -105,6 +132,10 @@ object TaskWidgetConfigStore {
         val normalized = normalizeHistoryPath(context, path)
         val remaining = readCustomHistory(context).filterNot { it == normalized || it == path }
         writeCustomHistory(context, remaining)
+        BetaLogger.log(
+            "PageSelection/History",
+            "removed path=$path normalized=$normalized remaining=${remaining.joinToString("|")}",
+        )
     }
 
     internal fun isMarkdownPath(path: String): Boolean =
@@ -116,9 +147,11 @@ object TaskWidgetConfigStore {
     internal fun recordCustomPage(context: Context, path: String) {
         if (!isMarkdownPath(path)) return
         val normalized = normalizeHistoryPath(context, path)
-        writeCustomHistory(
-            context,
-            TaskWidgetPageHistory.remember(readCustomHistory(context), normalized)
+        val updated = TaskWidgetPageHistory.remember(readCustomHistory(context), normalized)
+        writeCustomHistory(context, updated)
+        BetaLogger.log(
+            "PageSelection/History",
+            "recorded path=$path normalized=$normalized history=${updated.joinToString("|")}",
         )
     }
 
