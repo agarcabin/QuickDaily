@@ -44,7 +44,7 @@ class QuickDailyReadWidget : AppWidgetProvider() {
         if (ACTION_TOGGLE_MARKDOWN == intent.action) {
             val prefs = context.getSharedPreferences("QuickDaily", 0)
             val current = prefs.getBoolean("render_markdown", true)
-            prefs.edit().putBoolean("render_markdown", !current).commit()
+            prefs.edit().putBoolean("render_markdown", !current).apply()
             BetaLogger.log("ReadWidget/Render", "renderMarkdown changed from=$current to=${!current}")
             refreshAllWidgets(context, immediate = true)
         } else if (ACTION_MIDNIGHT_REFRESH == intent.action) {
@@ -54,7 +54,12 @@ class QuickDailyReadWidget : AppWidgetProvider() {
             val lineIndex = intent.getIntExtra(TaskWidget.EXTRA_TASK_LINE, -1)
             val expectedRaw = intent.getStringExtra(TaskWidget.EXTRA_TASK_RAW).orEmpty()
             if (path.isNotBlank() && lineIndex >= 0) {
-                toggleTask(context, path, lineIndex, expectedRaw)
+                val pendingResult = goAsync()
+                WidgetAsyncWorkRunner.launch(
+                    finishable = WidgetAsyncFinishable { pendingResult.finish() },
+                ) {
+                    toggleTask(context.applicationContext, path, lineIndex, expectedRaw)
+                }
             } else {
                 BetaLogger.log("ReadWidget", "toggle ignored invalid path=$path line=$lineIndex")
             }

@@ -17,7 +17,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -36,6 +35,7 @@ fun MdRenderer(
     modifier: Modifier = Modifier
 ) {
     val lines = remember(text) { parseLines(text) }
+    val colors = MaterialTheme.colorScheme
     Column(modifier = modifier.fillMaxWidth()) {
         lines.forEach { line ->
             when (line) {
@@ -93,12 +93,15 @@ fun MdRenderer(
                     Row(modifier = Modifier.padding(start = 8.dp, top = 1.dp, bottom = 1.dp)) {
                         BasicText(
                             text = AnnotatedString("•"),
-                            style = LocalTextStyle.current.copy(fontWeight = FontWeight.Bold)
+                            style = LocalTextStyle.current.copy(
+                                color = colors.onSurface,
+                                fontWeight = FontWeight.Bold,
+                            )
                         )
                         Spacer(Modifier.width(8.dp))
                         BasicText(
                             text = buildAnnotated(line.text),
-                            style = LocalTextStyle.current
+                            style = LocalTextStyle.current.copy(color = colors.onSurface)
                         )
                     }
                 }
@@ -126,7 +129,7 @@ fun MdRenderer(
                     } else {
                         BasicText(
                             text = AnnotatedString(line.alt.ifEmpty { "[图片: ${line.path}]" }),
-                            style = LocalTextStyle.current.copy(color = Color.Gray),
+                                style = LocalTextStyle.current.copy(color = colors.onSurfaceVariant),
                             modifier = Modifier.padding(vertical = 2.dp)
                         )
                     }
@@ -134,7 +137,7 @@ fun MdRenderer(
                 is MdLine.Plain -> {
                     BasicText(
                         text = buildAnnotated(line.text),
-                        style = LocalTextStyle.current,
+                        style = LocalTextStyle.current.copy(color = colors.onSurface),
                         modifier = Modifier.padding(vertical = 1.dp)
                     )
                 }
@@ -145,7 +148,9 @@ fun MdRenderer(
 
 // ── Inline Parser ────────────────────────────────────────
 
+@Composable
 private fun buildAnnotated(raw: String): AnnotatedString {
+    val colors = MaterialTheme.colorScheme
     return buildAnnotatedString {
         var i = 0
         while (i < raw.length) {
@@ -155,7 +160,7 @@ private fun buildAnnotated(raw: String): AnnotatedString {
                     var end = i + 1
                     while (end < raw.length && (raw[end].isLetterOrDigit() || raw[end] == '_' || raw[end] == '/' || raw[end] == '-')) end++
                     if (end > i + 1) {
-                        withStyle(SpanStyle(color = Color(0xFF1E88E5))) { append(raw.substring(i, end)) }
+                        withStyle(SpanStyle(color = colors.tertiary)) { append(raw.substring(i, end)) }
                         i = end
                     } else {
                         append(raw[i]); i++
@@ -190,7 +195,7 @@ private fun buildAnnotated(raw: String): AnnotatedString {
                 raw.startsWith("~~", i) -> {
                     val end = raw.indexOf("~~", i + 2)
                     if (end > i) {
-                        withStyle(SpanStyle(color = Color.Gray)) {
+                        withStyle(SpanStyle(color = colors.onSurfaceVariant)) {
                             append(raw.substring(i + 2, end))
                         }
                         i = end + 2
@@ -205,7 +210,7 @@ private fun buildAnnotated(raw: String): AnnotatedString {
                     if (bracketEnd > i && parenEnd > bracketEnd) {
                         val linkText = raw.substring(i + 1, bracketEnd)
                         withStyle(SpanStyle(
-                            color = Color(0xFF1565C0),
+                            color = colors.primary,
                             textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline
                         )) {
                             append(linkText)

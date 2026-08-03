@@ -63,17 +63,17 @@ object TaskWidgetConfigStore {
     }
 
     fun save(context: Context, widgetId: Int, config: TaskWidgetConfig) {
-        val committed = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
             .putString(scopeKey(widgetId), config.scope.key)
             .putString(pathKey(widgetId), config.customRelativePath.trim())
-            .commit()
+            .apply()
         if (config.scope == TaskWidgetScope.CUSTOM && config.customRelativePath.isNotBlank()) {
             recordCustomPage(context, config.customRelativePath)
         }
         BetaLogger.log(
             "TaskWidgetConfig",
-            "save widgetId=$widgetId scope=${config.scope.key} path=${config.customRelativePath} committed=$committed",
+            "save widgetId=$widgetId scope=${config.scope.key} path=${config.customRelativePath} applied=true",
         )
     }
 

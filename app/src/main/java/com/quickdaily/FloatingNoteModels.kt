@@ -11,6 +11,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.TextRange
 import androidx.core.content.ContextCompat
 import com.quickdaily.util.DateUtil
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.ConcurrentHashMap
+import java.util.UUID
 
 private const val FLOATING_NOTE_PREFS = "QuickDaily"
 
@@ -22,12 +25,15 @@ enum class FloatingNoteSource {
     WIDGET
 }
 
+internal fun newFloatingNoteRequestId(): String = UUID.randomUUID().toString()
+
 data class FloatingNoteRequest(
     val source: FloatingNoteSource,
     val prefillText: String = "",
     val returnToHomeAfterClose: Boolean,
     val targetRelativePath: String? = null,
     val displayTitle: String? = null,
+    val requestId: String = newFloatingNoteRequestId(),
 )
 
 data class FloatingNoteTargetOption(
@@ -104,16 +110,35 @@ internal object FloatingNotePolicy {
 
 internal object FloatingNoteEntryPolicy {
     const val PREF_SYSTEM_SIDEBAR_SUPPORT = "system_sidebar_support"
+    const val DEFAULT_SYSTEM_SIDEBAR_SUPPORT = false
 
     fun isSystemSidebarSupportEnabled(context: Context): Boolean =
         context.getSharedPreferences(FLOATING_NOTE_PREFS, Context.MODE_PRIVATE)
-            .getBoolean(PREF_SYSTEM_SIDEBAR_SUPPORT, false)
+            .getBoolean(PREF_SYSTEM_SIDEBAR_SUPPORT, DEFAULT_SYSTEM_SIDEBAR_SUPPORT)
 
-    fun launchLegacyEditor(context: Context) {
+    fun launchLegacyEditor(
+        context: Context,
+        source: FloatingNoteSource = FloatingNoteSource.SIDEBAR,
+    ) {
         context.startActivity(Intent(context, NoteEditActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+            putExtra("floating_source", source.name)
+            putExtra("floating_request_id", newFloatingNoteRequestId())
         })
     }
+}
+
+/** Prevents repeated sidebar taps from queueing several asynchronous overlay starts. */
+internal object FloatingNoteLaunchGate {
+    private val pending = AtomicBoolean(false)
+
+    fun acquire(): Boolean = pending.compareAndSet(false, true)
+
+    fun release() {
+        pending.set(false)
+    }
+
+    fun isPending(): Boolean = pending.get()
 }
 
 /** Compose-friendly state shared by the Activity and Overlay hosts. */
@@ -300,28 +325,67 @@ object FloatingNoteDraftStore {
 }
 
 interface FloatingNoteController {
-    fun showOrFocus(request: FloatingNoteRequest): Boolean
+    fun showOrFocus(request: FloatingNoteRequest, onReady: (() -> Unit)? = null): Boolean
     fun hide(reason: String = "user")
     fun isShowing(): Boolean
+}
+
+internal object FloatingNoteHandoff {
+    private val callbacks = ConcurrentHashMap<String, () -> Unit>()
+
+    fun register(requestId: String, callback: () -> Unit) {
+        callbacks[requestId] = callback
+    }
+
+    fun cancel(requestId: String) {
+        callbacks.remove(requestId)
+    }
+
+    fun notifyReady(requestId: String) {
+        callbacks.remove(requestId)?.let { callback ->
+            runCatching { callback() }
+                .onFailure { error ->
+                    BetaLogger.log(
+                        "FloatingNote/Handoff",
+                        "ready_callback_failed requestId=$requestId error=${error.javaClass.simpleName}",
+                    )
+                }
+        }
+    }
 }
 
 object FloatingNoteControllerProvider {
     fun forContext(context: Context): FloatingNoteController = object : FloatingNoteController {
         private val appContext = context.applicationContext
 
-        override fun showOrFocus(request: FloatingNoteRequest): Boolean {
+        override fun showOrFocus(request: FloatingNoteRequest, onReady: (() -> Unit)?): Boolean {
             if (!Settings.canDrawOverlays(appContext)) {
                 BetaLogger.log("FloatingNote/Permission", "permission_denied source=${request.source}")
                 return false
             }
+            if (FloatingNoteService.isWindowShowing) {
+                BetaLogger.log("FloatingNote/Window", "focus existing source=${request.source}")
+                onReady?.invoke()
+                return true
+            }
+            if (!FloatingNoteLaunchGate.acquire()) {
+                BetaLogger.log("FloatingNote/Service", "show suppressed source=${request.source} pending=true")
+                return true
+            }
+            onReady?.let { FloatingNoteHandoff.register(request.requestId, it) }
             return try {
                 ContextCompat.startForegroundService(
                     appContext,
                     FloatingNoteService.showIntent(appContext, request)
                 )
-                BetaLogger.log("FloatingNote/Service", "show source=${request.source}")
+                BetaLogger.log(
+                    "FloatingNote/Service",
+                    "show source=${request.source} requestId=${request.requestId}",
+                )
                 true
             } catch (error: Throwable) {
+                FloatingNoteHandoff.cancel(request.requestId)
+                FloatingNoteLaunchGate.release()
                 BetaLogger.log("FloatingNote/Service", "start_failed=${error.javaClass.simpleName}")
                 false
             }

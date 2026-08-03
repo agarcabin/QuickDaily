@@ -71,7 +71,12 @@ class TaskWidget : AppWidgetProvider() {
                 val lineIndex = intent.getIntExtra(EXTRA_TASK_LINE, -1)
                 val expectedRaw = intent.getStringExtra(EXTRA_TASK_RAW).orEmpty()
                 if (path.isNotBlank() && lineIndex >= 0) {
-                    toggleTask(context, path, lineIndex, expectedRaw)
+                    val pendingResult = goAsync()
+                    WidgetAsyncWorkRunner.launch(
+                        finishable = WidgetAsyncFinishable { pendingResult.finish() },
+                    ) {
+                        toggleTask(context.applicationContext, path, lineIndex, expectedRaw)
+                    }
                 } else {
                     BetaLogger.log("TaskWidget", "toggle ignored invalid path=$path line=$lineIndex")
                 }

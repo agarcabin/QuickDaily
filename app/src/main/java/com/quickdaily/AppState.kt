@@ -40,7 +40,7 @@ data class DiaryConfig(
     val imageCustomNamingFormat: String = "yyyy-MM-dd_HHmmss_{filename}{ext}",
     val tagAutocomplete: Boolean = true,
     val wikilinkAutocomplete: Boolean = true,
-    val systemSidebarSupport: Boolean = false,
+    val systemSidebarSupport: Boolean = FloatingNoteEntryPolicy.DEFAULT_SYSTEM_SIDEBAR_SUPPORT,
     val homeEntryMode: String = HomeEntryMode.OVERLAY.key,
     val toolbarOrder: List<String> = EditorToolbarPolicy.defaultOrder.map { it.id },
     val toolbarVisible: Set<String> = EditorToolbarPolicy.defaultVisible,
@@ -52,7 +52,7 @@ data class DiaryConfig(
     val taskShowFullContent: Boolean = TaskWidgetDisplayPolicy.DEFAULT_SHOW_FULL_CONTENT,
     val widgetStyle: String = "dark",
     val widgetBackgroundColor: Long = 0xFF202124L,
-    val widgetOpacity: Int = 100
+    val widgetOpacity: Int = WidgetAppearance.DEFAULT_OPACITY_PERCENT,
 )
 
 enum class ObsidianConfigReadStatus {
@@ -64,6 +64,57 @@ enum class ObsidianConfigReadStatus {
 data class ObsidianConfigReadResult(
     val status: ObsidianConfigReadStatus,
     val config: DiaryConfig? = null,
+)
+
+data class EditorReloadSnapshot(
+    val generation: Long,
+    val target: String,
+    val absolutePath: String,
+    val lastLoadedMtime: Long,
+)
+
+object EditorReloadPolicy {
+    fun shouldStart(request: EditorReloadSnapshot, observedMtime: Long): Boolean =
+        observedMtime > request.lastLoadedMtime
+
+    fun canApply(
+        request: EditorReloadSnapshot,
+        current: EditorReloadSnapshot,
+        observedMtime: Long,
+    ): Boolean =
+        request.generation == current.generation &&
+            request.target == current.target &&
+            request.absolutePath == current.absolutePath &&
+            observedMtime > current.lastLoadedMtime
+}
+
+internal data class EditorConflict(
+    val absolutePath: String,
+    val externalContent: String,
+    val externalMtime: Long,
+)
+
+internal object EditorConflictPolicy {
+    fun shouldPrompt(
+        isDirty: Boolean,
+        observedMtime: Long,
+        lastLoadedMtime: Long,
+        ignoredExternalMtime: Long,
+    ): Boolean =
+        isDirty &&
+            observedMtime > lastLoadedMtime &&
+            observedMtime > ignoredExternalMtime
+
+    fun canClearDirty(writeSucceeded: Boolean, savedVersion: Long, currentVersion: Long): Boolean =
+        writeSucceeded && savedVersion == currentVersion
+}
+
+private data class EditorSaveSnapshot(
+    val path: String,
+    val saveContent: String,
+    val contentVersion: Long,
+    val lastLoadedMtime: Long,
+    val ignoredExternalMtime: Long,
 )
 
 const val TASK_PERIOD_TODAY = "today"
@@ -102,6 +153,12 @@ class AppState(application: Application) : AndroidViewModel(application) {
     private val _isLoaded = MutableStateFlow(false)
     val isLoaded: StateFlow<Boolean> = _isLoaded.asStateFlow()
 
+    private val _isDirty = MutableStateFlow(false)
+    val isDirty: StateFlow<Boolean> = _isDirty.asStateFlow()
+
+    private val _editorConflict = MutableStateFlow<EditorConflict?>(null)
+    internal val editorConflict: StateFlow<EditorConflict?> = _editorConflict.asStateFlow()
+
     private val _todayPath = MutableStateFlow("")
     val todayPath: StateFlow<String> = _todayPath.asStateFlow()
 
@@ -111,6 +168,10 @@ class AppState(application: Application) : AndroidViewModel(application) {
     private var autoSave: Debounce? = null
 
     private var _lastLoadedMtime: Long = 0L
+    private var ignoredExternalMtime: Long = 0L
+    private var contentVersion: Long = 0L
+    private val loadLock = Any()
+    private var loadGeneration = 0L
 
     // ── Undo/Redo ────────────────────────────────────────
     private val _undoStack = mutableListOf<String>()
@@ -124,6 +185,12 @@ class AppState(application: Application) : AndroidViewModel(application) {
     // ── Config ──────────────────────────────────────────
 
     private fun loadConfig(): DiaryConfig {
+        // These effects were removed in 1.8.5. Drop their legacy flags without
+        // disturbing any other persisted QuickDaily settings.
+        prefs.edit()
+            .remove("widget_background_blur")
+            .remove("floating_background_blur")
+            .apply()
         val obsidianConfigUri = prefs.getString("obsidian_config_uri", "") ?: ""
         return DiaryConfig(
             vaultPath = prefs.getString("vault_path", "") ?: "",
@@ -151,7 +218,10 @@ class AppState(application: Application) : AndroidViewModel(application) {
             imageCustomNamingFormat = prefs.getString("image_custom_naming_format", "yyyy-MM-dd_HHmmss_{filename}{ext}") ?: "yyyy-MM-dd_HHmmss_{filename}{ext}",
             tagAutocomplete = prefs.getBoolean("tag_autocomplete", true),
             wikilinkAutocomplete = prefs.getBoolean("wikilink_autocomplete", true),
-            systemSidebarSupport = prefs.getBoolean(FloatingNoteEntryPolicy.PREF_SYSTEM_SIDEBAR_SUPPORT, false),
+            systemSidebarSupport = prefs.getBoolean(
+                FloatingNoteEntryPolicy.PREF_SYSTEM_SIDEBAR_SUPPORT,
+                FloatingNoteEntryPolicy.DEFAULT_SYSTEM_SIDEBAR_SUPPORT,
+            ),
             homeEntryMode = HomeEntryMode.fromKey(prefs.getString("home_entry_mode", HomeEntryMode.OVERLAY.key)).key,
             toolbarOrder = if (prefs.contains(EditorToolbarPolicy.PREF_ORDER)) {
                 EditorToolbarPolicy.migrateOrder(
@@ -162,9 +232,9 @@ class AppState(application: Application) : AndroidViewModel(application) {
                 EditorToolbarPolicy.defaultOrder.map { it.id }
             },
             toolbarVisible = if (prefs.contains(EditorToolbarPolicy.PREF_VISIBLE)) {
-                EditorToolbarPolicy.migrateVisible(
-                    EditorToolbarPolicy.parseVisible(prefs.getString(EditorToolbarPolicy.PREF_VISIBLE, null)),
-                    prefs.getInt(EditorToolbarPolicy.PREF_SCHEMA_VERSION, 0) < EditorToolbarPolicy.CURRENT_SCHEMA_VERSION,
+                EditorToolbarPolicy.readVisible(
+                    prefs.getString(EditorToolbarPolicy.PREF_VISIBLE, null),
+                    prefs.getInt(EditorToolbarPolicy.PREF_SCHEMA_VERSION, 0),
                 )
             } else {
                 EditorToolbarPolicy.defaultVisible
@@ -183,11 +253,12 @@ class AppState(application: Application) : AndroidViewModel(application) {
             ),
             widgetStyle = prefs.getString("widget_style", "dark") ?: "dark",
             widgetBackgroundColor = prefs.getLong("widget_background_color", 0xFF202124L),
-            widgetOpacity = prefs.getInt("widget_opacity", 100).coerceIn(0, 100)
+            widgetOpacity = prefs.getInt("widget_opacity", WidgetAppearance.DEFAULT_OPACITY_PERCENT).coerceIn(0, 100),
         )
     }
 
     fun saveConfig(raw: DiaryConfig) {
+        val previousConfig = _config.value
         val config = DiaryConfig(
             vaultPath = raw.vaultPath.trim(),
             obsidianConfigUri = raw.obsidianConfigUri.trim(),
@@ -221,7 +292,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
             taskShowFullContent = raw.taskShowFullContent,
             widgetStyle = raw.widgetStyle,
             widgetBackgroundColor = raw.widgetBackgroundColor,
-            widgetOpacity = raw.widgetOpacity.coerceIn(0, 100)
+            widgetOpacity = raw.widgetOpacity.coerceIn(0, 100),
         )
         prefs.edit()
             .putString("vault_path", config.vaultPath)
@@ -258,7 +329,12 @@ class AppState(application: Application) : AndroidViewModel(application) {
             .putString("widget_style", config.widgetStyle)
             .putLong("widget_background_color", config.widgetBackgroundColor)
             .putInt("widget_opacity", config.widgetOpacity.coerceIn(0, 100))
-            .commit()
+            .remove("widget_background_blur")
+            .remove("floating_background_blur")
+            // Config changes are initiated from Compose click handlers. `commit()` blocks
+            // the main thread and was especially visible in Settings because every switch
+            // also used to reload the current Markdown file below.
+            .apply()
         _config.value = config
         BetaLogger.log(
             "Config/Save",
@@ -268,13 +344,22 @@ class AppState(application: Application) : AndroidViewModel(application) {
                 "taskShowCompleted=${config.taskShowCompleted} taskShowFullContent=${config.taskShowFullContent} " +
                 "systemSidebarSupport=${config.systemSidebarSupport}",
         )
-        loadEditorTarget(_editorTargetRelativePath.value)
+        if (previousConfig.requiresEditorReloadComparedTo(config)) {
+            loadEditorTarget(_editorTargetRelativePath.value)
+        }
     }
 
     fun setLoggingEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean("logging_enabled", enabled).commit()
+        prefs.edit().putBoolean("logging_enabled", enabled).apply()
         _config.value = _config.value.copy(loggingEnabled = enabled)
     }
+
+    private fun DiaryConfig.requiresEditorReloadComparedTo(other: DiaryConfig): Boolean =
+        vaultPath != other.vaultPath ||
+            diaryFolder != other.diaryFolder ||
+            dateFormat != other.dateFormat ||
+            templatePath != other.templatePath ||
+            filterFrontmatter != other.filterFrontmatter
 
     suspend fun loadObsidianConfig(vaultPath: String): DiaryConfig? {
         return kotlinx.coroutines.withContext(Dispatchers.IO) {
@@ -319,7 +404,11 @@ class AppState(application: Application) : AndroidViewModel(application) {
                 (obj[key] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNullBlank()
 
             val folder = field("folder") ?: "Daily"
-            val format = DateUtil.convertObsidianFormat(field("format") ?: "YYYY-MM-DD")
+            // Keep the exact Moment/Obsidian format in persisted config. The
+            // conversion to Java's DateTimeFormatter happens only when a
+            // filename is generated, so casing from daily-notes.json remains
+            // visible and round-trippable in settings.
+            val format = field("format") ?: "YYYY-MM-DD"
             var template = field("template") ?: ""
             if (template.isNotBlank() && !template.endsWith(".md", ignoreCase = true)) {
                 template += ".md"
@@ -366,13 +455,27 @@ class AppState(application: Application) : AndroidViewModel(application) {
     /** Load either today's diary or an absolute/vault-relative Markdown file. */
     fun loadEditorTarget(relativePath: String?) {
         val normalized = relativePath.orEmpty().trim()
-        _editorTargetRelativePath.value = normalized
-        _isLoaded.value = false
+        val generation = synchronized(loadLock) {
+            loadGeneration += 1L
+            contentVersion += 1L
+            _editorTargetRelativePath.value = normalized
+            _isLoaded.value = false
+            _isDirty.value = false
+            _editorConflict.value = null
+            ignoredExternalMtime = 0L
+            loadGeneration
+        }
         if (_config.value.vaultPath.isBlank() && normalized.isBlank()) {
-            _todayPath.value = ""
-            _diaryContent.value = ""
-            _frontmatter.value = ""
-            _isLoaded.value = true
+            synchronized(loadLock) {
+                if (generation == loadGeneration) {
+                    _todayPath.value = ""
+                    _lastLoadedMtime = 0L
+                    _diaryContent.value = ""
+                    _frontmatter.value = ""
+                    _isDirty.value = false
+                    _isLoaded.value = true
+                }
+            }
             return
         }
 
@@ -382,11 +485,10 @@ class AppState(application: Application) : AndroidViewModel(application) {
             } else {
                 VaultPathUtil.resolveTarget(_config.value.vaultPath, normalized).orEmpty()
             }
-            _todayPath.value = path
-            _lastLoadedMtime = FileUtil.lastModified(path)
+            val loadedMtime = FileUtil.lastModified(path)
             val isToday = normalized.isBlank()
             val logTag = if (isToday) "LoadToday" else "LoadEditorTarget"
-            BetaLogger.log(logTag, "path=$path | mtime=$_lastLoadedMtime")
+            BetaLogger.log(logTag, "path=$path | mtime=$loadedMtime")
 
             val content = when (val result = FileUtil.readResult(path)) {
                 is ReadResult.Success -> result.content
@@ -418,20 +520,35 @@ class AppState(application: Application) : AndroidViewModel(application) {
             BetaLogger.log(logTag, "rawContent from=$contentSource raw_len=${rawContent.length}")
 
             val parsed = ContentUtil.parseFrontmatter(rawContent)
-            _frontmatter.value = parsed.frontmatter
-            _diaryContent.value = if (parsed.hasFrontmatter && config.value.filterFrontmatter) {
-                parsed.body
-            } else {
-                rawContent
+            val applied = synchronized(loadLock) {
+                if (generation != loadGeneration) {
+                    false
+                } else {
+                    _todayPath.value = path
+                    _lastLoadedMtime = loadedMtime
+                    ignoredExternalMtime = 0L
+                    _isDirty.value = false
+                    _editorConflict.value = null
+                    _frontmatter.value = parsed.frontmatter
+                    _diaryContent.value = if (parsed.hasFrontmatter && config.value.filterFrontmatter) {
+                        parsed.body
+                    } else {
+                        rawContent
+                    }
+                    _undoStack.clear()
+                    _redoStack.clear()
+                    _canUndo.value = false
+                    _canRedo.value = false
+                    _lastUndoPushTime = 0L
+                    _isLoaded.value = true
+                    autoSave?.cancel()
+                    autoSave = Debounce(scope = viewModelScope, onFire = { saveNow() })
+                    true
+                }
             }
-            _undoStack.clear()
-            _redoStack.clear()
-            _canUndo.value = false
-            _canRedo.value = false
-            _lastUndoPushTime = 0L
-            _isLoaded.value = true
-            autoSave?.cancel()
-            autoSave = Debounce(scope = viewModelScope, onFire = { saveNow() })
+            if (!applied) {
+                BetaLogger.log(logTag, "discarded_stale_load generation=$generation")
+            }
         }
     }
 
@@ -445,37 +562,114 @@ class AppState(application: Application) : AndroidViewModel(application) {
     fun reloadIfNewerOnDisk() {
         if (_config.value.vaultPath.isBlank()) return
         viewModelScope.launch(Dispatchers.IO) {
-            val path = _todayPath.value
-            if (path.isEmpty()) {
+            val request = synchronized(loadLock) {
+                _todayPath.value.takeIf { it.isNotEmpty() }?.let { path ->
+                    EditorReloadSnapshot(
+                        generation = loadGeneration,
+                        target = _editorTargetRelativePath.value,
+                        absolutePath = path,
+                        lastLoadedMtime = _lastLoadedMtime,
+                    )
+                }
+            }
+            if (request == null) {
                 loadToday()
                 return@launch
             }
-            val oldMtime = _lastLoadedMtime
-            val mtime = FileUtil.lastModified(path)
-            BetaLogger.log("ReloadIfNewer", "old_mtime=$oldMtime new_mtime=$mtime")
-            if (mtime > _lastLoadedMtime) {
-                _lastLoadedMtime = mtime
-                val content = when (val result = FileUtil.readResult(path)) {
-                    is ReadResult.Success -> result.content
-                    else -> { BetaLogger.log("ReloadIfNewer", "read_failed"); return@launch }
+            val mtime = FileUtil.lastModified(request.absolutePath)
+            BetaLogger.log("ReloadIfNewer", "old_mtime=${request.lastLoadedMtime} new_mtime=$mtime")
+            if (!EditorReloadPolicy.shouldStart(request, mtime)) return@launch
+
+            val existingConflict = synchronized(loadLock) { _editorConflict.value }
+            if (existingConflict?.absolutePath == request.absolutePath &&
+                mtime <= existingConflict.externalMtime
+            ) {
+                return@launch
+            }
+
+            val dirty = synchronized(loadLock) { _isDirty.value }
+            val ignoredMtime = synchronized(loadLock) { ignoredExternalMtime }
+            if (EditorConflictPolicy.shouldPrompt(
+                    isDirty = dirty,
+                    observedMtime = mtime,
+                    lastLoadedMtime = request.lastLoadedMtime,
+                    ignoredExternalMtime = ignoredMtime,
+                )
+            ) {
+                val conflict = readEditorConflict(request.absolutePath, mtime)
+                if (conflict == null) return@launch
+                val shown = synchronized(loadLock) {
+                    val current = EditorReloadSnapshot(
+                        generation = loadGeneration,
+                        target = _editorTargetRelativePath.value,
+                        absolutePath = _todayPath.value,
+                        lastLoadedMtime = _lastLoadedMtime,
+                    )
+                    if (EditorReloadPolicy.canApply(request, current, mtime) &&
+                        EditorConflictPolicy.shouldPrompt(
+                            isDirty = _isDirty.value,
+                            observedMtime = mtime,
+                            lastLoadedMtime = _lastLoadedMtime,
+                            ignoredExternalMtime = ignoredExternalMtime,
+                        )
+                    ) {
+                        _editorConflict.value = conflict
+                        true
+                    } else {
+                        false
+                    }
                 }
-                val parsed = ContentUtil.parseFrontmatter(content)
-                _frontmatter.value = parsed.frontmatter
-                // If file has only frontmatter (empty body), try loading template
-                val effectiveContent = if (parsed.hasFrontmatter && parsed.body.isBlank()) {
-                    val tpl = loadTemplate()
-                    if (tpl.isNotEmpty()) tpl else content
+                if (shown) {
+                    BetaLogger.log("ReloadIfNewer", "conflict_pending path=${request.absolutePath} mtime=$mtime")
+                }
+                return@launch
+            }
+
+            if (existingConflict != null) return@launch
+
+            val content = when (val result = FileUtil.readResult(request.absolutePath)) {
+                is ReadResult.Success -> result.content
+                else -> {
+                    BetaLogger.log("ReloadIfNewer", "read_failed path=${request.absolutePath}")
+                    return@launch
+                }
+            }
+            val parsed = ContentUtil.parseFrontmatter(content)
+            // If file has only frontmatter (empty body), try loading template.
+            val effectiveContent = if (parsed.hasFrontmatter && parsed.body.isBlank()) {
+                val tpl = loadTemplate()
+                if (tpl.isNotEmpty()) tpl else content
+            } else {
+                content
+            }
+            val effectiveParsed = ContentUtil.parseFrontmatter(effectiveContent)
+            val applied = synchronized(loadLock) {
+                val current = EditorReloadSnapshot(
+                    generation = loadGeneration,
+                    target = _editorTargetRelativePath.value,
+                    absolutePath = _todayPath.value,
+                    lastLoadedMtime = _lastLoadedMtime,
+                )
+                if (!EditorReloadPolicy.canApply(request, current, mtime)) {
+                    false
                 } else {
-                    content
+                    _frontmatter.value = effectiveParsed.frontmatter
+                    if (effectiveParsed.hasFrontmatter && _config.value.filterFrontmatter) {
+                        _diaryContent.value = effectiveParsed.body
+                    } else {
+                        _diaryContent.value = effectiveContent
+                    }
+                    _lastLoadedMtime = mtime
+                    _isDirty.value = false
+                    _editorConflict.value = null
+                    ignoredExternalMtime = 0L
+                    true
                 }
-                val effectiveParsed = ContentUtil.parseFrontmatter(effectiveContent)
-                _frontmatter.value = effectiveParsed.frontmatter
-                if (effectiveParsed.hasFrontmatter && _config.value.filterFrontmatter) {
-                    _diaryContent.value = effectiveParsed.body
-                } else {
-                    _diaryContent.value = effectiveContent
-                }
-                BetaLogger.log("ReloadIfNewer", "RELOADED | frontmatter_len=${parsed.frontmatter.length} body_len=${parsed.body.length} filtered=${_config.value.filterFrontmatter && parsed.hasFrontmatter}")
+            }
+            if (applied) {
+                BetaLogger.log("ReloadIfNewer", "RELOADED | frontmatter_len=${effectiveParsed.frontmatter.length} body_len=${effectiveParsed.body.length} filtered=${_config.value.filterFrontmatter && effectiveParsed.hasFrontmatter}")
+            } else {
+                BetaLogger.log("ReloadIfNewer", "discarded_stale_reload generation=${request.generation} path=${request.absolutePath}")
             }
         }
     }
@@ -504,9 +698,59 @@ class AppState(application: Application) : AndroidViewModel(application) {
         if (newContent == _diaryContent.value) return
         saveUndoPoint(forceUndoPoint)
         _diaryContent.value = newContent
+        synchronized(loadLock) {
+            contentVersion += 1L
+            _isDirty.value = true
+        }
         autoSave?.trigger()
-        BetaLogger.log("Edit", "content=$newContent")
+        BetaLogger.log("Edit", "content_changed length=${newContent.length}")
     }
+
+    fun useDiskConflict() {
+        val conflict = synchronized(loadLock) { _editorConflict.value } ?: return
+        val parsed = ContentUtil.parseFrontmatter(conflict.externalContent)
+        synchronized(loadLock) {
+            if (_editorConflict.value != conflict) return
+            _frontmatter.value = parsed.frontmatter
+            _diaryContent.value = if (parsed.hasFrontmatter && _config.value.filterFrontmatter) {
+                parsed.body
+            } else {
+                conflict.externalContent
+            }
+            _lastLoadedMtime = conflict.externalMtime
+            _isDirty.value = false
+            _editorConflict.value = null
+            ignoredExternalMtime = 0L
+            contentVersion += 1L
+            _undoStack.clear()
+            _redoStack.clear()
+            _canUndo.value = false
+            _canRedo.value = false
+            _lastUndoPushTime = 0L
+            autoSave?.cancel()
+        }
+        BetaLogger.log("ReloadIfNewer", "conflict_resolved resolution=external path=${conflict.absolutePath}")
+    }
+
+    fun keepLocalConflict() {
+        val conflict = synchronized(loadLock) {
+            val current = _editorConflict.value ?: return@synchronized null
+            ignoredExternalMtime = maxOf(ignoredExternalMtime, current.externalMtime)
+            _editorConflict.value = null
+            current
+        } ?: return
+        BetaLogger.log("ReloadIfNewer", "conflict_resolved resolution=local path=${conflict.absolutePath}")
+        saveNow()
+    }
+
+    private fun readEditorConflict(path: String, mtime: Long): EditorConflict? =
+        when (val result = FileUtil.readResult(path)) {
+            is ReadResult.Success -> EditorConflict(path, result.content, mtime)
+            else -> {
+                BetaLogger.log("ReloadIfNewer", "conflict_read_failed path=$path")
+                null
+            }
+        }
 
     // ── Undo/Redo helpers ──────────────────────────────────
 
@@ -569,25 +813,88 @@ class AppState(application: Application) : AndroidViewModel(application) {
     }
 
     fun saveNow() {
-        val path = _todayPath.value
-        val content = _diaryContent.value
-        // don't create empty file if diary hasn't been loaded yet
-        if (content.isEmpty() && path.isNotEmpty() && !java.io.File(path).exists()) {
-            BetaLogger.log("SaveNow", "skip saving empty content for new file")
-            return
-        }
-        val hasFm = _frontmatter.value.isNotEmpty() && config.value.filterFrontmatter
-        val saveContent = if (hasFm) {
-            ContentUtil.reconstructWithFrontmatter(_frontmatter.value, content)
-        } else {
-            content
-        }
-        BetaLogger.log("SaveNow", "body_len=${content.length} frontmatter_len=${_frontmatter.value.length} has_fm=$hasFm saving_len=${saveContent.length}")
-        if (path.isNotEmpty()) {
-            appScope.launch(Dispatchers.IO) {
-                FileUtil.write(path, saveContent)
+        val snapshot = synchronized(loadLock) {
+            val path = _todayPath.value
+            val content = _diaryContent.value
+            // don't create empty file if diary hasn't been loaded yet
+            if (content.isEmpty() && path.isNotEmpty() && !java.io.File(path).exists()) {
+                BetaLogger.log("SaveNow", "skip saving empty content for new file")
+                return@synchronized null
+            }
+            if (path.isBlank() || _editorConflict.value != null) {
+                if (_editorConflict.value != null) {
+                    BetaLogger.log("SaveNow", "blocked_by_pending_conflict path=$path")
+                }
+                return@synchronized null
+            }
+            val hasFm = _frontmatter.value.isNotEmpty() && config.value.filterFrontmatter
+            val saveContent = if (hasFm) {
+                ContentUtil.reconstructWithFrontmatter(_frontmatter.value, content)
+            } else {
+                content
+            }
+            EditorSaveSnapshot(
+                path = path,
+                saveContent = saveContent,
+                contentVersion = contentVersion,
+                lastLoadedMtime = _lastLoadedMtime,
+                ignoredExternalMtime = ignoredExternalMtime,
+            )
+        } ?: return
+
+        BetaLogger.log(
+            "SaveNow",
+            "body_len=${snapshot.saveContent.length} path=${snapshot.path} " +
+                "last_loaded_mtime=${snapshot.lastLoadedMtime} saving_len=${snapshot.saveContent.length}",
+        )
+        appScope.launch(Dispatchers.IO) {
+            val mutationGuard = FileUtil.acquirePathMutation(snapshot.path)
+            try {
+            val observedMtime = FileUtil.lastModified(snapshot.path)
+            val conflictNeeded = synchronized(loadLock) {
+                EditorConflictPolicy.shouldPrompt(
+                    isDirty = _isDirty.value,
+                    observedMtime = observedMtime,
+                    lastLoadedMtime = _lastLoadedMtime,
+                    ignoredExternalMtime = ignoredExternalMtime,
+                )
+            }
+            if (conflictNeeded) {
+                readEditorConflict(snapshot.path, observedMtime)?.let { conflict ->
+                    synchronized(loadLock) {
+                        if (_todayPath.value == snapshot.path && _isDirty.value) {
+                            _editorConflict.value = conflict
+                        }
+                    }
+                    BetaLogger.log("SaveNow", "blocked_by_external_update path=${snapshot.path}")
+                }
+                return@launch
+            }
+
+            val writeSucceeded = FileUtil.write(snapshot.path, snapshot.saveContent)
+            val writtenMtime = if (writeSucceeded) FileUtil.lastModified(snapshot.path) else 0L
+            synchronized(loadLock) {
+                if (writeSucceeded && _todayPath.value == snapshot.path) {
+                    _lastLoadedMtime = writtenMtime
+                    ignoredExternalMtime = 0L
+                    if (EditorConflictPolicy.canClearDirty(
+                            writeSucceeded = true,
+                            savedVersion = snapshot.contentVersion,
+                            currentVersion = contentVersion,
+                        )
+                    ) {
+                        _isDirty.value = false
+                    }
+                }
+            }
+            if (writeSucceeded) {
                 WidgetRefreshHelper.refreshAll(app)
-                BetaLogger.log("SaveNow", "written_ok")
+                BetaLogger.log("SaveNow", "written_ok path=${snapshot.path}")
+            } else {
+                BetaLogger.log("SaveNow", "write_failed path=${snapshot.path}")
+            }
+            } finally {
+                mutationGuard.close()
             }
         }
     }

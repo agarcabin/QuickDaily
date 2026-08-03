@@ -9,12 +9,14 @@ import androidx.compose.ui.graphics.Color
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
+import android.os.SystemClock
 import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.provider.Settings
 import android.provider.MediaStore
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.material.icons.filled.DragHandle
@@ -31,9 +33,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.ClickableText
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
@@ -44,6 +47,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material3.*
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.draw.clip
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.window.Dialog
@@ -67,13 +71,17 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import kotlin.math.roundToInt
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.quickdaily.AppState
+import com.quickdaily.BetaLogger
 import com.quickdaily.BuildConfig
 import com.quickdaily.DiaryConfig
 import com.quickdaily.EditorToolbarAction
 import com.quickdaily.EditorToolbarPolicy
 import com.quickdaily.WikilinkIndexRepository
+import com.quickdaily.WikilinkIndexState
 import com.quickdaily.HomeEntryMode
+import com.quickdaily.ObsidianConfigReadResult
 import com.quickdaily.ObsidianConfigReadStatus
 import com.quickdaily.QuickNoteWidget
 import com.quickdaily.WidgetImageFileResolver
@@ -86,7 +94,11 @@ import com.quickdaily.util.DateUtil
 import com.quickdaily.util.ShortcutHelper
 import com.quickdaily.util.UriUtil
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.distinctUntilChanged
 import com.quickdaily.ui.theme.LocalAppDimensions
+import com.quickdaily.ui.theme.QuickDailyAccentPreset
+import com.quickdaily.ui.theme.QuickDailyNightMode
+import com.quickdaily.ui.theme.QuickDailyThemePreferences
 
 
 import androidx.compose.material.icons.filled.Widgets
@@ -97,6 +109,7 @@ import androidx.compose.material.icons.filled.Update
 import androidx.compose.material.icons.filled.AccessibilityNew
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Description
+
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Storage
@@ -105,6 +118,41 @@ import androidx.compose.foundation.clickable
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
+
+private typealias ConfigChange = DiaryConfig.() -> DiaryConfig
+private typealias OnConfigChange = (ConfigChange) -> Unit
+
+internal data class SettingsConfigReadRequest(
+    val generation: Long,
+    val vaultPath: String,
+    val customUri: String,
+    val useCustomConfig: Boolean,
+)
+
+internal object SettingsConfigReadPolicy {
+    fun canApply(
+        request: SettingsConfigReadRequest,
+        currentGeneration: Long,
+        currentVaultPath: String,
+        currentCustomUri: String,
+        currentUseCustomConfig: Boolean,
+    ): Boolean =
+        request.generation == currentGeneration &&
+            request.vaultPath == currentVaultPath.trim() &&
+            request.customUri == currentCustomUri.trim().takeIf { currentUseCustomConfig }.orEmpty() &&
+            request.useCustomConfig == currentUseCustomConfig
+}
+
+private data class SettingsConfigReadOutcome(
+    val request: SettingsConfigReadRequest,
+    val customResult: ObsidianConfigReadResult?,
+    val obsidianConfig: DiaryConfig?,
+    val appConfig: com.quickdaily.ObsidianAppConfig?,
+)
 
 private data class TimestampOption(val key: String, val label: String)
 
@@ -168,6 +216,8 @@ private val timestampOptions = listOf(
     TimestampOption("ordered", "有序列表"),
     TimestampOption("list_time", "列表+时间"),
     TimestampOption("list_time_seconds", "列表+时间（秒）"),
+    TimestampOption("date_time", "日期+时间"),
+    TimestampOption("list_date_time", "列表+日期+时间"),
 )
 
 private data class NamingOption(val key: String, val label: String)
@@ -193,82 +243,138 @@ fun SettingsScreen(
     val navBarColorS = MaterialTheme.colorScheme.surface.toArgb()
     val windowSize = rememberQuickDailyWindowSize()
     val topBarScrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
-    SideEffect {
+    DisposableEffect(context, navBarColorS) {
         try {
-            val window = (context as? Activity)?.window ?: return@SideEffect
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                window.isNavigationBarContrastEnforced = false
+            val window = (context as? Activity)?.window
+            if (window != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    window.isNavigationBarContrastEnforced = false
+                }
+                window.navigationBarColor = navBarColorS
             }
-            window.navigationBarColor = navBarColorS
         } catch (_: Exception) { }
+        onDispose { }
     }
 
-    val config by appState.config.collectAsState()
-    val todayPath by appState.todayPath.collectAsState()
+    // Keep the State objects stable at the pager boundary. Individual tabs read the
+    // values they need, so changing a switch does not recompose the whole settings
+    // shell, tab row, and every neighboring page.
+    val configState = appState.config.collectAsStateWithLifecycle()
+    val todayPathState = appState.todayPath.collectAsStateWithLifecycle()
+    val initialConfig = remember { appState.config.value }
 
     // ── Local edit state ──
-    var vaultPath by remember { mutableStateOf(config.vaultPath) }
-    var obsidianConfigUri by remember { mutableStateOf(config.obsidianConfigUri) }
-    var useCustomObsidianConfigPath by remember { mutableStateOf(config.useCustomObsidianConfigPath) }
-    var diaryFolder by remember { mutableStateOf(config.diaryFolder) }
-    var dateFormat by remember { mutableStateOf(config.dateFormat) }
-    var templatePath by remember { mutableStateOf(config.templatePath) }
-    var anchorText by remember { mutableStateOf(config.anchorText) }
-    var imageStoragePath by remember { mutableStateOf(config.imageStoragePath) }
+    var vaultPath by remember { mutableStateOf(initialConfig.vaultPath) }
+    var obsidianConfigUri by remember { mutableStateOf(initialConfig.obsidianConfigUri) }
+    var useCustomObsidianConfigPath by remember { mutableStateOf(initialConfig.useCustomObsidianConfigPath) }
+    var diaryFolder by remember { mutableStateOf(initialConfig.diaryFolder) }
+    var dateFormat by remember { mutableStateOf(initialConfig.dateFormat) }
+    var templatePath by remember { mutableStateOf(initialConfig.templatePath) }
+    var anchorText by remember { mutableStateOf(initialConfig.anchorText) }
+    var imageStoragePath by remember { mutableStateOf(initialConfig.imageStoragePath) }
 
    var obsidianDetected by remember { mutableStateOf(false) }
    var obsidianMsg by remember { mutableStateOf("") }
    val scope = rememberCoroutineScope()
-    var widgetImageUri by rememberSaveable { mutableStateOf(config.widgetImageUri) }
+   var configReadGeneration by remember { mutableLongStateOf(0L) }
+   var configReadJob by remember { mutableStateOf<Job?>(null) }
+    var widgetImageUri by rememberSaveable { mutableStateOf(initialConfig.widgetImageUri) }
     var pendingImageUri by remember { mutableStateOf<Uri?>(null) }
 
-    suspend fun readObsidianConfigFromSource() {
-        val selectedUri = if (useCustomObsidianConfigPath) {
-            obsidianConfigUri.trim().takeIf { it.isNotBlank() }
-        } else {
-            null
-        }
+    suspend fun readObsidianConfig(request: SettingsConfigReadRequest): SettingsConfigReadOutcome {
+        val selectedUri = request.customUri.takeIf { request.useCustomConfig && it.isNotBlank() }
         val customResult = selectedUri?.let { rawUri ->
-            runCatching { appState.inspectObsidianConfig(Uri.parse(rawUri), vaultPath) }.getOrNull()
+            runCatching {
+                appState.inspectObsidianConfig(Uri.parse(rawUri), request.vaultPath)
+            }.getOrNull()
         }
         if (customResult?.status == ObsidianConfigReadStatus.INVALID_JSON) {
-            obsidianDetected = false
-            obsidianMsg = "自定义配置文件 JSON 无效，已保留当前配置"
-            return
+            return SettingsConfigReadOutcome(request, customResult, null, null)
         }
-        val obsCfg = customResult?.config ?: appState.loadObsidianConfig(vaultPath)
-        val appCfg = if (obsCfg != null) appState.loadObsidianAppConfig(vaultPath) else null
-        if (obsCfg != null) {
-            diaryFolder = obsCfg.diaryFolder
-            dateFormat = obsCfg.dateFormat
-            templatePath = obsCfg.templatePath
-            if (appCfg != null) {
-                imageStoragePath = appCfg.attachmentFolderPath.let {
-                    if (it == "/") "" else it.trimStart('/')
+        val obsCfg = customResult?.config ?: appState.loadObsidianConfig(request.vaultPath)
+        val appCfg = if (obsCfg != null) appState.loadObsidianAppConfig(request.vaultPath) else null
+        return SettingsConfigReadOutcome(request, customResult, obsCfg, appCfg)
+    }
+
+    fun isCurrentConfigRead(request: SettingsConfigReadRequest): Boolean =
+        SettingsConfigReadPolicy.canApply(
+            request = request,
+            currentGeneration = configReadGeneration,
+            currentVaultPath = vaultPath,
+            currentCustomUri = obsidianConfigUri,
+            currentUseCustomConfig = useCustomObsidianConfigPath,
+        )
+
+    fun launchObsidianConfigRead(
+        requestedVaultPath: String = vaultPath,
+        requestedCustomUri: String = obsidianConfigUri,
+        requestedUseCustomConfig: Boolean = useCustomObsidianConfigPath,
+    ) {
+        val request = SettingsConfigReadRequest(
+            generation = configReadGeneration + 1L,
+            vaultPath = requestedVaultPath.trim(),
+            customUri = requestedCustomUri.trim().takeIf { requestedUseCustomConfig }.orEmpty(),
+            useCustomConfig = requestedUseCustomConfig,
+        )
+        configReadGeneration = request.generation
+        configReadJob?.cancel()
+        configReadJob = scope.launch {
+            val outcome = readObsidianConfig(request)
+            if (!isCurrentConfigRead(request)) {
+                BetaLogger.log(
+                    "Settings/ObsidianConfig",
+                    "discarded_stale_read generation=${request.generation} vault=${request.vaultPath}",
+                )
+                return@launch
+            }
+            val selectedUri = request.customUri.takeIf { request.useCustomConfig && it.isNotBlank() }
+            val customResult = outcome.customResult
+            if (customResult?.status == ObsidianConfigReadStatus.INVALID_JSON) {
+                obsidianDetected = false
+                obsidianMsg = "自定义配置文件 JSON 无效，已保留当前配置"
+                return@launch
+            }
+            val obsCfg = outcome.obsidianConfig
+            val appCfg = outcome.appConfig
+            if (obsCfg != null) {
+                diaryFolder = obsCfg.diaryFolder
+                dateFormat = obsCfg.dateFormat
+                templatePath = obsCfg.templatePath
+                if (appCfg != null) {
+                    imageStoragePath = appCfg.attachmentFolderPath.let {
+                        if (it == "/") "" else it.trimStart('/')
+                    }
                 }
-            }
-            obsidianDetected = true
-            obsidianMsg = when {
-                customResult?.status == ObsidianConfigReadStatus.SUCCESS -> "已读取自定义 Obsidian 配置"
-                selectedUri != null -> "自定义配置文件不可用，已回退默认路径并读取"
-                else -> "已读取 Obsidian 配置"
-            }
-            appState.saveConfig(config.copy(
-                vaultPath = vaultPath.trim(),
-                obsidianConfigUri = obsidianConfigUri.trim(),
-                useCustomObsidianConfigPath = useCustomObsidianConfigPath,
-                diaryFolder = diaryFolder.trim().ifBlank { "Daily" },
-                dateFormat = dateFormat.trim().ifBlank { "YYYY-MM-DD" },
-                templatePath = templatePath.trim(),
-                imageStoragePath = imageStoragePath.trim(),
-                imageLinkFormat = if (appCfg?.useMarkdownLinks == true) "described" else config.imageLinkFormat
-            ))
-        } else {
-            obsidianDetected = false
-            obsidianMsg = if (selectedUri != null) {
-                "自定义配置文件不可用，默认路径也未找到"
+                obsidianDetected = true
+                obsidianMsg = when {
+                    customResult?.status == ObsidianConfigReadStatus.SUCCESS -> "已读取自定义 Obsidian 配置"
+                    selectedUri != null -> "自定义配置文件不可用，已回退默认路径并读取"
+                    else -> "已读取 Obsidian 配置"
+                }
+                if (!isCurrentConfigRead(request)) {
+                    BetaLogger.log(
+                        "Settings/ObsidianConfig",
+                        "discarded_stale_read_before_save generation=${request.generation} vault=${request.vaultPath}",
+                    )
+                    return@launch
+                }
+                appState.saveConfig(appState.config.value.copy(
+                    vaultPath = request.vaultPath,
+                    obsidianConfigUri = request.customUri,
+                    useCustomObsidianConfigPath = request.useCustomConfig,
+                    diaryFolder = diaryFolder.trim().ifBlank { "Daily" },
+                    dateFormat = dateFormat.trim().ifBlank { "YYYY-MM-DD" },
+                    templatePath = templatePath.trim(),
+                    imageStoragePath = imageStoragePath.trim(),
+                    imageLinkFormat = if (appCfg?.useMarkdownLinks == true) "described" else appState.config.value.imageLinkFormat,
+                ))
             } else {
-                "未找到 .obsidian/daily-notes.json"
+                obsidianDetected = false
+                obsidianMsg = if (selectedUri != null) {
+                    "自定义配置文件不可用，默认路径也未找到"
+                } else {
+                    "未找到 .obsidian/daily-notes.json"
+                }
             }
         }
     }
@@ -281,8 +387,35 @@ fun SettingsScreen(
     var isLatest by remember { mutableStateOf(false) }
 
     // ── Tab state ──
-    val tabs = listOf("路径配置", "编辑设置", "小部件", "其他")
+    val tabs = remember { listOf("路径配置", "编辑设置", "小部件", "其他") }
     val pagerState = rememberPagerState(pageCount = { tabs.size })
+    var prefetchAdjacentPages by remember { mutableStateOf(false) }
+    val settledPage by remember {
+        derivedStateOf { pagerState.settledPage }
+    }
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        yield()
+        prefetchAdjacentPages = true
+        BetaLogger.log("Settings/Pager", "adjacent_prefetch_enabled=true")
+    }
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.settledPage }
+            .distinctUntilChanged()
+            .collect { page ->
+                val settledAt = SystemClock.elapsedRealtime()
+                BetaLogger.log(
+                    "Settings/Pager",
+                    "settled_page=$page title=${tabs.getOrNull(page).orEmpty()} deferred_work=start",
+                )
+                withFrameNanos { }
+                yield()
+                BetaLogger.log(
+                    "Settings/Pager",
+                    "settled_page=$page deferred_work=frame_priority_done durationMs=${SystemClock.elapsedRealtime() - settledAt}",
+                )
+            }
+    }
 
     // ── Picker launchers ──
     val vaultPicker = rememberLauncherForActivityResult(
@@ -300,58 +433,11 @@ fun SettingsScreen(
                 vaultPath = path
                 obsidianConfigUri = ""
                 useCustomObsidianConfigPath = false
-                scope.launch {
-                    val obsCfg = appState.loadObsidianConfig(path)
-                    val appCfg = appState.loadObsidianAppConfig(path)
-                    if (obsCfg != null) {
-                        diaryFolder = obsCfg.diaryFolder
-                        dateFormat = obsCfg.dateFormat
-                        templatePath = obsCfg.templatePath
-                        obsidianDetected = true
-                        obsidianMsg = "已读取 Obsidian 配置"
-                        if (appCfg != null) {
-                            imageStoragePath = appCfg.attachmentFolderPath.let { if (it == "/") "" else it.trimStart('/') }
-                        }
-                        appState.saveConfig(DiaryConfig(
-                            vaultPath = path.trim(),
-                            obsidianConfigUri = "",
-                            useCustomObsidianConfigPath = false,
-                            diaryFolder = obsCfg.diaryFolder.trim().ifBlank { "Daily" },
-                            dateFormat = obsCfg.dateFormat.trim().ifBlank { "YYYY-MM-DD" },
-                            templatePath = obsCfg.templatePath.trim(),
-                            anchorText = anchorText,
-                            timestampFormat = config.timestampFormat,
-                            addAnchorIfMissing = config.addAnchorIfMissing,
-                            timestampOrder = config.timestampOrder,
-                            enterToSave = config.enterToSave,
-                            widgetImageUri = widgetImageUri,
-                            autoCheckUpdate = config.autoCheckUpdate,
-                            filterFrontmatter = config.filterFrontmatter,
-                            imageStoragePath = imageStoragePath.trim(),
-                            imageNamingFormat = config.imageNamingFormat,
-                             imageLinkFormat = if (appCfg?.useMarkdownLinks == true) "described" else config.imageLinkFormat,
-                             tagAutocomplete = config.tagAutocomplete,
-                             wikilinkAutocomplete = config.wikilinkAutocomplete,
-                             systemSidebarSupport = config.systemSidebarSupport,
-                            homeEntryMode = config.homeEntryMode,
-                            toolbarOrder = config.toolbarOrder,
-                            toolbarVisible = config.toolbarVisible,
-                            imageCustomNamingFormat = config.imageCustomNamingFormat,
-                            loggingEnabled = config.loggingEnabled,
-                            taskPeriod = config.taskPeriod,
-                            taskCompletionSound = config.taskCompletionSound,
-                            taskCompletionTimestamp = config.taskCompletionTimestamp,
-                            taskShowCompleted = config.taskShowCompleted,
-                            taskShowFullContent = config.taskShowFullContent,
-                            widgetStyle = config.widgetStyle,
-                            widgetBackgroundColor = config.widgetBackgroundColor,
-                            widgetOpacity = config.widgetOpacity,
-                        ))
-                    } else {
-                        obsidianDetected = false
-                        obsidianMsg = "未找到 .obsidian/daily-notes.json"
-                    }
-                }
+                launchObsidianConfigRead(
+                    requestedVaultPath = path,
+                    requestedCustomUri = "",
+                    requestedUseCustomConfig = false,
+                )
             }
         }
     }
@@ -442,12 +528,16 @@ fun SettingsScreen(
         } catch (_: Exception) { }
         obsidianConfigUri = uri.toString()
         useCustomObsidianConfigPath = true
-        appState.saveConfig(config.copy(
+        appState.saveConfig(appState.config.value.copy(
             vaultPath = vaultPath.trim(),
             obsidianConfigUri = uri.toString(),
             useCustomObsidianConfigPath = true
         ))
-        scope.launch { readObsidianConfigFromSource() }
+        launchObsidianConfigRead(
+            requestedVaultPath = vaultPath,
+            requestedCustomUri = uri.toString(),
+            requestedUseCustomConfig = true,
+        )
     }
 
    val internalCropLauncher = rememberLauncherForActivityResult(
@@ -458,7 +548,7 @@ fun SettingsScreen(
            val savedPath = result.data?.getStringExtra(WidgetImageCropActivity.EXTRA_RESULT_PATH)
            if (savedPath != null && File(savedPath).isFile) {
            widgetImageUri = "file://$savedPath"
-           appState.saveConfig(config.copy(widgetImageUri = widgetImageUri))
+           appState.saveConfig(appState.config.value.copy(widgetImageUri = widgetImageUri))
            QuickNoteWidget.updateAllWidgets(context)
            ShortcutHelper.updateAllShortcuts(context)
            }
@@ -482,7 +572,12 @@ fun SettingsScreen(
        }
    }
    
-    fun buildConfig(): DiaryConfig = DiaryConfig(
+    fun buildConfig(): DiaryConfig {
+        // A setting row persists through onConfigChange immediately. Read the
+        // latest flow value here so the top-bar Save action cannot overwrite a
+        // just-toggled value with a stale composition snapshot.
+        val currentConfig = appState.config.value
+        return DiaryConfig(
         vaultPath = vaultPath.trim(),
         obsidianConfigUri = obsidianConfigUri.trim(),
         useCustomObsidianConfigPath = useCustomObsidianConfigPath,
@@ -490,33 +585,34 @@ fun SettingsScreen(
         dateFormat = dateFormat.trim().ifBlank { "YYYY-MM-DD" },
         templatePath = templatePath.trim(),
         anchorText = anchorText,
-        timestampFormat = config.timestampFormat,
-        addAnchorIfMissing = config.addAnchorIfMissing,
-        timestampOrder = config.timestampOrder,
-        enterToSave = config.enterToSave,
+        timestampFormat = currentConfig.timestampFormat,
+        addAnchorIfMissing = currentConfig.addAnchorIfMissing,
+        timestampOrder = currentConfig.timestampOrder,
+        enterToSave = currentConfig.enterToSave,
         widgetImageUri = widgetImageUri,
-        autoCheckUpdate = config.autoCheckUpdate,
-        filterFrontmatter = config.filterFrontmatter,
+        autoCheckUpdate = currentConfig.autoCheckUpdate,
+        filterFrontmatter = currentConfig.filterFrontmatter,
         imageStoragePath = imageStoragePath.trim(),
-        imageNamingFormat = config.imageNamingFormat,
-          imageLinkFormat = config.imageLinkFormat,
-          imageCustomNamingFormat = config.imageCustomNamingFormat,
-          tagAutocomplete = config.tagAutocomplete,
-          wikilinkAutocomplete = config.wikilinkAutocomplete,
-          systemSidebarSupport = config.systemSidebarSupport,
-         homeEntryMode = config.homeEntryMode,
-         toolbarOrder = config.toolbarOrder,
-         toolbarVisible = config.toolbarVisible,
-         loggingEnabled = config.loggingEnabled,
-        taskPeriod = config.taskPeriod,
-        taskCompletionSound = config.taskCompletionSound,
-        taskCompletionTimestamp = config.taskCompletionTimestamp,
-        taskShowCompleted = config.taskShowCompleted,
-        taskShowFullContent = config.taskShowFullContent,
-        widgetStyle = config.widgetStyle,
-        widgetBackgroundColor = config.widgetBackgroundColor,
-        widgetOpacity = config.widgetOpacity
-    )
+        imageNamingFormat = currentConfig.imageNamingFormat,
+          imageLinkFormat = currentConfig.imageLinkFormat,
+          imageCustomNamingFormat = currentConfig.imageCustomNamingFormat,
+          tagAutocomplete = currentConfig.tagAutocomplete,
+          wikilinkAutocomplete = currentConfig.wikilinkAutocomplete,
+          systemSidebarSupport = currentConfig.systemSidebarSupport,
+         homeEntryMode = currentConfig.homeEntryMode,
+         toolbarOrder = currentConfig.toolbarOrder,
+         toolbarVisible = currentConfig.toolbarVisible,
+         loggingEnabled = currentConfig.loggingEnabled,
+        taskPeriod = currentConfig.taskPeriod,
+        taskCompletionSound = currentConfig.taskCompletionSound,
+        taskCompletionTimestamp = currentConfig.taskCompletionTimestamp,
+        taskShowCompleted = currentConfig.taskShowCompleted,
+        taskShowFullContent = currentConfig.taskShowFullContent,
+        widgetStyle = currentConfig.widgetStyle,
+        widgetBackgroundColor = currentConfig.widgetBackgroundColor,
+        widgetOpacity = currentConfig.widgetOpacity,
+        )
+    }
 
     fun saveFull() {
         appState.saveConfig(buildConfig())
@@ -573,7 +669,8 @@ fun SettingsScreen(
 
             HorizontalPager(
                 state = pagerState,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                beyondViewportPageCount = if (prefetchAdjacentPages) 1 else 0,
             ) { page ->
                 when (page) {
                     0 -> DiaryStorageTab(
@@ -584,7 +681,7 @@ fun SettingsScreen(
                         dateFormat = dateFormat,
                         templatePath = templatePath,
                         imageStoragePath = imageStoragePath,
-                        todayPath = todayPath,
+                        todayPathState = todayPathState,
                         obsidianDetected = obsidianDetected,
                         obsidianMsg = obsidianMsg,
                         onVaultPathChange = { vaultPath = it },
@@ -592,14 +689,18 @@ fun SettingsScreen(
                         onDateFormatChange = { dateFormat = it },
                         onTemplatePathChange = { templatePath = it },
                         onImageStoragePathChange = { imageStoragePath = it },
-                        config = config,
-                        onConfigChange = { newCfg -> appState.saveConfig(newCfg) },
+                        configState = configState,
+                        onConfigChange = { change -> appState.saveConfig(change(appState.config.value)) },
                         onCustomObsidianConfigPathChange = { enabled ->
                             useCustomObsidianConfigPath = enabled
                             appState.saveConfig(buildConfig())
-                            scope.launch { readObsidianConfigFromSource() }
+                            launchObsidianConfigRead(
+                                requestedVaultPath = vaultPath,
+                                requestedCustomUri = if (enabled) obsidianConfigUri else "",
+                                requestedUseCustomConfig = enabled,
+                            )
                         },
-                        onReadObsidianConfig = { scope.launch { readObsidianConfigFromSource() } },
+                        onReadObsidianConfig = { launchObsidianConfigRead() },
                         onPickObsidianConfig = {
                             onExternalLaunch()
                             obsidianConfigPicker.launch(arrayOf("application/json", "text/plain", "*/*"))
@@ -607,7 +708,11 @@ fun SettingsScreen(
                         onClearObsidianConfig = {
                             obsidianConfigUri = ""
                             appState.saveConfig(buildConfig())
-                            scope.launch { readObsidianConfigFromSource() }
+                            launchObsidianConfigRead(
+                                requestedVaultPath = vaultPath,
+                                requestedCustomUri = "",
+                                requestedUseCustomConfig = useCustomObsidianConfigPath,
+                            )
                         },
                         onPickVault = { onExternalLaunch(); vaultPicker.launch(null) },
                         onPickTemplate = {
@@ -628,45 +733,47 @@ fun SettingsScreen(
                         onSave = { saveFull(); onBack() },
                         vaultEnabled = vaultPath.isNotBlank()
                     )
-                   1 -> EditorSettingsTab(
+                    1 -> EditorSettingsTab(
                         vaultPath = vaultPath,
-                        config = config,
+                        configState = configState,
                         anchorText = anchorText,
                         onAnchorTextChange = { anchorText = it },
-                        onConfigChange = { newCfg -> appState.saveConfig(newCfg) },
+                        onConfigChange = { change -> appState.saveConfig(change(appState.config.value)) },
                         onRefreshWikilinkIndex = { WikilinkIndexRepository.refresh(context, vaultPath) },
-                        onSave = ::saveAndBack
-                   )
-                   2 -> key(widgetImageUri) {
-                       WidgetsTab(
-                           widgetImageUri = widgetImageUri,
-                           config = config,
-                           onConfigChange = { newCfg ->
-                               appState.saveConfig(newCfg)
-                               QuickNoteWidget.updateAllWidgets(context)
-                               WidgetRefreshCoordinator.refreshAll(context)
-                           },
-                           context = context,
-                           onPickImage = { onExternalLaunch(); imagePicker.launch("image/*") },
-                           onResetImage = {
-                               widgetImageUri = ""
-                               appState.saveConfig(config.copy(widgetImageUri = ""))
-                               WidgetImageFileResolver.clearInternalCrops(context)
-                               QuickNoteWidget.updateAllWidgets(context)
-                               ShortcutHelper.updateAllShortcuts(context)
-                           },
-                           onSave = { saveFull(); onBack() }
-                       )
-                   }
+                        onSave = ::saveAndBack,
+                        isActive = settledPage == page,
+                    )
+                    2 -> key(widgetImageUri) {
+                        WidgetsTab(
+                            widgetImageUri = widgetImageUri,
+                            configState = configState,
+                            onConfigChange = { change ->
+                                appState.saveConfig(change(appState.config.value))
+                                QuickNoteWidget.updateAllWidgets(context)
+                                WidgetRefreshCoordinator.refreshAll(context)
+                            },
+                            context = context,
+                            onPickImage = { onExternalLaunch(); imagePicker.launch("image/*") },
+                            onResetImage = {
+                                widgetImageUri = ""
+                                appState.saveConfig(appState.config.value.copy(widgetImageUri = ""))
+                                WidgetImageFileResolver.clearInternalCrops(context)
+                                QuickNoteWidget.updateAllWidgets(context)
+                                ShortcutHelper.updateAllShortcuts(context)
+                            },
+                            onSave = { saveFull(); onBack() },
+                            isActive = settledPage == page,
+                        )
+                    }
                     3 -> OtherTab(
-                        config = config,
+                        configState = configState,
                         isCheckingUpdate = isCheckingUpdate,
                         updateInfo = updateInfo,
                         updateStatus = updateStatus,
                         updateErrors = updateErrors,
                         isLatest = isLatest,
                         context = context,
-                        onConfigChange = { newCfg -> appState.saveConfig(newCfg) },
+                        onConfigChange = { change -> appState.saveConfig(change(appState.config.value)) },
                         onCheckUpdate = {
                             isCheckingUpdate = true
                             updateInfo = null
@@ -712,7 +819,7 @@ private fun DiaryStorageTab(
     dateFormat: String,
     templatePath: String,
     imageStoragePath: String,
-    todayPath: String,
+    todayPathState: State<String>,
     obsidianDetected: Boolean,
     obsidianMsg: String,
     onVaultPathChange: (String) -> Unit,
@@ -720,8 +827,8 @@ private fun DiaryStorageTab(
     onDateFormatChange: (String) -> Unit,
     onTemplatePathChange: (String) -> Unit,
     onImageStoragePathChange: (String) -> Unit,
-    config: DiaryConfig,
-    onConfigChange: (DiaryConfig) -> Unit,
+    configState: State<DiaryConfig>,
+    onConfigChange: OnConfigChange,
     onCustomObsidianConfigPathChange: (Boolean) -> Unit,
     onReadObsidianConfig: () -> Unit,
     onPickObsidianConfig: () -> Unit,
@@ -734,6 +841,8 @@ private fun DiaryStorageTab(
     onSave: () -> Unit,
     vaultEnabled: Boolean,
 ) {
+    val todayPath by todayPathState
+    val config by configState
     val context = LocalContext.current
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
@@ -762,7 +871,7 @@ private fun DiaryStorageTab(
                     }
                 )
 
-                FilledTonalButton(onClick = onReadObsidianConfig, modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = onReadObsidianConfig, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.Folder, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("从 Obsidian 读取配置")
@@ -898,17 +1007,17 @@ private fun DiaryStorageTab(
                     label = "图片命名格式",
                     selectedKey = config.imageNamingFormat,
                     options = namingOptions.map { it.key to it.label },
-                    onSelect = { onConfigChange(config.copy(imageNamingFormat = it)) }
+                    onSelect = { onConfigChange { copy(imageNamingFormat = it) } }
                 )
                 if (config.imageNamingFormat == "custom") {
                     OutlinedTextField(
                         value = config.imageCustomNamingFormat,
-                        onValueChange = { onConfigChange(config.copy(imageCustomNamingFormat = it)) },
+                        onValueChange = { onConfigChange { copy(imageCustomNamingFormat = it) } },
                         label = { Text("自定义命名格式") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         trailingIcon = {
-                            IconButton(onClick = { onConfigChange(config.copy(imageCustomNamingFormat = "yyyy-MM-dd_HHmmss_{filename}{ext}")) }) {
+                            IconButton(onClick = { onConfigChange { copy(imageCustomNamingFormat = "yyyy-MM-dd_HHmmss_{filename}{ext}") } }) {
                                 Icon(Icons.Default.Refresh, "重置为默认")
                             }
                         }
@@ -953,7 +1062,7 @@ private fun DiaryStorageTab(
                     label = "图片链接格式",
                     selectedKey = config.imageLinkFormat,
                     options = linkOptions,
-                    onSelect = { onConfigChange(config.copy(imageLinkFormat = it)) }
+                    onSelect = { onConfigChange { copy(imageLinkFormat = it) } }
                 )
                 OutlinedTextField(
                     value = imageStoragePath,
@@ -998,15 +1107,33 @@ private fun DiaryStorageTab(
 @Composable
 private fun EditorSettingsTab(
     vaultPath: String,
-    config: DiaryConfig,
+    configState: State<DiaryConfig>,
     anchorText: String,
     onAnchorTextChange: (String) -> Unit,
-    onConfigChange: (DiaryConfig) -> Unit,
+    onConfigChange: OnConfigChange,
     onRefreshWikilinkIndex: () -> Unit,
     onSave: () -> Unit,
+    isActive: Boolean,
 ) {
+    val config by configState
     val context = LocalContext.current
-    val wikilinkIndex by WikilinkIndexRepository.indexState.collectAsState()
+    LaunchedEffect(isActive, vaultPath) {
+        if (isActive) {
+            val startedAt = SystemClock.elapsedRealtime()
+            BetaLogger.log("Settings/PageWork", "page=editor work=index_subscribe start")
+            withFrameNanos { }
+            yield()
+            BetaLogger.log(
+                "Settings/PageWork",
+                "page=editor work=index_subscribe end durationMs=${SystemClock.elapsedRealtime() - startedAt}",
+            )
+        }
+    }
+    val wikilinkIndex by if (isActive) {
+        WikilinkIndexRepository.indexState.collectAsStateWithLifecycle()
+    } else {
+        remember { mutableStateOf(WikilinkIndexState()) }
+    }
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -1023,19 +1150,19 @@ private fun EditorSettingsTab(
                     label = "时间戳格式",
                     selectedKey = config.timestampFormat,
                     options = timestampOptions.map { it.key to it.label },
-                    onSelect = { onConfigChange(config.copy(timestampFormat = it)) }
+                    onSelect = { onConfigChange { copy(timestampFormat = it) } }
                 )
 
                 Text("时间戳插入顺序", style = MaterialTheme.typography.bodyMedium)
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                     SegmentedButton(
                         selected = config.timestampOrder == "above",
-                        onClick = { onConfigChange(config.copy(timestampOrder = "above")) },
+                        onClick = { onConfigChange { copy(timestampOrder = "above") } },
                         shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
                     ) { Text("最上方插入") }
                     SegmentedButton(
                         selected = config.timestampOrder == "below",
-                        onClick = { onConfigChange(config.copy(timestampOrder = "below")) },
+                        onClick = { onConfigChange { copy(timestampOrder = "below") } },
                         shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
                     ) { Text("最下方插入") }
                 }
@@ -1062,7 +1189,7 @@ private fun EditorSettingsTab(
                 ) {
                     Text("无锚点时自动添加", style = MaterialTheme.typography.bodyLarge)
                     Switch(checked = config.addAnchorIfMissing, onCheckedChange = {
-                        onConfigChange(config.copy(addAnchorIfMissing = it))
+                        onConfigChange { copy(addAnchorIfMissing = it) }
                     })
                 }
 
@@ -1089,6 +1216,8 @@ private fun EditorSettingsTab(
                                 "ordered" -> append("1. 这是一段文本")
                                 "list_time" -> append("- $now 这是一段文本")
                                 "list_time_seconds" -> append("- $nowSec 这是一段文本")
+                                "date_time" -> append("${com.quickdaily.util.DateUtil.nowDateTimeChineseStr()} 这是一段文本")
+                                "list_date_time" -> append("- ${com.quickdaily.util.DateUtil.nowDateTimeChineseStr()} 这是一段文本")
                                 else -> append("- 这是一段文本")
                             }
                         }
@@ -1120,12 +1249,12 @@ private fun EditorSettingsTab(
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                     SegmentedButton(
                         selected = HomeEntryMode.fromKey(config.homeEntryMode) == HomeEntryMode.OVERLAY,
-                        onClick = { onConfigChange(config.copy(homeEntryMode = HomeEntryMode.OVERLAY.key)) },
+                        onClick = { onConfigChange { copy(homeEntryMode = HomeEntryMode.OVERLAY.key) } },
                         shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
                     ) { Text(HomeEntryMode.OVERLAY.label) }
                     SegmentedButton(
                         selected = HomeEntryMode.fromKey(config.homeEntryMode) == HomeEntryMode.EDITOR,
-                        onClick = { onConfigChange(config.copy(homeEntryMode = HomeEntryMode.EDITOR.key)) },
+                        onClick = { onConfigChange { copy(homeEntryMode = HomeEntryMode.EDITOR.key) } },
                         shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
                     ) { Text(HomeEntryMode.EDITOR.label) }
                 }
@@ -1135,7 +1264,7 @@ private fun EditorSettingsTab(
                     supportingContent = { Text("编辑时隐藏日记文件头部元数据。但有可能造成元数据多次写入。") },
                     trailingContent = {
                         Switch(checked = config.filterFrontmatter, onCheckedChange = {
-                            onConfigChange(config.copy(filterFrontmatter = it))
+                            onConfigChange { copy(filterFrontmatter = it) }
                         })
                     }
                 )
@@ -1145,7 +1274,7 @@ private fun EditorSettingsTab(
                     supportingContent = { Text("输入#时补全索引中的标签。索引需要在下方手动刷新。") },
                     trailingContent = {
                         Switch(checked = config.tagAutocomplete, onCheckedChange = {
-                            onConfigChange(config.copy(tagAutocomplete = it))
+                            onConfigChange { copy(tagAutocomplete = it) }
                         })
                     }
                 )
@@ -1154,7 +1283,7 @@ private fun EditorSettingsTab(
                     supportingContent = { Text("输入[[时，补全索引中的 Markdown 页面。") },
                     trailingContent = {
                         Switch(checked = config.wikilinkAutocomplete, onCheckedChange = {
-                            onConfigChange(config.copy(wikilinkAutocomplete = it))
+                            onConfigChange { copy(wikilinkAutocomplete = it) }
                         })
                     }
                 )
@@ -1205,7 +1334,7 @@ private fun EditorSettingsTab(
                     supportingContent = { Text("在悬浮窗中按回车键即触发保存。开启后悬浮窗无法多行输入。") },
                     trailingContent = {
                         Switch(checked = config.enterToSave, onCheckedChange = {
-                            onConfigChange(config.copy(enterToSave = it))
+                            onConfigChange { copy(enterToSave = it) }
                         })
                     }
                 )
@@ -1219,7 +1348,7 @@ private fun EditorSettingsTab(
                         Switch(
                             checked = config.systemSidebarSupport,
                             onCheckedChange = {
-                                onConfigChange(config.copy(systemSidebarSupport = it))
+                                onConfigChange { copy(systemSidebarSupport = it) }
                             }
                         )
                     }
@@ -1239,7 +1368,7 @@ private fun EditorSettingsTab(
 @Composable
 private fun EditorToolbarSettingsEntry(
     config: DiaryConfig,
-    onConfigChange: (DiaryConfig) -> Unit,
+    onConfigChange: OnConfigChange,
 ) {
     var dialogOpen by rememberSaveable { mutableStateOf(false) }
 
@@ -1268,7 +1397,7 @@ private fun EditorToolbarSettingsEntry(
 @Composable
 private fun EditorToolbarSettingsDialog(
     config: DiaryConfig,
-    onConfigChange: (DiaryConfig) -> Unit,
+    onConfigChange: OnConfigChange,
     onDismiss: () -> Unit,
 ) {
     var order by remember(config.toolbarOrder) {
@@ -1295,12 +1424,12 @@ private fun EditorToolbarSettingsDialog(
         nextOrder: List<EditorToolbarAction> = order,
         nextVisible: Set<String> = visible,
     ) {
-        onConfigChange(
-            config.copy(
+        onConfigChange {
+            copy(
                 toolbarOrder = nextOrder.map { it.id },
                 toolbarVisible = nextVisible,
             )
-        )
+        }
     }
 
     fun commitVisibility(nextVisible: Set<String>) {
@@ -1372,7 +1501,7 @@ private fun EditorToolbarSettingsDialog(
                     }
                 }
                 Text(
-                    "长按左侧手柄拖动调整顺序，开关控制显示隐藏。修改会立即保存。",
+                    "长按左侧手柄拖动调整顺序，开关控制显示隐藏。多出的无法显示的工具，可以通过左滑工具栏来到第二页。修改会立即保存。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1489,22 +1618,44 @@ private fun EditorToolbarSettingsDialog(
 @Composable
 private fun WidgetsTab(
     widgetImageUri: String,
-    config: DiaryConfig,
-    onConfigChange: (DiaryConfig) -> Unit,
+    configState: State<DiaryConfig>,
+    onConfigChange: OnConfigChange,
     context: android.content.Context,
     onPickImage: () -> Unit,
     onResetImage: () -> Unit,
     onSave: () -> Unit,
+    isActive: Boolean,
 ) {
+    val config by configState
+    var previewBitmap by remember(widgetImageUri) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(widgetImageUri, isActive) {
+        previewBitmap = null
+        if (isActive && widgetImageUri.isNotEmpty()) {
+            val startedAt = SystemClock.elapsedRealtime()
+            BetaLogger.log("Settings/PageWork", "page=widgets work=image_decode start")
+            previewBitmap = withContext(Dispatchers.IO) {
+                runCatching {
+                    val path = widgetImageUri.removePrefix("file://")
+                    BitmapFactory.decodeFile(path)
+                }.getOrNull()
+            }
+            BetaLogger.log(
+                "Settings/PageWork",
+                "page=widgets work=image_decode end durationMs=${SystemClock.elapsedRealtime() - startedAt} loaded=${previewBitmap != null}",
+            )
+        }
+    }
     var appearanceStyle by remember(config.widgetStyle) { mutableStateOf(config.widgetStyle) }
     var appearanceColor by remember(config.widgetBackgroundColor) { mutableLongStateOf(config.widgetBackgroundColor) }
     var appearanceOpacity by remember(config.widgetOpacity) { mutableIntStateOf(config.widgetOpacity) }
     fun commitAppearance() {
-        onConfigChange(config.copy(
-            widgetStyle = appearanceStyle,
-            widgetBackgroundColor = appearanceColor,
-            widgetOpacity = appearanceOpacity
-        ))
+        onConfigChange {
+            copy(
+                widgetStyle = appearanceStyle,
+                widgetBackgroundColor = appearanceColor,
+                widgetOpacity = appearanceOpacity,
+            )
+        }
     }
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
@@ -1533,26 +1684,13 @@ private fun WidgetsTab(
                         shape = MaterialTheme.shapes.small,
                         tonalElevation = 2.dp
                     ) {
-                        if (widgetImageUri.isNotEmpty()) {
-                            val bitmap = remember(widgetImageUri) {
-                                try {
-                                    val path = widgetImageUri.removePrefix("file://")
-                                    BitmapFactory.decodeFile(path)
-                                } catch (_: Exception) { null }
-                            }
-                            if (bitmap != null) {
+                        if (previewBitmap != null) {
                                 Image(
-                                    bitmap = bitmap.asImageBitmap(),
+                                    bitmap = previewBitmap!!.asImageBitmap(),
                                     contentDescription = "当前图标",
                                     modifier = Modifier.fillMaxSize().padding(4.dp),
                                     contentScale = ContentScale.Fit
                                 )
-                            } else {
-                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                    Icon(Icons.Default.Widgets, null, Modifier.size(32.dp),
-                                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
-                                }
-                            }
                         } else {
                             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                 Icon(Icons.Default.Widgets, null, Modifier.size(32.dp),
@@ -1600,7 +1738,7 @@ private fun WidgetsTab(
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                Text("添加快捷方式", style = MaterialTheme.typography.titleSmall)
 
-                FilledTonalButton(
+                Button(
                     onClick = {
                         try {
                             val mgr = android.appwidget.AppWidgetManager.getInstance(context)
@@ -1624,7 +1762,7 @@ private fun WidgetsTab(
                     Text("桌面便签（小部件）")
                 }
 
-                FilledTonalButton(
+                Button(
                     onClick = { ShortcutHelper.pinShortcutToDesktop(context) },
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -1633,7 +1771,7 @@ private fun WidgetsTab(
                     Text("快速添加（桌面图标）")
                 }
 
-                FilledTonalButton(
+                Button(
                     onClick = {
                         try {
                             val mgr = android.appwidget.AppWidgetManager.getInstance(context)
@@ -1657,7 +1795,7 @@ private fun WidgetsTab(
                     Text("快速添加（小部件）")
                 }
 
-                FilledTonalButton(
+                Button(
                     onClick = {
                         try {
                             val mgr = android.appwidget.AppWidgetManager.getInstance(context)
@@ -1711,7 +1849,7 @@ private fun WidgetsTab(
                                 DropdownMenuItem(
                                     text = { Text(label) },
                                     onClick = {
-                                        onConfigChange(config.copy(taskPeriod = key))
+                                        onConfigChange { copy(taskPeriod = key) }
                                         taskPeriodExpanded = false
                                     }
                                 )
@@ -1731,7 +1869,7 @@ private fun WidgetsTab(
                         Switch(
                             checked = config.taskCompletionSound,
                             onCheckedChange = {
-                                onConfigChange(config.copy(taskCompletionSound = it))
+                                onConfigChange { copy(taskCompletionSound = it) }
                             }
                         )
                     }
@@ -1747,7 +1885,7 @@ private fun WidgetsTab(
                         Switch(
                             checked = config.taskCompletionTimestamp,
                             onCheckedChange = {
-                                onConfigChange(config.copy(taskCompletionTimestamp = it))
+                                onConfigChange { copy(taskCompletionTimestamp = it) }
                             }
                         )
                     }
@@ -1763,7 +1901,7 @@ private fun WidgetsTab(
                         Switch(
                             checked = config.taskShowCompleted,
                             onCheckedChange = {
-                                onConfigChange(config.copy(taskShowCompleted = it))
+                                onConfigChange { copy(taskShowCompleted = it) }
                             }
                         )
                     }
@@ -1779,7 +1917,7 @@ private fun WidgetsTab(
                         Switch(
                             checked = config.taskShowFullContent,
                             onCheckedChange = {
-                                onConfigChange(config.copy(taskShowFullContent = it))
+                                onConfigChange { copy(taskShowFullContent = it) }
                             }
                         )
                     }
@@ -1793,12 +1931,35 @@ private fun WidgetsTab(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("颜色与透明度", style = MaterialTheme.typography.titleSmall)
+                Text("小部件背景色", style = MaterialTheme.typography.titleSmall)
                 Text("应用于速记、阅读和任务小部件；自定义图片仍优先显示。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilledTonalButton(onClick = { appearanceStyle = "light"; appearanceColor = 0xFFFFFFFFL; commitAppearance() }) { Text("白底黑字") }
-                    FilledTonalButton(onClick = { appearanceStyle = "dark"; appearanceColor = 0xFF202124L; commitAppearance() }) { Text("黑底白字") }
-                    FilledTonalButton(onClick = { appearanceStyle = "custom"; commitAppearance() }) { Text("自定义") }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Button(
+                            onClick = { appearanceStyle = "light"; appearanceColor = 0xFFFFFFFFL; commitAppearance() },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("白色") }
+                        Button(
+                            onClick = { appearanceStyle = "dark"; appearanceColor = 0xFF202124L; commitAppearance() },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("黑色") }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Button(
+                            onClick = { appearanceStyle = "custom"; commitAppearance() },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("自定义") }
+                        Button(
+                            onClick = { appearanceStyle = "system"; commitAppearance() },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("跟随系统") }
+                    }
                 }
                 val color = appearanceColor.toInt()
                 if (appearanceStyle == "custom") {
@@ -1841,16 +2002,17 @@ private fun WidgetsTab(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun OtherTab(
-    config: DiaryConfig,
+    configState: State<DiaryConfig>,
     isCheckingUpdate: Boolean,
     updateInfo: com.quickdaily.util.ReleaseInfo?,
     updateStatus: String,
     updateErrors: List<com.quickdaily.util.SourceError>,
     isLatest: Boolean,
     context: android.content.Context,
-    onConfigChange: (DiaryConfig) -> Unit,
+    onConfigChange: OnConfigChange,
     onCheckUpdate: () -> Unit,
 ) {
+    val config by configState
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -1868,7 +2030,7 @@ private fun OtherTab(
                     supportingContent = { Text("每次启动应用时自动检测 GitHub 最新版本") },
                     trailingContent = {
                         Switch(checked = config.autoCheckUpdate, onCheckedChange = {
-                            onConfigChange(config.copy(autoCheckUpdate = it))
+                            onConfigChange { copy(autoCheckUpdate = it) }
                         })
                     }
                 )
@@ -1899,6 +2061,8 @@ private fun OtherTab(
             }
         }
 
+        AppearanceSettingsSection(context)
+
         PermissionRequestSection(context)
 
         Text("日志", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
@@ -1914,7 +2078,7 @@ private fun OtherTab(
                     supportingContent = { Text("开启后将记录操作日志，会带来一定程度的性能损耗，提交完 BUG 后请自行手动关闭。") },
                     trailingContent = {
                         Switch(checked = config.loggingEnabled, onCheckedChange = {
-                            onConfigChange(config.copy(loggingEnabled = it))
+                            onConfigChange { copy(loggingEnabled = it) }
                             com.quickdaily.BetaLogger.configure(context, it, true)
                         })
                     }
@@ -2128,6 +2292,159 @@ private fun OtherTab(
             }
         }
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun AppearanceSettingsSection(context: android.content.Context) {
+    val monetSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    var useMonet by rememberSaveable {
+        mutableStateOf(QuickDailyThemePreferences.isMonetEnabled(context))
+    }
+    var selectedPresetKey by rememberSaveable {
+        mutableStateOf(QuickDailyThemePreferences.selectedPreset(context).key)
+    }
+    var nightModeKey by rememberSaveable {
+        mutableStateOf(QuickDailyThemePreferences.nightMode(context).key)
+    }
+    var darkBackgroundBrightness by rememberSaveable {
+        mutableIntStateOf(QuickDailyThemePreferences.darkBackgroundBrightness(context))
+    }
+    val selectedPreset = QuickDailyAccentPreset.fromKey(selectedPresetKey)
+    val selectedNightMode = QuickDailyNightMode.fromKey(nightModeKey)
+
+    Text(
+        "外观设置",
+        style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.primary,
+    )
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+    ) {
+        Column(modifier = Modifier.padding(vertical = 4.dp)) {
+            ListItem(
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                headlineContent = { Text("启动莫奈取色") },
+                supportingContent = {
+                    Text(
+                        when {
+                            !monetSupported -> "当前 Android 版本不支持莫奈，使用下方预设强调色"
+                            useMonet -> "跟随系统壁纸动态生成 Material 3 色板"
+                            else -> "当前使用自定义预设强调色"
+                        },
+                    )
+                },
+                trailingContent = {
+                    Switch(
+                        checked = useMonet && monetSupported,
+                        enabled = monetSupported,
+                        onCheckedChange = {
+                            useMonet = it
+                            QuickDailyThemePreferences.setMonetEnabled(context, it)
+                        },
+                    )
+                },
+            )
+            HorizontalDivider(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+            )
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Text("自定义颜色", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    if (useMonet && monetSupported) {
+                        "选择预设后会关闭莫奈取色，并立即应用到应用与悬浮编辑页"
+                    } else {
+                        "选择一个预设作为应用强调色，也会同步悬浮编辑页的“编辑页”文字和工具栏图标"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp),
+                ) {
+                    items(QuickDailyAccentPreset.entries, key = { it.key }) { preset ->
+                        FilterChip(
+                            selected = !useMonet && selectedPreset == preset,
+                            onClick = {
+                                selectedPresetKey = preset.key
+                                useMonet = false
+                                QuickDailyThemePreferences.selectAccentPreset(context, preset)
+                            },
+                            label = { Text(preset.label) },
+                            leadingIcon = {
+                                androidx.compose.foundation.layout.Box(
+                                    modifier = Modifier
+                                        .size(18.dp)
+                                        .clip(CircleShape)
+                                        .background(preset.previewColor),
+                                )
+                            },
+                        )
+                    }
+                }
+            }
+            HorizontalDivider(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+            )
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Text("夜间模式", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "控制应用页面和悬浮编辑页的浅色/深色主题",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    listOf(QuickDailyNightMode.DARK, QuickDailyNightMode.LIGHT, QuickDailyNightMode.SYSTEM)
+                        .forEachIndexed { index, mode ->
+                            SegmentedButton(
+                                selected = selectedNightMode == mode,
+                                onClick = {
+                                    nightModeKey = mode.key
+                                    QuickDailyThemePreferences.setNightMode(context, mode)
+                                },
+                                shape = SegmentedButtonDefaults.itemShape(index = index, count = 3),
+                            ) {
+                                Text(mode.label)
+                            }
+                        }
+                }
+                if (selectedNightMode == QuickDailyNightMode.DARK) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "暗色背景亮度 ${darkBackgroundBrightness}%",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Slider(
+                        value = darkBackgroundBrightness.toFloat(),
+                        onValueChange = { darkBackgroundBrightness = it.roundToInt().coerceIn(0, 100) },
+                        onValueChangeFinished = {
+                            QuickDailyThemePreferences.setDarkBackgroundBrightness(
+                                context,
+                                darkBackgroundBrightness,
+                            )
+                        },
+                        valueRange = 0f..100f,
+                        steps = 99,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text("更暗", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("更亮", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
     }
 }
 

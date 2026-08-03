@@ -28,15 +28,43 @@ import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.quickdaily.ui.theme.LocalFloaterColors
 import com.quickdaily.ui.theme.QuickDailyTheme
+import com.quickdaily.ui.theme.quickDailyFloaterColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import java.io.File
 import kotlin.math.roundToInt
+
+internal enum class FloatingNoteRecordingState {
+    Idle,
+    Recording,
+    Finalizing,
+}
+
+internal object FloatingNoteRecordingPolicy {
+    fun canStart(state: FloatingNoteRecordingState): Boolean =
+        state == FloatingNoteRecordingState.Idle
+
+    fun afterStop(state: FloatingNoteRecordingState): FloatingNoteRecordingState =
+        if (state == FloatingNoteRecordingState.Recording) {
+            FloatingNoteRecordingState.Finalizing
+        } else {
+            state
+        }
+
+    fun afterFinalize(state: FloatingNoteRecordingState): FloatingNoteRecordingState =
+        if (state == FloatingNoteRecordingState.Finalizing) {
+            FloatingNoteRecordingState.Idle
+        } else {
+            state
+        }
+}
 
 class FloatingNoteService : LifecycleService() {
     private lateinit var windowManager: WindowManager
@@ -51,9 +79,14 @@ class FloatingNoteService : LifecycleService() {
     private var windowDragY = 0f
     private var recorder: MediaRecorder? = null
     private var recordingFile: File? = null
+    private var activeRequestId: String = "service"
+    private var closingOverlay = false
     private var recordingStartedAt by mutableStateOf<Long?>(null)
     private var recordingElapsedMs by mutableStateOf(0L)
     private val recordingScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var recordingJob: Job? = null
+    @Volatile
+    private var recordingState = FloatingNoteRecordingState.Idle
 
     override fun onCreate() {
         super.onCreate()
@@ -89,6 +122,8 @@ class FloatingNoteService : LifecycleService() {
             }
             else -> {
                 val request = requestFromIntent(intent)
+                activeRequestId = request.requestId
+                FloatingNoteTiming.begin(request.requestId, request.source)
                 if (FloatingNotePolicy.shouldLoadNewRequest(overlayView != null)) {
                     FloatingNoteDraftStore.loadInto(this, state, request)
                 } else {
@@ -105,6 +140,7 @@ class FloatingNoteService : LifecycleService() {
 
     private fun ensureOverlay() {
         if (overlayView != null) {
+            FloatingNoteLaunchGate.release()
             clampOverlayToScreen()
             BetaLogger.log("FloatingNote/Window", "focus existing source=${state.source}")
             FloatingNoteTiming.mark("focus_existing")
@@ -112,6 +148,7 @@ class FloatingNoteService : LifecycleService() {
         }
 
         try {
+            closingOverlay = false
             targetOptions = FloatingNoteTargetStore.options(this, state.targetRelativePath)
             val completionPrefs = getSharedPreferences("QuickDaily", MODE_PRIVATE)
             // Launcher starts this service from a user-visible Activity. Starting the
@@ -131,13 +168,17 @@ class FloatingNoteService : LifecycleService() {
                 setViewTreeViewModelStoreOwner(viewTreeOwner)
                 FloatingNoteTiming.mark("compose_content_set")
                 setComposeContent {
+                    val monetEnabled = completionPrefs.getBoolean("theme_use_monet", true)
+                    BetaLogger.log(
+                        "FloatingNote/Theme",
+                        "source=${state.source} monetEnabled=$monetEnabled accent=${completionPrefs.getString("theme_accent_preset", "blue")} nightMode=${completionPrefs.getString("theme_night_mode", "system")}",
+                    )
                     QuickDailyTheme {
-                        androidx.compose.runtime.CompositionLocalProvider(LocalFloaterColors provides com.quickdaily.ui.theme.FloaterColors()) {
+                        androidx.compose.runtime.CompositionLocalProvider(LocalFloaterColors provides quickDailyFloaterColors()) {
                             NoteEditDialog(
                                 text = state.text,
                                 onTextChange = {
                                     state.text = it
-                                    BetaLogger.log("FloatingNote/Input", "content=$it")
                                     FloatingNoteDraftStore.persist(this@FloatingNoteService, state)
                                 },
                                 onSelectionChange = { selection ->
@@ -183,12 +224,23 @@ class FloatingNoteService : LifecycleService() {
                                 imageUris = state.selectedImages,
                                 hasAttachments = state.pendingAttachments.isNotEmpty(),
                                 attachmentUris = state.pendingAttachments,
+                                imePolicy = FloatingNoteImePolicy.OverlayInstant,
                                 onTiming = { stage, detail -> FloatingNoteTiming.mark(stage, detail) },
                                 onPickImages = { openPicker(FloatingNotePickerActivity.MODE_IMAGES) },
                                 onPickAttachment = { openPicker(FloatingNotePickerActivity.MODE_ATTACHMENT) },
                                 onTakePhoto = { openPicker(FloatingNotePickerActivity.MODE_CAMERA) },
                                 onToggleRecording = {
-                                    if (recorder != null) stopRecording() else openPicker(FloatingNotePickerActivity.MODE_RECORD_PERMISSION)
+                                    when {
+                                        recordingState == FloatingNoteRecordingState.Finalizing -> {
+                                            Toast.makeText(
+                                                this@FloatingNoteService,
+                                                "正在保存上一段录音",
+                                                Toast.LENGTH_SHORT,
+                                            ).show()
+                                        }
+                                        recorder != null -> stopRecording()
+                                        else -> openPicker(FloatingNotePickerActivity.MODE_RECORD_PERMISSION)
+                                    }
                                 },
                                 toolbarOrder = toolbarOrder(),
                                 toolbarVisible = toolbarVisible(),
@@ -213,7 +265,9 @@ class FloatingNoteService : LifecycleService() {
                 }
             }
             val dm = resources.displayMetrics
-            val width = (dm.widthPixels * 0.88f).toInt().coerceAtLeast(dp(280))
+            val width = (dm.widthPixels * 0.88f).toInt()
+                .coerceAtLeast(dp(280))
+                .coerceAtMost(dm.widthPixels)
             val height = (dm.heightPixels * 0.35f).toInt().coerceAtLeast(dp(220))
             val params = WindowManager.LayoutParams(
                 width,
@@ -240,7 +294,9 @@ class FloatingNoteService : LifecycleService() {
                 )
                 x = position.x
                 y = position.y
-                softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+                softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or
+                    WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE
+                windowAnimations = 0
             }
             FloatingNoteTiming.mark("window_add_start", "width=$width height=$height")
             windowManager.addView(view, params)
@@ -248,12 +304,16 @@ class FloatingNoteService : LifecycleService() {
             windowParams = params
             FloatingNotePositionPolicy.save(this, FloatingNotePosition(params.x, params.y))
             isWindowShowing = true
+            FloatingNoteLaunchGate.release()
             FloatingNoteTiming.mark("window_add_end")
             BetaLogger.log("FloatingNote/Window", "show type=TYPE_APPLICATION_OVERLAY width=$width height=$height")
+            FloatingNoteTiming.mark("overlay_ready")
+            FloatingNoteHandoff.notifyReady(activeRequestId)
         } catch (error: Throwable) {
             BetaLogger.logException("FloatingNote/Window", "add_failed=${error.javaClass.simpleName}", error)
             overlayView = null
             isWindowShowing = false
+            FloatingNoteLaunchGate.release()
             Toast.makeText(this, "悬浮窗启动失败，已返回首页", Toast.LENGTH_SHORT).show()
             openHome()
         }
@@ -270,7 +330,7 @@ class FloatingNoteService : LifecycleService() {
         FloatingNoteDraftStore.persist(this, state)
         BetaLogger.log(
             "FloatingNote/Save",
-            "content=${state.text} images=${state.selectedImages.size} attachments=${state.pendingAttachments.size}"
+            "images=${state.selectedImages.size} attachments=${state.pendingAttachments.size}"
         )
         lifecycleScope.launch {
             FloatingNoteTiming.mark("save_start")
@@ -303,11 +363,16 @@ class FloatingNoteService : LifecycleService() {
 
     private fun openPicker(mode: String) {
         FloatingNoteDraftStore.persist(this, state)
-        if (mode == FloatingNotePickerActivity.MODE_CAMERA) {
-            // TYPE_APPLICATION_OVERLAY can remain above the camera app. Remove it
-            // before launching the short-lived Activity; the picker restores it on
-            // success, cancellation, or permission denial.
-            hideOverlay("camera_picker", persistDraft = true)
+        if (mode == FloatingNotePickerActivity.MODE_IMAGES ||
+            mode == FloatingNotePickerActivity.MODE_ATTACHMENT ||
+            mode == FloatingNotePickerActivity.MODE_CUSTOM_PAGE ||
+            mode == FloatingNotePickerActivity.MODE_CAMERA ||
+            mode == FloatingNotePickerActivity.MODE_RECORD_PERMISSION
+        ) {
+            // TYPE_APPLICATION_OVERLAY can remain above system pickers and
+            // permission surfaces. Remove it before launching the short-lived
+            // Activity; the picker restores it on success or cancellation.
+            hideOverlay("${mode}_picker", persistDraft = true)
         }
         startActivity(Intent(this, FloatingNotePickerActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -317,6 +382,12 @@ class FloatingNoteService : LifecycleService() {
     }
 
     private fun startRecording() {
+        if (!FloatingNoteRecordingPolicy.canStart(recordingState)) {
+            if (recordingState == FloatingNoteRecordingState.Finalizing) {
+                Toast.makeText(this, "正在保存上一段录音", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
         if (recorder != null) return
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             Toast.makeText(this, "请允许录音权限后再录音", Toast.LENGTH_SHORT).show()
@@ -344,6 +415,7 @@ class FloatingNoteService : LifecycleService() {
         }
         recorder = nextRecorder
         recordingFile = file
+        recordingState = FloatingNoteRecordingState.Recording
         recordingStartedAt = SystemClock.elapsedRealtime()
         FloatingNoteDraftStore.persist(this, state)
     }
@@ -355,14 +427,16 @@ class FloatingNoteService : LifecycleService() {
         recordingFile = null
         recordingStartedAt = null
         recordingElapsedMs = 0L
+        recordingState = FloatingNoteRecordingPolicy.afterStop(recordingState)
         val stopped = runCatching { activeRecorder.stop() }.isSuccess
         runCatching { activeRecorder.reset() }
         runCatching { activeRecorder.release() }
         if (!stopped || file == null) {
             file?.delete()
+            recordingState = FloatingNoteRecordingPolicy.afterFinalize(recordingState)
             return
         }
-        recordingScope.launch {
+        recordingJob = recordingScope.launch {
             val link = runCatching { EditorMediaUtil.audioLink(this@FloatingNoteService, file) }.getOrNull()
             if (link != null) {
                 file.delete()
@@ -383,6 +457,12 @@ class FloatingNoteService : LifecycleService() {
                 withContext(Dispatchers.Main) {
                     Toast.makeText(this@FloatingNoteService, "录音保存失败", Toast.LENGTH_SHORT).show()
                 }
+            }
+        }.also { job ->
+            job.invokeOnCompletion {
+                if (recordingJob === job) recordingJob = null
+                recordingState = FloatingNoteRecordingPolicy.afterFinalize(recordingState)
+                if (closingOverlay) recordingScope.cancel()
             }
         }
     }
@@ -458,9 +538,9 @@ class FloatingNoteService : LifecycleService() {
     private fun toolbarVisible(): Set<String> {
         val prefs = getSharedPreferences("QuickDaily", MODE_PRIVATE)
         return if (prefs.contains(EditorToolbarPolicy.PREF_VISIBLE)) {
-            EditorToolbarPolicy.migrateVisible(
-                EditorToolbarPolicy.parseVisible(prefs.getString(EditorToolbarPolicy.PREF_VISIBLE, null)),
-                prefs.getInt(EditorToolbarPolicy.PREF_SCHEMA_VERSION, 0) < EditorToolbarPolicy.CURRENT_SCHEMA_VERSION,
+            EditorToolbarPolicy.readVisible(
+                prefs.getString(EditorToolbarPolicy.PREF_VISIBLE, null),
+                prefs.getInt(EditorToolbarPolicy.PREF_SCHEMA_VERSION, 0),
             )
         } else EditorToolbarPolicy.defaultVisible
     }
@@ -477,6 +557,11 @@ class FloatingNoteService : LifecycleService() {
     }
 
     private fun hideOverlay(reason: String, persistDraft: Boolean = true) {
+        if (closingOverlay) {
+            FloatingNoteTiming.mark("hide_ignored", "reason=$reason alreadyClosing=true")
+            return
+        }
+        closingOverlay = true
         FloatingNoteTiming.mark("hide_start", "reason=$reason")
         BetaLogger.log("FloatingNote/Window", "hide reason=$reason")
         stopRecording(refreshOverlay = false)
@@ -485,27 +570,45 @@ class FloatingNoteService : LifecycleService() {
             FloatingNoteDraftStore.persist(this, state)
         }
         overlayView?.let { view ->
+            FloatingNoteTiming.mark("ime_hide_request", "reason=$reason")
+            FloatingNoteImeController.hide(view) { stage, detail ->
+                FloatingNoteTiming.mark(stage, detail)
+            }
+            view.clearFocus()
+            FloatingNoteTiming.mark("window_remove_start", "reason=$reason")
+            runCatching { windowManager.removeViewImmediate(view) }
+                .onFailure { error ->
+                    BetaLogger.logException("FloatingNote/Window", "remove_immediate_failed", error)
+                }
+            FloatingNoteTiming.mark("window_remove_end", "reason=$reason")
             runCatching { view.disposeComposition() }
-            runCatching { windowManager.removeView(view) }
         }
         overlayView = null
         windowParams = null
         isWindowShowing = false
+        FloatingNoteLaunchGate.release()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
         FloatingNoteTiming.mark("hide_end", "reason=$reason")
     }
 
     override fun onDestroy() {
+        closingOverlay = true
         stopRecording()
+        if (recordingJob?.isActive != true) recordingScope.cancel()
         persistWindowPosition()
         overlayView?.let { view ->
+            FloatingNoteImeController.hide(view) { stage, detail ->
+                FloatingNoteTiming.mark(stage, detail)
+            }
+            view.clearFocus()
+            runCatching { windowManager.removeViewImmediate(view) }
             runCatching { view.disposeComposition() }
-            runCatching { windowManager.removeView(view) }
         }
         overlayView = null
         windowParams = null
         isWindowShowing = false
+        FloatingNoteLaunchGate.release()
         viewTreeOwner.onDestroy()
         BetaLogger.log("FloatingNote/Service", "destroyed")
         super.onDestroy()
@@ -521,6 +624,9 @@ class FloatingNoteService : LifecycleService() {
             returnToHomeAfterClose = intent?.getBooleanExtra(EXTRA_RETURN_HOME, false) ?: false,
             targetRelativePath = intent?.getStringExtra(EXTRA_TARGET_PATH),
             displayTitle = intent?.getStringExtra(EXTRA_DISPLAY_TITLE),
+            requestId = intent?.getStringExtra(EXTRA_REQUEST_ID)
+                ?.takeIf { it.isNotBlank() }
+                ?: newFloatingNoteRequestId(),
         )
     }
 
@@ -567,6 +673,7 @@ class FloatingNoteService : LifecycleService() {
         private const val EXTRA_RETURN_HOME = "floating_return_home"
         private const val EXTRA_TARGET_PATH = "floating_target_path"
         private const val EXTRA_DISPLAY_TITLE = "floating_display_title"
+        private const val EXTRA_REQUEST_ID = "floating_request_id"
         private const val EXTRA_REASON = "floating_reason"
 
         @Volatile
@@ -580,6 +687,7 @@ class FloatingNoteService : LifecycleService() {
                 putExtra(EXTRA_RETURN_HOME, request.returnToHomeAfterClose)
                 putExtra(EXTRA_TARGET_PATH, request.targetRelativePath)
                 putExtra(EXTRA_DISPLAY_TITLE, request.displayTitle)
+                putExtra(EXTRA_REQUEST_ID, request.requestId)
             }
 
         fun hideIntent(context: Context, reason: String): Intent =

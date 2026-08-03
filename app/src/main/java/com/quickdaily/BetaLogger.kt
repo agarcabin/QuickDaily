@@ -46,10 +46,7 @@ object BetaLogger {
                     if (!enabled) return@withLock
                     val file = logFile ?: return@withLock
                     if (!headerWritten) {
-                        val existing = if (file.exists()) file.readText(Charsets.UTF_8) else ""
-                        if (!existing.startsWith(HEADER_MARKER)) {
-                            file.writeText(deviceHeader() + existing, Charsets.UTF_8)
-                        }
+                        ensureDeviceHeader(file)
                         headerWritten = true
                     }
                     file.appendText("$line\n", Charsets.UTF_8)
@@ -79,7 +76,7 @@ object BetaLogger {
                 val migration = ExternalStoragePaths.migrateLegacyLogs()
                 File(docsDir, "QuickDaily_log_$date.txt").also {
                     logFile = it
-                    headerWritten = hasDeviceHeader(it)
+                    headerWritten = hasCurrentDeviceHeader(it)
                     this.enabled = true
                     if (migration.moved > 0 || migration.skipped > 0) {
                         log("BetaLogger", "legacy logs migrated=${migration.moved} skipped=${migration.skipped}")
@@ -89,7 +86,7 @@ object BetaLogger {
                 File(context.filesDir, "beta_log.txt")
             }
             logFile = file
-            headerWritten = hasDeviceHeader(file)
+            headerWritten = hasCurrentDeviceHeader(file)
             this.enabled = true
             log("BetaLogger", "configured: external=$useExternal path=${file.absolutePath}")
             logConfigSnapshot(context, "configure")
@@ -108,10 +105,17 @@ object BetaLogger {
                 "dateFormat=${prefs.getString("date_format", "YYYY-MM-DD").orEmpty()} " +
                 "filterFrontmatter=${prefs.getBoolean("filter_frontmatter", false)} " +
                 "renderMarkdown=${prefs.getBoolean("render_markdown", true)} " +
+                "appVersion=${BuildConfig.VERSION_NAME} appVersionCode=${BuildConfig.VERSION_CODE} " +
                 "taskCompletionTimestamp=${prefs.getBoolean(TaskCompletionTimestampPolicy.PREF_KEY, TaskCompletionTimestampPolicy.DEFAULT_ENABLED)} " +
                 "taskCompletionSound=${prefs.getBoolean(TaskCompletionSoundPolicy.PREF_KEY, TaskCompletionSoundPolicy.DEFAULT_ENABLED)} " +
                 "taskShowCompleted=${prefs.getBoolean(TaskWidgetDisplayPolicy.SHOW_COMPLETED_PREF_KEY, TaskWidgetDisplayPolicy.DEFAULT_SHOW_COMPLETED)} " +
-                "systemSidebarSupport=${prefs.getBoolean(FloatingNoteEntryPolicy.PREF_SYSTEM_SIDEBAR_SUPPORT, false)} " +
+                "systemSidebarSupport=${prefs.getBoolean(FloatingNoteEntryPolicy.PREF_SYSTEM_SIDEBAR_SUPPORT, FloatingNoteEntryPolicy.DEFAULT_SYSTEM_SIDEBAR_SUPPORT)} " +
+                "homeEntryMode=${prefs.getString("home_entry_mode", HomeEntryMode.OVERLAY.key).orEmpty()} " +
+                "themeMonet=${prefs.getBoolean("theme_use_monet", true)} " +
+                "themeAccent=${prefs.getString("theme_accent_preset", "blue").orEmpty()} " +
+                "themeNightMode=${prefs.getString("theme_night_mode", "system").orEmpty()} " +
+                "tagAutocomplete=${prefs.getBoolean("tag_autocomplete", true)} " +
+                "wikilinkAutocomplete=${prefs.getBoolean("wikilink_autocomplete", true)} " +
                 "customPages=$customPages",
         )
     }
@@ -124,6 +128,9 @@ object BetaLogger {
 
     private fun deviceHeader(): String = buildString {
         appendLine(HEADER_MARKER)
+        appendLine("app.package=${BuildConfig.APPLICATION_ID}")
+        appendLine("app.versionName=${BuildConfig.VERSION_NAME}")
+        appendLine("app.versionCode=${BuildConfig.VERSION_CODE}")
         appendLine("device.manufacturer=${Build.MANUFACTURER}")
         appendLine("device.brand=${Build.BRAND}")
         appendLine("device.model=${Build.MODEL}")
@@ -135,10 +142,36 @@ object BetaLogger {
         appendLine("=====================================")
     }
 
-    private fun hasDeviceHeader(file: File): Boolean = try {
-        file.exists() && file.bufferedReader(Charsets.UTF_8).use { it.readLine() == HEADER_MARKER }
+    private fun hasCurrentDeviceHeader(file: File): Boolean = try {
+        if (!file.exists()) {
+            false
+        } else {
+            val header = file.bufferedReader(Charsets.UTF_8).use { reader ->
+                buildString {
+                    repeat(12) {
+                        val line = reader.readLine() ?: return@repeat
+                        appendLine(line)
+                    }
+                }
+            }
+            header.contains(HEADER_MARKER) &&
+                header.contains("app.versionName=${BuildConfig.VERSION_NAME}") &&
+                header.contains("app.versionCode=${BuildConfig.VERSION_CODE}")
+        }
     } catch (_: Exception) {
         false
+    }
+
+    private fun ensureDeviceHeader(file: File) {
+        val existing = if (file.exists()) file.readText(Charsets.UTF_8) else ""
+        val body = if (existing.startsWith(HEADER_MARKER)) {
+            val separator = "=====================================\n"
+            val separatorIndex = existing.indexOf(separator)
+            if (separatorIndex >= 0) existing.substring(separatorIndex + separator.length) else ""
+        } else {
+            existing
+        }
+        file.writeText(deviceHeader() + body, Charsets.UTF_8)
     }
 
     fun clear() {

@@ -23,8 +23,13 @@ class QuickNoteWidget : AppWidgetProvider() {
         appWidgetManager: AppWidgetManager,
         appWidgetIds: IntArray
     ) {
-        for (widgetId in appWidgetIds) {
-            updateWidget(context, appWidgetManager, widgetId)
+        val pendingResult = goAsync()
+        QuickNoteWidgetUpdatePolicy.launch(
+            finishable = WidgetAsyncFinishable { pendingResult.finish() },
+        ) {
+            appWidgetIds.forEach { widgetId ->
+                updateWidget(context.applicationContext, appWidgetManager, widgetId)
+            }
         }
     }
 
@@ -35,7 +40,12 @@ class QuickNoteWidget : AppWidgetProvider() {
         newOptions: android.os.Bundle
     ) {
         super.onAppWidgetOptionsChanged(context, appWidgetManager, appWidgetId, newOptions)
-        updateWidget(context, appWidgetManager, appWidgetId)
+        val pendingResult = goAsync()
+        QuickNoteWidgetUpdatePolicy.launch(
+            finishable = WidgetAsyncFinishable { pendingResult.finish() },
+        ) {
+            updateWidget(context.applicationContext, appWidgetManager, appWidgetId)
+        }
     }
 
     companion object {
@@ -43,18 +53,25 @@ class QuickNoteWidget : AppWidgetProvider() {
         private const val IMAGE_SIZE = 300
 
         fun updateAllWidgets(context: Context) {
-            val appWidgetManager = AppWidgetManager.getInstance(context)
-            val component = ComponentName(context, QuickNoteWidget::class.java)
-            val widgetIds = appWidgetManager.getAppWidgetIds(component)
-            for (id in widgetIds) {
-                updateWidget(context, appWidgetManager, id)
+            val appContext = context.applicationContext
+            QuickNoteWidgetUpdatePolicy.launch(
+                finishable = WidgetAsyncFinishable {},
+            ) {
+                val appWidgetManager = AppWidgetManager.getInstance(appContext)
+                val component = ComponentName(appContext, QuickNoteWidget::class.java)
+                val widgetIds = appWidgetManager.getAppWidgetIds(component)
+                widgetIds.forEach { id ->
+                    updateWidget(appContext, appWidgetManager, id)
+                }
             }
         }
 
         fun updateWidget(context: Context, appWidgetManager: AppWidgetManager, widgetId: Int) {
             val views = RemoteViews(context.packageName, R.layout.widget_quicknote)
 
-            val intent = Intent(context, NoteEditActivity::class.java)
+            val intent = Intent(context, NoteEditActivity::class.java).apply {
+                putExtra("floating_source", FloatingNoteSource.WIDGET.name)
+            }
             val pendingIntent = PendingIntent.getActivity(
                 context, widgetId, intent,
                 PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -120,4 +137,11 @@ class QuickNoteWidget : AppWidgetProvider() {
             return output
         }
     }
+}
+
+internal object QuickNoteWidgetUpdatePolicy {
+    fun launch(
+        finishable: WidgetAsyncFinishable,
+        block: () -> Unit,
+    ) = WidgetAsyncWorkRunner.launch(finishable, block)
 }

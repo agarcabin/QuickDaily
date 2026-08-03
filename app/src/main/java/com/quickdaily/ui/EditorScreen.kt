@@ -11,6 +11,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
@@ -30,11 +31,16 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalClipboardManager
 import android.view.inputmethod.InputMethodManager
 import androidx.compose.material3.*
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
 import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -58,6 +64,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.lifecycleScope
 import com.quickdaily.AppState
+import com.quickdaily.EditorImageInsertPolicy
 import com.quickdaily.markdown.MdRenderer
 import com.quickdaily.markdown.toggleTaskCheck
 import com.quickdaily.util.ImageUtil
@@ -68,8 +75,11 @@ import kotlinx.coroutines.withContext
 import com.quickdaily.CaptureFileUtil
 import com.quickdaily.EditorMediaUtil
 import com.quickdaily.EditorToolbarAction
+import com.quickdaily.EditorStampAction
+import com.quickdaily.EditorStampToggleState
 import com.quickdaily.TextIndentPolicy
 import com.quickdaily.EditorTextActionPolicy
+import com.quickdaily.EditorLinePrefixPolicy
 import com.quickdaily.EditorStampPolicy
 import com.quickdaily.ui.theme.LocalQuickDailyMotion
 import com.quickdaily.WikilinkIndexRepository
@@ -80,10 +90,17 @@ import com.quickdaily.WikilinkPolicy
 import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
-import androidx.compose.animation.animateContentSize
 import androidx.compose.ui.graphics.Path
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
-@OptIn(ExperimentalMaterial3Api::class)
+internal object EditorCursorPolicy {
+    fun isSelectionValid(selectionStart: Int, selectionEnd: Int, layoutTextLength: Int): Boolean =
+        layoutTextLength >= 0 &&
+            selectionStart in 0..layoutTextLength &&
+            selectionEnd in selectionStart..layoutTextLength
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun EditorScreen(
     appState: AppState = viewModel(),
@@ -93,17 +110,17 @@ fun EditorScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val windowSize = rememberQuickDailyWindowSize()
-    val motionPolicy = LocalQuickDailyMotion.current
     // Bug2: 设置导航栏颜色与工具栏一致（提前 capture，避免 @Composable 访问问题）
     val navBarColor = MaterialTheme.colorScheme.surface.toArgb()
-    val diaryContent by appState.diaryContent.collectAsState()
-    val isLoaded by appState.isLoaded.collectAsState()
-    val todayPath by appState.todayPath.collectAsState()
-    val editorTargetRelativePath by appState.editorTargetRelativePath.collectAsState()
-    val config by appState.config.collectAsState()
-    val canUndo by appState.canUndo.collectAsState()
-    val canRedo by appState.canRedo.collectAsState()
-    val wikilinkIndex by WikilinkIndexRepository.indexState.collectAsState()
+    val diaryContent by appState.diaryContent.collectAsStateWithLifecycle()
+    val isLoaded by appState.isLoaded.collectAsStateWithLifecycle()
+    val editorConflict by appState.editorConflict.collectAsStateWithLifecycle()
+    val todayPath by appState.todayPath.collectAsStateWithLifecycle()
+    val editorTargetRelativePath by appState.editorTargetRelativePath.collectAsStateWithLifecycle()
+    val config by appState.config.collectAsStateWithLifecycle()
+    val canUndo by appState.canUndo.collectAsStateWithLifecycle()
+    val canRedo by appState.canRedo.collectAsStateWithLifecycle()
+    val wikilinkIndex by WikilinkIndexRepository.indexState.collectAsStateWithLifecycle()
     val completionIndex = wikilinkIndex.takeIf {
         it.rootPath == config.vaultPath && it.indexed && it.tagsIndexed && it.error == null
     }
@@ -111,18 +128,24 @@ fun EditorScreen(
     val view = LocalView.current
     val title = todayPath.substringAfterLast("/").removeSuffix(".md")
     val clipboardManager = LocalClipboardManager.current
-    SideEffect {
+    DisposableEffect(context, navBarColor) {
         try {
-            val window = (context as? Activity)?.window ?: return@SideEffect
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                window.isNavigationBarContrastEnforced = false
+            val window = (context as? Activity)?.window
+            if (window != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    window.isNavigationBarContrastEnforced = false
+                }
+                window.navigationBarColor = navBarColor
             }
-            window.navigationBarColor = navBarColor
-            android.util.Log.d("QuickDaily", "Editor nav bar color set")
         } catch (_: Exception) { }
+        onDispose { }
     }
 
     var showPreview by remember { mutableStateOf(false) }
+    var toolbarPage by remember { mutableIntStateOf(0) }
+    var toolbarPageCount by remember { mutableIntStateOf(1) }
+    val keyboardVisible = WindowInsets.isImeVisible
+    val motionPolicy = LocalQuickDailyMotion.current
     var textFieldValue by remember { mutableStateOf(TextFieldValue("")) }
     var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
     var pendingCameraFile by remember { mutableStateOf<java.io.File?>(null) }
@@ -132,9 +155,15 @@ fun EditorScreen(
     var recordingElapsedMs by remember { mutableLongStateOf(0L) }
     var wikilinkPopupDismissKey by remember { mutableStateOf<String?>(null) }
     var recentWikilinks by remember { mutableStateOf(WikilinkRecentStore.load(context)) }
+    var stampToggleState by remember { mutableStateOf(EditorStampToggleState()) }
+
+    LaunchedEffect(keyboardVisible) {
+        if (keyboardVisible) toolbarPage = 0
+    }
 
     fun applyInsertedLink(link: String) {
         val next = EditorMediaUtil.insertLink(textFieldValue.text, textFieldValue.selection, link)
+        stampToggleState = stampToggleState.clear()
         textFieldValue = next
         appState.onContentChanged(next.text, forceUndoPoint = true)
     }
@@ -144,6 +173,17 @@ fun EditorScreen(
             val link = runCatching { EditorMediaUtil.imageLink(context, uri) }.getOrNull()
             withContext(Dispatchers.Main) {
                 if (link != null) applyInsertedLink(link)
+            }
+        }
+    }
+
+    fun insertImagesInSelectionOrder(uris: List<Uri>) {
+        scope.launch(Dispatchers.IO) {
+            val links = EditorImageInsertPolicy.processInSelectionOrder(uris) { uri ->
+                runCatching { EditorMediaUtil.imageLink(context, uri) }.getOrNull()
+            }
+            withContext(Dispatchers.Main) {
+                links.filterNotNull().forEach(::applyInsertedLink)
             }
         }
     }
@@ -256,7 +296,7 @@ fun EditorScreen(
         ActivityResultContracts.GetMultipleContents()
     ) { uris: List<Uri> ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
-        uris.forEach(::insertImage)
+        insertImagesInSelectionOrder(uris)
     }
     // 附件选择器
     val attachmentPicker = rememberLauncherForActivityResult(
@@ -299,6 +339,7 @@ fun EditorScreen(
                     textFieldValue.selection,
                     link,
                 )
+                stampToggleState = stampToggleState.clear()
                 textFieldValue = next
                 appState.onContentChanged(next.text, forceUndoPoint = true)
             }
@@ -307,7 +348,7 @@ fun EditorScreen(
 
 
     // -- Tag autocomplete --
-    val tagCompletion = remember(textFieldValue, config, allTags) {
+    val tagCompletion = remember(textFieldValue, config.tagAutocomplete, allTags) {
         if (!config.tagAutocomplete || completionIndex == null) return@remember Triple(false, "", 0)
         val text = textFieldValue.text
         val cursor = textFieldValue.selection.start
@@ -348,15 +389,18 @@ fun EditorScreen(
         }
     }
 
+    val latestTextFieldValue by rememberUpdatedState(textFieldValue)
     val selectTag: (String) -> Unit = remember(tagHashPos) {
         { tag ->
-            val text = textFieldValue.text
-            val cursor = textFieldValue.selection.start
+            val currentValue = latestTextFieldValue
+            val text = currentValue.text
+            val cursor = currentValue.selection.start
             val hp = tagHashPos
             val needSpaceBefore = hp > 0 && text[hp - 1] != ' ' && text[hp - 1] != '\n'
             val prefix = if (needSpaceBefore) " #" else "#"
             val newText = text.substring(0, hp) + prefix + tag + " " + text.substring(cursor)
             val newCursor = hp + prefix.length + tag.length + 1
+            stampToggleState = stampToggleState.clear()
             textFieldValue = TextFieldValue(newText, TextRange(newCursor))
             appState.onContentChanged(newText, forceUndoPoint = true)
             com.quickdaily.util.RecentTags.record(context, tag)
@@ -371,7 +415,14 @@ fun EditorScreen(
             Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
         }
     }
-    val wikilinkTrigger = remember(textFieldValue.text, textFieldValue.selection, config, wikilinkIndex) {
+    val wikilinkTrigger = remember(
+        textFieldValue.text,
+        textFieldValue.selection,
+        config.wikilinkAutocomplete,
+        config.vaultPath,
+        wikilinkIndex.rootPath,
+        wikilinkIndex.error,
+    ) {
         if (!config.wikilinkAutocomplete || config.vaultPath.isBlank() || wikilinkIndex.rootPath != config.vaultPath || wikilinkIndex.error != null) {
             null
         } else {
@@ -396,6 +447,7 @@ fun EditorScreen(
         val text = textFieldValue.text
         val newText = text.substring(0, currentTrigger.start) + replacement + text.substring(currentTrigger.replaceEnd)
         val cursor = currentTrigger.start + replacement.length
+        stampToggleState = stampToggleState.clear()
         textFieldValue = TextFieldValue(newText, TextRange(cursor))
         appState.onContentChanged(newText, forceUndoPoint = true)
         WikilinkRecentStore.record(context, candidate)
@@ -403,8 +455,12 @@ fun EditorScreen(
             .take(9)
     }
 
-    fun applyTextAction(result: com.quickdaily.EditorTextActionResult) {
+    fun applyTextAction(
+        result: com.quickdaily.EditorTextActionResult,
+        invalidateStamp: Boolean = true,
+    ) {
         result.clipboardText?.let { clipboardManager.setText(AnnotatedString(it)) }
+        if (invalidateStamp) stampToggleState = stampToggleState.clear()
         if (result.text != textFieldValue.text) {
             textFieldValue = TextFieldValue(result.text, result.selection)
             appState.onContentChanged(result.text, forceUndoPoint = true)
@@ -417,7 +473,10 @@ fun EditorScreen(
 
     LaunchedEffect(editorTargetRelativePath) { appState.loadEditorTarget(editorTargetRelativePath) }
     LaunchedEffect(diaryContent) {
-        if (diaryContent != textFieldValue.text) textFieldValue = TextFieldValue(diaryContent)
+        if (diaryContent != textFieldValue.text) {
+            stampToggleState = stampToggleState.clear()
+            textFieldValue = TextFieldValue(diaryContent)
+        }
     }
 
     Scaffold(
@@ -447,9 +506,14 @@ fun EditorScreen(
                     }
 
                     IconButton(onClick = { showPreview = !showPreview }) {
-                        Icon(if (showPreview) Icons.Default.Edit else Icons.Default.Visibility, null)
+                    Icon(
+                        if (showPreview) Icons.Default.Edit else Icons.Default.Visibility,
+                        if (showPreview) "返回编辑" else "预览",
+                    )
                     }
-                    IconButton(onClick = onSettingsClick) { Icon(Icons.Default.Settings, null) }
+                    IconButton(onClick = onSettingsClick) {
+                        Icon(Icons.Default.Settings, "设置")
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
@@ -495,6 +559,9 @@ fun EditorScreen(
                                 recording = recorder != null,
                                 recordingDurationMs = recordingElapsedMs,
                                 buttonSize = 48.dp,
+                                page = toolbarPage,
+                                onPageChanged = { toolbarPage = it },
+                                onPageCountChanged = { toolbarPageCount = it },
                                 onAction = { action ->
                                     when (action) {
                                         EditorToolbarAction.IMAGE -> {
@@ -524,11 +591,13 @@ fun EditorScreen(
                                         }
                                         EditorToolbarAction.INDENT -> {
                                             val result = TextIndentPolicy.indent(textFieldValue.text, textFieldValue.selection)
+                                            stampToggleState = stampToggleState.clear()
                                             textFieldValue = TextFieldValue(result.text, result.selection)
                                             appState.onContentChanged(result.text, forceUndoPoint = true)
                                         }
                                         EditorToolbarAction.OUTDENT -> {
                                             val result = TextIndentPolicy.outdent(textFieldValue.text, textFieldValue.selection)
+                                            stampToggleState = stampToggleState.clear()
                                             textFieldValue = TextFieldValue(result.text, result.selection)
                                             appState.onContentChanged(result.text, forceUndoPoint = true)
                                         }
@@ -542,78 +611,56 @@ fun EditorScreen(
                                             EditorTextActionPolicy.moveLineDown(textFieldValue.text, textFieldValue.selection)
                                         )
                                         EditorToolbarAction.TIMESTAMP -> {
-                                            applyTextAction(
-                                                EditorTextActionPolicy.insert(
-                                                    textFieldValue.text,
-                                                    textFieldValue.selection,
-                                                    EditorStampPolicy.toolbarTimestampInsertion(),
-                                                )
+                                            val (result, nextState) = stampToggleState.toggle(
+                                                text = textFieldValue.text,
+                                                selection = textFieldValue.selection,
+                                                action = EditorStampAction.TIMESTAMP,
+                                                insertion = EditorStampPolicy.toolbarTimestampInsertion(),
                                             )
+                                            stampToggleState = nextState
+                                            applyTextAction(result, invalidateStamp = false)
                                         }
-                                        EditorToolbarAction.DATE_STAMP -> applyTextAction(
-                                            EditorTextActionPolicy.insert(
-                                                textFieldValue.text,
-                                                textFieldValue.selection,
-                                                EditorStampPolicy.dateInsertion(),
+                                        EditorToolbarAction.DATE_STAMP -> {
+                                            val (result, nextState) = stampToggleState.toggle(
+                                                text = textFieldValue.text,
+                                                selection = textFieldValue.selection,
+                                                action = EditorStampAction.DATE_STAMP,
+                                                insertion = EditorStampPolicy.dateInsertion(),
                                             )
-                                        )
+                                            stampToggleState = nextState
+                                            applyTextAction(result, invalidateStamp = false)
+                                        }
                                         EditorToolbarAction.WIKILINK -> applyTextAction(
                                             EditorTextActionPolicy.insert(textFieldValue.text, textFieldValue.selection, "[[")
                                         )
-                                        EditorToolbarAction.TASK -> {
-                                            val t = textFieldValue.text
-                                            val c = textFieldValue.selection.start
-                                            val ls = t.lastIndexOf('\n', c - 1) + 1
-                                            val le = t.indexOf('\n', c).let { if (it < 0) t.length else it }
-                                            val line = t.substring(ls, le)
-                                            val re = Regex("""^\s*(-\s*\[\s*([ xX])\s*\])\s*""")
-                                            val m = re.find(line)
-                                            val (nt, nc) = if (m != null) {
-                                                val chk = m.groupValues[2]
-                                                val rest = line.substring(m.value.length).trimStart()
-                                                if (chk.trim().isEmpty()) {
-                                                    t.substring(0, ls) + "- [x] $rest" + t.substring(le) to (ls + 6)
-                                                } else {
-                                                    t.substring(0, ls) + rest + t.substring(le) to ls
-                                                }
-                                            } else {
-                                                t.substring(0, ls) + "- [ ] $line" + t.substring(le) to (ls + 6)
-                                            }
-                                            textFieldValue = TextFieldValue(nt, TextRange(nc))
-                                            appState.onContentChanged(nt, forceUndoPoint = true)
-                                        }
-                                        EditorToolbarAction.HEADING -> {
-                                            val text = textFieldValue.text
-                                            val pos = textFieldValue.selection.start
-                                            val lineStart = text.lastIndexOf("\n", pos - 1) + 1
-                                            val lineEnd = text.indexOf("\n", pos).let { if (it < 0) text.length else it }
-                                            val line = text.substring(lineStart, lineEnd)
-                                            val trimmed = line.trimStart()
-                                            val newTrimmed = when {
-                                                trimmed.startsWith("### ") -> trimmed.removePrefix("### ")
-                                                trimmed.startsWith("## ") -> "### " + trimmed.removePrefix("## ")
-                                                trimmed.startsWith("# ") -> "## " + trimmed.removePrefix("# ")
-                                                else -> "# " + trimmed
-                                            }
-                                            val indent = line.substring(0, line.length - trimmed.length)
-                                            val newLine = indent + newTrimmed
-                                            val nt = text.substring(0, lineStart) + newLine + text.substring(lineEnd)
-                                            textFieldValue = TextFieldValue(nt, TextRange(lineStart + newLine.length))
-                                            appState.onContentChanged(nt, forceUndoPoint = true)
-                                        }
-                                        EditorToolbarAction.LIST -> {
-                                            val t = textFieldValue.text
-                                            val c = textFieldValue.selection.start
-                                            val ls = t.lastIndexOf('\n', c - 1) + 1
-                                            val cl = t.substring(ls)
-                                            val (nt, nc) = if (cl.startsWith("- ")) {
-                                                t.substring(0, ls) + cl.removePrefix("- ") to (c - 2).coerceAtLeast(ls)
-                                            } else {
-                                                t.substring(0, ls) + "- " + cl to c + 2
-                                            }
-                                            textFieldValue = TextFieldValue(nt, TextRange(nc))
-                                            appState.onContentChanged(nt, forceUndoPoint = true)
-                                        }
+                                        EditorToolbarAction.STRIKETHROUGH -> applyTextAction(
+                                            EditorTextActionPolicy.toggleDelimiter(textFieldValue.text, textFieldValue.selection, "~~")
+                                        )
+                                        EditorToolbarAction.INLINE_CODE -> applyTextAction(
+                                            EditorTextActionPolicy.toggleDelimiter(textFieldValue.text, textFieldValue.selection, "`")
+                                        )
+                                        EditorToolbarAction.QUOTE -> applyTextAction(
+                                            EditorLinePrefixPolicy.apply(textFieldValue.text, textFieldValue.selection, EditorToolbarAction.QUOTE)
+                                        )
+                                        EditorToolbarAction.CODE_BLOCK -> applyTextAction(
+                                            EditorLinePrefixPolicy.apply(textFieldValue.text, textFieldValue.selection, EditorToolbarAction.CODE_BLOCK)
+                                        )
+                                        EditorToolbarAction.HORIZONTAL_RULE -> applyTextAction(
+                                            EditorTextActionPolicy.horizontalRule(textFieldValue.text, textFieldValue.selection)
+                                        )
+                                        EditorToolbarAction.MARKDOWN_LINK -> applyTextAction(
+                                            EditorTextActionPolicy.markdownLink(textFieldValue.text, textFieldValue.selection)
+                                        )
+                                        EditorToolbarAction.TASK,
+                                        EditorToolbarAction.HEADING,
+                                        EditorToolbarAction.LIST,
+                                        EditorToolbarAction.ORDERED_LIST -> applyTextAction(
+                                            EditorLinePrefixPolicy.apply(
+                                                textFieldValue.text,
+                                                textFieldValue.selection,
+                                                action,
+                                            )
+                                        )
                                         EditorToolbarAction.BOLD -> {
                                             val t = textFieldValue.text
                                             val c = textFieldValue.selection.start
@@ -623,6 +670,7 @@ fun EditorScreen(
                                                 t.substring(0, c) + "****" + t.substring(c)
                                             }
                                             val nc = if (nt.length < t.length) c - 2 else c + 2
+                                            stampToggleState = stampToggleState.clear()
                                             textFieldValue = TextFieldValue(nt, TextRange(nc))
                                             appState.onContentChanged(nt, forceUndoPoint = true)
                                         }
@@ -638,12 +686,37 @@ fun EditorScreen(
                                 },
                             )
                         }
+                        val toolbarArrowRotation by animateFloatAsState(
+                            targetValue = when {
+                                keyboardVisible -> 0f
+                                toolbarPage > 0 -> 90f
+                                else -> 270f
+                            },
+                            animationSpec = if (motionPolicy.reducedMotion) snap() else spring(
+                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                stiffness = Spring.StiffnessMedium,
+                            ),
+                            label = "toolbarKeyboardPageArrow",
+                        )
                         ToolbarIconButton(
-                            icon = { Icon(Icons.Default.KeyboardArrowDown, "关闭键盘", modifier = Modifier.size(22.dp)) },
+                            icon = {
+                                Icon(
+                                    Icons.Default.KeyboardArrowDown,
+                                    if (keyboardVisible) "关闭键盘" else if (toolbarPage > 0) "返回第一页工具" else "打开第二页工具",
+                                    modifier = Modifier
+                                        .size(22.dp)
+                                        .graphicsLayer { rotationZ = toolbarArrowRotation },
+                                )
+                            },
                             onClick = {
-                                val imm = context.getSystemService(Activity.INPUT_METHOD_SERVICE) as InputMethodManager
-                                imm.hideSoftInputFromWindow(view.windowToken, 0)
-                                BetaLogger.log("Toolbar", "close_keyboard")
+                                if (keyboardVisible) {
+                                    val imm = context.getSystemService(Activity.INPUT_METHOD_SERVICE) as InputMethodManager
+                                    imm.hideSoftInputFromWindow(view.windowToken, 0)
+                                    BetaLogger.log("Toolbar", "close_keyboard")
+                                } else if (toolbarPageCount > 1) {
+                                    toolbarPage = if (toolbarPage == 0) 1 else 0
+                                    BetaLogger.log("Toolbar", "switch_page page=$toolbarPage")
+                                }
                             }
                         )
                     }
@@ -652,27 +725,78 @@ fun EditorScreen(
         }
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            editorConflict?.let {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            "检测到磁盘文件有更新",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        )
+                        Text(
+                            "本地未保存内容未被覆盖，请选择保留哪一份。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Button(onClick = appState::useDiskConflict) {
+                                Text("采用磁盘版本")
+                            }
+                            OutlinedButton(onClick = appState::keepLocalConflict) {
+                                Text("保留本地并覆盖磁盘")
+                            }
+                        }
+                    }
+                }
+            }
 
-        if (!isLoaded) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
-        } else if (showPreview) {
-            Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
-                MdRenderer(text = diaryContent, vaultBasePath = config.vaultPath, imageStoragePath = config.imageStoragePath.takeIf { it.isNotBlank() }, onToggleCheckbox = { index ->
-                    appState.onContentChanged(toggleTaskCheck(diaryContent, index), forceUndoPoint = true)
-                })
-            }
-        } else {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+            ) {
+                if (!isLoaded) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                } else if (showPreview) {
+                    Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
+                        MdRenderer(text = diaryContent, vaultBasePath = config.vaultPath, imageStoragePath = config.imageStoragePath.takeIf { it.isNotBlank() }, onToggleCheckbox = { index ->
+                            appState.onContentChanged(toggleTaskCheck(diaryContent, index), forceUndoPoint = true)
+                        })
+                    }
+                } else {
             val scrollState = rememberScrollState()
             var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
             var viewportH by remember { mutableStateOf(0) }
             val density = LocalDensity.current
             val padPx = with(density) { 16.dp.toPx() }
             val sel = textFieldValue.selection.start
-            LaunchedEffect(sel) {
+            val layoutText = textLayoutResult?.layoutInput?.text
+            LaunchedEffect(sel, layoutText) {
                 textLayoutResult?.let { layout ->
                     if (viewportH <= 0) return@let
+                    if (!EditorCursorPolicy.isSelectionValid(
+                            selectionStart = sel,
+                            selectionEnd = textFieldValue.selection.end,
+                            layoutTextLength = layout.layoutInput.text.length,
+                        )
+                    ) return@let
                     val r = layout.getCursorRect(sel)
                     val cursorY = r.bottom + padPx
                     val st = scrollState.value
@@ -695,6 +819,9 @@ fun EditorScreen(
                         BasicTextField(
                         value = textFieldValue,
                         onValueChange = { newValue ->
+                            if (newValue.text != textFieldValue.text) {
+                                stampToggleState = stampToggleState.clear()
+                            }
                             textFieldValue = newValue
                             appState.onContentChanged(newValue.text)
                         },
@@ -706,6 +833,12 @@ fun EditorScreen(
                             .onPreviewKeyEvent { event ->
                                 if (event.type == KeyEventType.KeyDown && event.key == Key.Escape && wikilinkTriggerKey != null) {
                                     wikilinkPopupDismissKey = wikilinkTriggerKey
+                                    true
+                                } else if (event.type == KeyEventType.KeyDown &&
+                                    event.key == Key.Enter &&
+                                    matchingTags.isNotEmpty()
+                                ) {
+                                    selectTag(matchingTags.first())
                                     true
                                 } else if (event.type == KeyEventType.KeyDown &&
                                     event.key == Key.Enter &&
@@ -738,20 +871,16 @@ fun EditorScreen(
                         offset = IntOffset(popupX, popupY),
                         properties = PopupProperties(focusable = false, dismissOnBackPress = true, dismissOnClickOutside = true)
                     ) {
-                        Surface(
+                        QuickDailyAutocompleteSurface(
                             modifier = Modifier
                                 .widthIn(max = 300.dp)
-                                .heightIn(max = 200.dp)
-                                .animateContentSize(animationSpec = motionPolicy.spatialSpec()),
-                            shadowElevation = 6.dp,
-                            shape = MaterialTheme.shapes.small,
-                            color = MaterialTheme.colorScheme.surface
+                                .heightIn(max = 200.dp),
                         ) {
                             Column(Modifier.verticalScroll(rememberScrollState()).padding(vertical = 2.dp)) {
                                 matchingTags.forEach { tag ->
                                     TextButton(
                                         onClick = { selectTag(tag) },
-                                        modifier = Modifier.fillMaxWidth().heightIn(min = 32.dp)
+                                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
                                     ) {
                                         Text(
                                             "#$tag",
@@ -785,14 +914,10 @@ fun EditorScreen(
                             dismissOnClickOutside = true,
                         )
                     ) {
-                        Surface(
+                        QuickDailyAutocompleteSurface(
                             modifier = Modifier
                                 .widthIn(max = 300.dp)
-                                .heightIn(max = 240.dp)
-                                .animateContentSize(animationSpec = motionPolicy.spatialSpec()),
-                            shadowElevation = 6.dp,
-                            shape = MaterialTheme.shapes.small,
-                            color = MaterialTheme.colorScheme.surface,
+                                .heightIn(max = 240.dp),
                         ) {
                             Column(Modifier.verticalScroll(rememberScrollState()).padding(vertical = 2.dp)) {
                                 if (wikilinkIndex.loading && matchingWikilinks.isEmpty()) {
@@ -806,7 +931,7 @@ fun EditorScreen(
                                     matchingWikilinks.forEach { candidate ->
                                         TextButton(
                                             onClick = { selectWikilink(candidate) },
-                                            modifier = Modifier.fillMaxWidth().heightIn(min = 32.dp),
+                                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                                         ) {
                                             Column(
                                                 modifier = Modifier.fillMaxWidth(),
@@ -836,7 +961,8 @@ fun EditorScreen(
                     }
                 }
             }
-        }
+                }
+            }
         }
     }
 }

@@ -24,10 +24,14 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
@@ -91,23 +95,29 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             QuickDailyTheme {
-                val navigator = remember { Navigator(firstLaunch) }
-                val motionPolicy = rememberQuickDailyMotionPolicy()
-                val reducedMotion = motionPolicy.reducedMotion
-                val firstLaunchEntrance = remember(firstLaunch) {
-                    MutableTransitionState(!firstLaunch).apply { targetState = true }
-                }
-                AnimatedVisibility(
-                    visibleState = firstLaunchEntrance,
-                    enter = if (reducedMotion) EnterTransition.None else {
-                        slideInHorizontally(
-                            animationSpec = motionPolicy.spatialSpec(),
-                            initialOffsetX = { it },
-                        ) + fadeIn(animationSpec = motionPolicy.effectSpec())
-                    },
-                    label = "settingsInitialEntrance",
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background,
                 ) {
-                    AnimatedContent(
+                    val navigator = remember { Navigator(firstLaunch) }
+                    val motionPolicy = rememberQuickDailyMotionPolicy()
+                    val reducedMotion = motionPolicy.reducedMotion
+                    val firstLaunchEntrance = remember(firstLaunch) {
+                        MutableTransitionState(!firstLaunch).apply { targetState = true }
+                    }
+                    AnimatedVisibility(
+                        modifier = Modifier.fillMaxSize(),
+                        visibleState = firstLaunchEntrance,
+                        enter = if (reducedMotion) EnterTransition.None else {
+                            slideInHorizontally(
+                                animationSpec = motionPolicy.spatialSpec(),
+                                initialOffsetX = { it },
+                            ) + fadeIn(animationSpec = motionPolicy.effectSpec())
+                        },
+                        label = "settingsInitialEntrance",
+                    ) {
+                        AnimatedContent(
+                            modifier = Modifier.fillMaxSize(),
                         targetState = navigator.screen,
                         contentKey = { it },
                         transitionSpec = {
@@ -134,18 +144,19 @@ class MainActivity : ComponentActivity() {
                             }.using(SizeTransform(clip = false))
                         },
                         label = "settingsNavigation",
-                    ) { screen ->
-                        when (screen) {
-                            Screen.EDITOR -> EditorScreen(
-                                appState = appState,
-                                onSettingsClick = { navigator.screen = Screen.SETTINGS },
-                                onExternalLaunch = { externalLaunching = true }
-                            )
-                            Screen.SETTINGS -> SettingsScreen(
-                                appState = appState,
-                                onBack = { navigator.screen = Screen.EDITOR },
-                                onExternalLaunch = { externalLaunching = true }
-                            )
+                        ) { screen ->
+                            when (screen) {
+                                Screen.EDITOR -> EditorScreen(
+                                    appState = appState,
+                                    onSettingsClick = { navigator.screen = Screen.SETTINGS },
+                                    onExternalLaunch = { externalLaunching = true }
+                                )
+                                Screen.SETTINGS -> SettingsScreen(
+                                    appState = appState,
+                                    onBack = { navigator.screen = Screen.EDITOR },
+                                    onExternalLaunch = { externalLaunching = true }
+                                )
+                            }
                         }
                     }
                 }
@@ -250,7 +261,9 @@ class MainActivity : ComponentActivity() {
         val anchor = (prefs.getString("anchor_text", "") ?: "").trim()
         val d = com.quickdaily.util.DateUtil.todayStr(dateFormat)
         val path = "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/$d.md"
-        
+
+        val mutationGuard = com.quickdaily.util.FileUtil.acquirePathMutation(path)
+        try {
         val line = when (timestampFormat) {
             "none" -> text
             "time_only" -> "${com.quickdaily.util.DateUtil.nowTimeStr()} $text"
@@ -259,6 +272,8 @@ class MainActivity : ComponentActivity() {
             "ordered" -> "1. $text"
             "list_time" -> "- ${com.quickdaily.util.DateUtil.nowTimeStr()} $text"
             "list_time_seconds" -> "- ${com.quickdaily.util.DateUtil.nowTimeSecondsStr()} $text"
+            "date_time" -> "${com.quickdaily.util.DateUtil.nowDateTimeChineseStr()} $text"
+            "list_date_time" -> "- ${com.quickdaily.util.DateUtil.nowDateTimeChineseStr()} $text"
            else -> text
        }
 
@@ -335,6 +350,9 @@ class MainActivity : ComponentActivity() {
         }
 
         android.widget.Toast.makeText(this, "已保存分享内容到日记", android.widget.Toast.LENGTH_SHORT).show()
+        } finally {
+            mutationGuard.close()
+        }
     }
 
     /**
@@ -368,6 +386,8 @@ class MainActivity : ComponentActivity() {
         }
 
         // 将图片引用插入日记（带 frontmatter 保护）
+        val mutationGuard = com.quickdaily.util.FileUtil.acquirePathMutation(path)
+        try {
         var existing = com.quickdaily.util.FileUtil.read(path)
         var parsed = com.quickdaily.util.ContentUtil.parseFrontmatter(existing)
         var body = if (parsed.hasFrontmatter) parsed.body else existing
@@ -404,6 +424,9 @@ class MainActivity : ComponentActivity() {
         WidgetRefreshHelper.refreshAll(this)
 
         android.widget.Toast.makeText(this, "已保存 ${links.size} 张图片到日记", android.widget.Toast.LENGTH_SHORT).show()
+        } finally {
+            mutationGuard.close()
+        }
     }
 
     private fun shouldOpenQuickNote(intent: Intent?): Boolean {
@@ -429,12 +452,20 @@ class MainActivity : ComponentActivity() {
 
     private fun launchQuickNoteFromLauncher(): Boolean {
         return try {
+            val systemSidebarSupport = FloatingNoteEntryPolicy.isSystemSidebarSupportEnabled(this)
+            if (!systemSidebarSupport) {
+                BetaLogger.log("FloatingNote/Launch", "main launcher legacy activity path")
+                FloatingNoteEntryPolicy.launchLegacyEditor(this, FloatingNoteSource.DESKTOP_LAUNCHER)
+                finishAndRemoveTask()
+                return true
+            }
+
             val overlayAllowed = Settings.canDrawOverlays(this)
             val request = FloatingNoteRequest(
                 source = FloatingNoteSource.DESKTOP_LAUNCHER,
                 returnToHomeAfterClose = false
             )
-            if (!QuickLaunchPolicy.shouldUseSystemOverlay(true, overlayAllowed) ||
+            if (!QuickLaunchPolicy.shouldUseSystemOverlay(systemSidebarSupport, overlayAllowed) ||
                 !FloatingNoteControllerProvider.forContext(this).showOrFocus(request)
             ) {
                 awaitingFloatingPermission = true

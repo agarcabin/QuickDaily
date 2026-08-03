@@ -21,7 +21,7 @@ class ToggleMarkdownActivity : Activity() {
             val prefs = getSharedPreferences("QuickDaily", 0)
             val current = prefs.getBoolean("render_markdown", true)
             BetaLogger.log("ToggleMD", "current=" + current + " new=" + (!current))
-            prefs.edit().putBoolean("render_markdown", !current).commit()
+            prefs.edit().putBoolean("render_markdown", !current).apply()
 
             try { QuickDailyReadWidget.refreshAllWidgets(this) } catch (_: Exception) { }
             try { TaskWidget.refreshAllWidgets(this) } catch (_: Exception) { }

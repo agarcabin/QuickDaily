@@ -12,17 +12,28 @@ import androidx.activity.ComponentActivity
 class QuickShortcutActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        BetaLogger.init(this, "QuickShortcutActivity")
 
+        val request = FloatingNoteRequest(
+            source = FloatingNoteSource.SIDEBAR,
+            returnToHomeAfterClose = false,
+        )
+        FloatingNoteTiming.begin(request.requestId, request.source)
         val overlayStarted = FloatingNoteEntryPolicy.isSystemSidebarSupportEnabled(this) &&
             Settings.canDrawOverlays(this) &&
-            FloatingNoteControllerProvider.forContext(this).showOrFocus(
-                FloatingNoteRequest(
-                    source = FloatingNoteSource.SIDEBAR,
-                    returnToHomeAfterClose = false
-                )
-            )
-        if (!overlayStarted) FloatingNoteEntryPolicy.launchLegacyEditor(this)
+            FloatingNoteControllerProvider.forContext(this).showOrFocus(request)
+        BetaLogger.log(
+            "FloatingNote/Launch",
+            "sidebar overlayStarted=$overlayStarted requestId=${request.requestId}",
+        )
+        if (!overlayStarted) {
+            FloatingNoteEntryPolicy.launchLegacyEditor(this, FloatingNoteSource.SIDEBAR)
+            finish()
+            overridePendingTransition(0, 0)
+            return
+        }
 
         finish()
+        overridePendingTransition(0, 0)
     }
 }

@@ -4,6 +4,11 @@ import android.content.Context
 import com.quickdaily.util.ContentUtil
 import com.quickdaily.util.FileUtil
 import com.quickdaily.util.ReadResult
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /** Result of a widget-driven Markdown task mutation. */
 internal data class TaskToggleResult(
@@ -16,9 +21,41 @@ internal data class TaskToggleResult(
     val failureReason: String? = null,
 )
 
+internal fun interface WidgetAsyncFinishable {
+    fun finish()
+}
+
+/** Runs the complete widget mutation off the broadcast main thread. */
+internal object WidgetAsyncWorkRunner {
+    private val workerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    fun launch(
+        finishable: WidgetAsyncFinishable,
+        block: () -> Unit,
+    ): Job = workerScope.launch {
+        try {
+            block()
+        } catch (error: Exception) {
+            BetaLogger.logException("WidgetAsync", "background task failed", error)
+        } finally {
+            runCatching { finishable.finish() }
+        }
+    }
+}
+
 /** Shared file mutation path for the task and diary-read widgets. */
 internal object TaskToggleUseCase {
     fun toggle(
+        context: Context,
+        path: String,
+        lineIndex: Int,
+        expectedRaw: String,
+        logTag: String,
+    ): TaskToggleResult = FileUtil.withPathMutation(path) {
+        toggleLocked(context, path, lineIndex, expectedRaw, logTag)
+    }
+
+    private fun toggleLocked(
         context: Context,
         path: String,
         lineIndex: Int,

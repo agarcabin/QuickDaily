@@ -1,12 +1,19 @@
 package com.quickdaily
 
+import android.annotation.SuppressLint
+import android.app.PendingIntent
 import android.content.Intent
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import android.widget.Toast
+
+internal object QuickTileLaunchPolicy {
+    fun usePendingIntent(sdkInt: Int): Boolean = sdkInt >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+}
 
 class QuickTileService : TileService() {
 
@@ -62,7 +69,19 @@ class QuickTileService : TileService() {
                 val intent = Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK
                 }
-                startActivityAndCollapse(intent)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+                    QuickTileLaunchPolicy.usePendingIntent(Build.VERSION.SDK_INT)
+                ) {
+                    val pendingIntent = PendingIntent.getActivity(
+                        this,
+                        0,
+                        intent,
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                    )
+                    startActivityAndCollapse(pendingIntent)
+                } else {
+                    startActivityAndCollapseLegacy(intent)
+                }
             } catch (_: Exception) {
                 try {
                     startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
@@ -72,6 +91,11 @@ class QuickTileService : TileService() {
                 }
             }
         }
+    }
+
+    @SuppressLint("StartActivityAndCollapseDeprecated")
+    private fun startActivityAndCollapseLegacy(intent: Intent) {
+        startActivityAndCollapse(intent)
     }
 
     private fun launchNoteEditor() {

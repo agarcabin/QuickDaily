@@ -22,15 +22,25 @@ class LauncherActivity : ComponentActivity() {
         BetaLogger.log("FloatingNote/Launch", "launcher onCreate action=${intent.action} categories=${intent.categories}")
 
         if (shouldOpenQuickNote()) {
+            val systemSidebarSupport = FloatingNoteEntryPolicy.isSystemSidebarSupportEnabled(this)
+            if (!systemSidebarSupport) {
+                BetaLogger.log("FloatingNote/Launch", "launcher legacy activity path")
+                FloatingNoteEntryPolicy.launchLegacyEditor(this, FloatingNoteSource.DESKTOP_LAUNCHER)
+                finish()
+                overridePendingTransition(0, 0)
+                return
+            }
+
             val overlayAllowed = Settings.canDrawOverlays(this)
             BetaLogger.log("FloatingNote/Permission", "overlay_allowed=$overlayAllowed")
             val request = FloatingNoteRequest(
                 source = FloatingNoteSource.DESKTOP_LAUNCHER,
                 returnToHomeAfterClose = false
             )
-            if (QuickLaunchPolicy.shouldUseSystemOverlay(true, overlayAllowed) &&
+            FloatingNoteTiming.begin(request.requestId, request.source)
+            val overlayStarted = QuickLaunchPolicy.shouldUseSystemOverlay(systemSidebarSupport, overlayAllowed) &&
                 FloatingNoteControllerProvider.forContext(this).showOrFocus(request)
-            ) {
+            if (overlayStarted) {
                 BetaLogger.log("FloatingNote/Launch", "launcher overlay requested")
             } else {
                 openHomeForOverlayPermission()

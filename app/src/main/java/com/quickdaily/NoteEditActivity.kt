@@ -2,7 +2,11 @@
 
 import android.app.Activity
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.os.Build
 import android.os.Bundle
+import android.util.Size
 import android.view.Gravity
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -22,7 +26,7 @@ import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FormatBold
-import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material.icons.filled.FormatListBulleted
@@ -52,9 +56,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.quickdaily.BetaLogger
 import com.quickdaily.util.DateUtil
 import com.quickdaily.util.ContentUtil
@@ -76,6 +82,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import com.quickdaily.ui.theme.*
 import com.quickdaily.ui.EditorToolbarActions
+import com.quickdaily.ui.QuickDailyAutocompleteSurface
 import android.Manifest
 import android.content.pm.PackageManager
 import android.media.MediaRecorder
@@ -86,6 +93,7 @@ import com.quickdaily.EditorToolbarPolicy
 import com.quickdaily.EditorMediaUtil
 import com.quickdaily.TextIndentPolicy
 import com.quickdaily.EditorTextActionPolicy
+import com.quickdaily.EditorLinePrefixPolicy
 import com.quickdaily.EditorStampPolicy
 import com.quickdaily.WikilinkIndexRepository
 import com.quickdaily.WikilinkPolicy
@@ -104,6 +112,61 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.take
 import java.io.File
 import kotlin.math.roundToInt
+
+internal enum class EditorThumbnailStrategy {
+    PlatformThumbnail,
+    StreamDecode,
+}
+
+internal object EditorThumbnailPolicy {
+    fun strategy(sdkInt: Int): EditorThumbnailStrategy =
+        if (sdkInt >= Build.VERSION_CODES.Q) {
+            EditorThumbnailStrategy.PlatformThumbnail
+        } else {
+            EditorThumbnailStrategy.StreamDecode
+        }
+
+    fun sampleSize(width: Int, height: Int, maxDimension: Int): Int {
+        if (width <= 0 || height <= 0 || maxDimension <= 0) return 1
+        var sample = 1
+        while (width / sample > maxDimension || height / sample > maxDimension) {
+            sample *= 2
+        }
+        return sample
+    }
+}
+
+internal object EditorThumbnailLoader {
+    private const val MAX_DIMENSION = 120
+
+    fun load(resolver: android.content.ContentResolver, uri: Uri): Bitmap? = runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            resolver.loadThumbnail(uri, Size(MAX_DIMENSION, MAX_DIMENSION), null)
+        } else {
+            decodeLegacy(resolver, uri)
+        }
+    }.getOrNull()
+
+    private fun decodeLegacy(resolver: android.content.ContentResolver, uri: Uri): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        resolver.openInputStream(uri)?.use { input ->
+            BitmapFactory.decodeStream(input, null, bounds)
+        }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = EditorThumbnailPolicy.sampleSize(
+                bounds.outWidth,
+                bounds.outHeight,
+                MAX_DIMENSION,
+            )
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        return resolver.openInputStream(uri)?.use { input ->
+            BitmapFactory.decodeStream(input, null, options)
+        }
+    }
+}
+
 class NoteEditActivity : ComponentActivity() {
     companion object {
         const val EXTRA_RETURN_TO_HOME = "return_to_home"
@@ -169,6 +232,14 @@ class NoteEditActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         BetaLogger.init(this, "NoteEditActivity")
+        val source = intent.getStringExtra("floating_source")
+            ?.let { runCatching { FloatingNoteSource.valueOf(it) }.getOrNull() }
+            ?: FloatingNoteSource.WIDGET
+        val requestId = intent.getStringExtra("floating_request_id")
+            ?.takeIf { it.isNotBlank() }
+            ?: newFloatingNoteRequestId()
+        FloatingNoteTiming.begin(requestId, source)
+        FloatingNoteTiming.mark("activity_create")
         returnToHomeAfterClose = intent.getBooleanExtra(EXTRA_RETURN_TO_HOME, false)
         targetRelativePath = intent.getStringExtra(EXTRA_TARGET_RELATIVE_PATH)
             ?.trim()
@@ -198,9 +269,9 @@ class NoteEditActivity : ComponentActivity() {
             prefs.getInt(EditorToolbarPolicy.PREF_SCHEMA_VERSION, 0) < EditorToolbarPolicy.CURRENT_SCHEMA_VERSION,
         )
         toolbarVisible = if (prefs.contains(EditorToolbarPolicy.PREF_VISIBLE)) {
-            EditorToolbarPolicy.migrateVisible(
-                EditorToolbarPolicy.parseVisible(prefs.getString(EditorToolbarPolicy.PREF_VISIBLE, null)),
-                prefs.getInt(EditorToolbarPolicy.PREF_SCHEMA_VERSION, 0) < EditorToolbarPolicy.CURRENT_SCHEMA_VERSION,
+            EditorToolbarPolicy.readVisible(
+                prefs.getString(EditorToolbarPolicy.PREF_VISIBLE, null),
+                prefs.getInt(EditorToolbarPolicy.PREF_SCHEMA_VERSION, 0),
             )
         } else {
             EditorToolbarPolicy.defaultVisible
@@ -246,7 +317,7 @@ class NoteEditActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = Color.Transparent
                 ) {
-                    CompositionLocalProvider(LocalFloaterColors provides FloaterColors()) {
+                    CompositionLocalProvider(LocalFloaterColors provides quickDailyFloaterColors()) {
                         NoteEditDialog(
                         text = noteText,
                         onTextChange = { noteText = it },
@@ -305,6 +376,7 @@ class NoteEditActivity : ComponentActivity() {
                          onMoveWindowStart = ::beginWindowMove,
                          onMoveWindow = ::moveWindow,
                          onMoveWindowEnd = ::endWindowMove,
+                         onTiming = { stage, detail -> FloatingNoteTiming.mark(stage, detail) },
 
                          onRemoveImage = { index -> selectedImages.removeAt(index) }
                         )
@@ -498,11 +570,13 @@ class NoteEditActivity : ComponentActivity() {
     }
 
     private fun finishEditor() {
+        FloatingNoteTiming.mark("hide_start", "host=activity")
         stopRecording()
         if (returnToHomeAfterClose) {
             startActivity(MainActivity.editorIntent(this, targetRelativePath))
         }
         finish()
+        FloatingNoteTiming.mark("hide_end", "host=activity")
     }
 
     private fun appendToDiary(text: String) {
@@ -547,30 +621,11 @@ class NoteEditActivity : ComponentActivity() {
         }
         return super.onTouchEvent(event)
     }
-}
 
-/**
- * 判断文本是否有实质内容（去除任务标记后仍有内容）。
- * 用于防止仅含 "- [ ] " 前缀的空任务被保存。
- */
-private fun cycleHeading(tfv: TextFieldValue): TextFieldValue {
-    val text = tfv.text
-    val pos = tfv.selection.start
-    val lineStart = text.lastIndexOf("\n", pos - 1) + 1
-    val lineEnd = text.indexOf("\n", pos).let { if (it < 0) text.length else it }
-    val line = text.substring(lineStart, lineEnd)
-    val trimmed = line.trimStart()
-    val newTrimmed = when {
-        trimmed.startsWith("### ") -> trimmed.removePrefix("### ")
-        trimmed.startsWith("## ") -> "### " + trimmed.removePrefix("## ")
-        trimmed.startsWith("# ") -> "## " + trimmed.removePrefix("# ")
-        else -> "# " + trimmed
+    override fun onDestroy() {
+        FloatingNoteTiming.mark("activity_destroy")
+        super.onDestroy()
     }
-    val indent = line.substring(0, line.length - trimmed.length)
-    val newLine = indent + newTrimmed
-    val newText = text.substring(0, lineStart) + newLine + text.substring(lineEnd)
-    val cursorPos = lineStart + newLine.length
-    return TextFieldValue(newText, TextRange(cursorPos))
 }
 
 internal fun hasRealContent(text: String): Boolean {
@@ -585,33 +640,6 @@ internal fun hasRealContent(text: String): Boolean {
         }
     }
     return true
-}
-
-/** 在光标所在行切换任务状态：无标记 → - [ ] → - [x] → 无标记（三态循环） */
-private fun taskToggleAtCursor(tfv: TextFieldValue): String {
-    val text = tfv.text
-    val pos = tfv.selection.start
-    val lineStart = text.lastIndexOf('\n', pos - 1) + 1
-    val lineEnd = text.indexOf('\n', pos).let { if (it < 0) text.length else it }
-    val line = text.substring(lineStart, lineEnd)
-    // 使用更精确的匹配 — 支持 - [ ]、- [x]、- [X] 以及前后可能有空格的情况
-    val taskRegex = Regex("""^\s*(-\s*\[\s*([ xX])\s*\])\s*""")
-    val match = taskRegex.find(line)
-    val newLine = if (match != null) {
-        val checked = match.groupValues[2] // " " / "x" / "X"
-        val rest = line.substring(match.value.length).trimStart()
-        if (checked.trim().isEmpty()) {
-            // - [ ] → - [x]
-            "- [x] $rest".trimStart()
-        } else {
-            // - [x] → 去除任务标记，只保留文字
-            rest
-        }
-    } else {
-        // 无标记 → - [ ]
-        "- [ ] $line"
-    }
-    return text.substring(0, lineStart) + newLine + text.substring(lineEnd)
 }
 
 @Composable
@@ -634,6 +662,7 @@ fun NoteEditDialog(
     imageUris: List<Uri>,
     hasAttachments: Boolean,
     attachmentUris: List<Uri>,
+    imePolicy: FloatingNoteImePolicy = FloatingNoteImePolicy.ActivityDefault,
     onPickImages: () -> Unit,
     onPickAttachment: () -> Unit,
     onTakePhoto: () -> Unit = {},
@@ -661,6 +690,7 @@ fun NoteEditDialog(
     var targetMenuExpanded by remember { mutableStateOf(false) }
     var wikilinkPopupDismissKey by remember { mutableStateOf<String?>(null) }
     var tfv by remember { mutableStateOf(TextFieldValue(text, initialSelection ?: TextRange(text.length))) }
+    var stampToggleState by remember { mutableStateOf(EditorStampToggleState()) }
     val localUndoStack = remember { mutableStateListOf<String>() }
     val localRedoStack = remember { mutableStateListOf<String>() }
     var lastUndoTime by remember { mutableLongStateOf(0L) }
@@ -679,23 +709,33 @@ fun NoteEditDialog(
         }
     }
 
-    fun applyTextChange(newValue: TextFieldValue, forceUndo: Boolean = false) {
+    fun applyTextChange(
+        newValue: TextFieldValue,
+        forceUndo: Boolean = false,
+        invalidateStamp: Boolean = true,
+    ) {
         val oldText = tfv.text
         if (oldText == newValue.text) {
             tfv = newValue
             return
         }
+        if (invalidateStamp) stampToggleState = stampToggleState.clear()
         recordUndo(oldText, forceUndo)
         tfv = newValue
         onTextChange(newValue.text)
         onSelectionChange(newValue.selection)
     }
 
-    SideEffect {
+    LaunchedEffect(Unit) {
+        // A service-hosted ComposeView may not have attached the BasicTextField node
+        // when the first composition side effect runs. Wait for a frame and tolerate
+        // a vendor focus failure instead of taking down the overlay process.
+        withFrameNanos { }
         if (!focusRequested) {
             focusRequested = true
             onTiming("focus_request", null)
-            focusRequester.requestFocus()
+            runCatching { focusRequester.requestFocus() }
+                .onFailure { onTiming("focus_failed", it.javaClass.simpleName) }
         }
     }
     LaunchedEffect(density, imeInsets) {
@@ -706,16 +746,17 @@ fun NoteEditDialog(
     }
     LaunchedEffect(text, initialSelection) {
         if (text != tfv.text || (initialSelection != null && tfv.selection != initialSelection)) {
+            stampToggleState = stampToggleState.clear()
             tfv = TextFieldValue(text, initialSelection ?: TextRange(text.length))
         }
     }
     val tagVaultPath = neCtx.getSharedPreferences("QuickDaily", 0).getString("vault_path", "") ?: ""
-    val wikilinkIndex by WikilinkIndexRepository.indexState.collectAsState()
+    val wikilinkIndex by WikilinkIndexRepository.indexState.collectAsStateWithLifecycle()
     val completionIndex = wikilinkIndex.takeIf {
         it.rootPath == tagVaultPath && it.indexed && it.tagsIndexed && it.error == null
     }
     val noteTagList = completionIndex?.tags.orEmpty()
-    val tagCompletion = remember(tfv.text, tfv.selection, noteTagList, tagAutocomplete, completionIndex) {
+    val tagCompletion = remember(tfv.text, tfv.selection, noteTagList, tagAutocomplete, completionIndex?.rootPath) {
         if (!tagAutocomplete || completionIndex == null) return@remember Triple(false, "", 0)
         val currentText = tfv.text
         val cursor = tfv.selection.start
@@ -741,10 +782,12 @@ fun NoteEditDialog(
             (recent + noteTagList.filterNot { it in recent }).take(3)
         } else noteTagList.filter { it.contains(tagPrefix2, ignoreCase = true) }.take(8)
     }
+    val latestTextFieldValue by rememberUpdatedState(tfv)
     val noteSelectTag: (String) -> Unit = remember(tagHashPos2) {
         { tag ->
-            val currentText = tfv.text
-            val cursor = tfv.selection.start
+            val currentValue = latestTextFieldValue
+            val currentText = currentValue.text
+            val cursor = currentValue.selection.start
             val needSpaceBefore = tagHashPos2 > 0 && currentText[tagHashPos2 - 1] != ' ' && currentText[tagHashPos2 - 1] != '\n'
             val prefix = if (needSpaceBefore) " #" else "#"
             val newText = currentText.substring(0, tagHashPos2) + prefix + tag + " " + currentText.substring(cursor)
@@ -792,9 +835,14 @@ fun NoteEditDialog(
             .take(9)
     }
 
-    fun applyTextAction(result: EditorTextActionResult) {
+    fun applyTextAction(result: EditorTextActionResult, invalidateStamp: Boolean = true) {
         result.clipboardText?.let { clipboardManager.setText(AnnotatedString(it)) }
-        applyTextChange(TextFieldValue(result.text, result.selection), forceUndo = true)
+        if (invalidateStamp) stampToggleState = stampToggleState.clear()
+        applyTextChange(
+            TextFieldValue(result.text, result.selection),
+            forceUndo = true,
+            invalidateStamp = invalidateStamp,
+        )
     }
 
     fun saveOrClose() {
@@ -834,31 +882,34 @@ fun NoteEditDialog(
                 EditorTextActionPolicy.moveLineDown(tfv.text, tfv.selection)
             )
             EditorToolbarAction.TIMESTAMP -> {
-                applyTextAction(EditorTextActionPolicy.insert(tfv.text, tfv.selection, EditorStampPolicy.toolbarTimestampInsertion()))
+                val (result, nextState) = stampToggleState.toggle(
+                    text = tfv.text,
+                    selection = tfv.selection,
+                    action = EditorStampAction.TIMESTAMP,
+                    insertion = EditorStampPolicy.toolbarTimestampInsertion(),
+                )
+                stampToggleState = nextState
+                applyTextAction(result, invalidateStamp = false)
             }
-            EditorToolbarAction.DATE_STAMP -> applyTextAction(
-                EditorTextActionPolicy.insert(tfv.text, tfv.selection, EditorStampPolicy.dateInsertion())
-            )
+            EditorToolbarAction.DATE_STAMP -> {
+                val (result, nextState) = stampToggleState.toggle(
+                    text = tfv.text,
+                    selection = tfv.selection,
+                    action = EditorStampAction.DATE_STAMP,
+                    insertion = EditorStampPolicy.dateInsertion(),
+                )
+                stampToggleState = nextState
+                applyTextAction(result, invalidateStamp = false)
+            }
             EditorToolbarAction.WIKILINK -> applyTextAction(
                 EditorTextActionPolicy.insert(tfv.text, tfv.selection, "[[")
             )
-            EditorToolbarAction.TASK -> {
-                val newText = taskToggleAtCursor(tfv)
-                applyTextChange(TextFieldValue(newText, TextRange(newText.length)), forceUndo = true)
-            }
-            EditorToolbarAction.HEADING -> applyTextChange(cycleHeading(tfv), forceUndo = true)
-            EditorToolbarAction.LIST -> {
-                val t = tfv.text
-                val c = tfv.selection.start
-                val ls = t.lastIndexOf('\n', c - 1) + 1
-                val cl = t.substring(ls)
-                val (nt, nc) = if (cl.startsWith("- ")) {
-                    t.substring(0, ls) + cl.removePrefix("- ") to (c - 2).coerceAtLeast(ls)
-                } else {
-                    t.substring(0, ls) + "- " + cl to c + 2
-                }
-                applyTextChange(TextFieldValue(nt, TextRange(nc)), forceUndo = true)
-            }
+            EditorToolbarAction.TASK,
+            EditorToolbarAction.HEADING,
+            EditorToolbarAction.LIST,
+            EditorToolbarAction.ORDERED_LIST -> applyTextAction(
+                EditorLinePrefixPolicy.apply(tfv.text, tfv.selection, action)
+            )
             EditorToolbarAction.BOLD -> {
                 val t = tfv.text
                 val c = tfv.selection.start
@@ -868,6 +919,24 @@ fun NoteEditDialog(
                     applyTextChange(TextFieldValue(t.substring(0, c) + "****" + t.substring(c), TextRange(c + 2)), forceUndo = true)
                 }
             }
+            EditorToolbarAction.STRIKETHROUGH -> applyTextAction(
+                EditorTextActionPolicy.toggleDelimiter(tfv.text, tfv.selection, "~~")
+            )
+            EditorToolbarAction.INLINE_CODE -> applyTextAction(
+                EditorTextActionPolicy.toggleDelimiter(tfv.text, tfv.selection, "`")
+            )
+            EditorToolbarAction.QUOTE -> applyTextAction(
+                EditorLinePrefixPolicy.apply(tfv.text, tfv.selection, EditorToolbarAction.QUOTE)
+            )
+            EditorToolbarAction.CODE_BLOCK -> applyTextAction(
+                EditorLinePrefixPolicy.apply(tfv.text, tfv.selection, EditorToolbarAction.CODE_BLOCK)
+            )
+            EditorToolbarAction.HORIZONTAL_RULE -> applyTextAction(
+                EditorTextActionPolicy.horizontalRule(tfv.text, tfv.selection)
+            )
+            EditorToolbarAction.MARKDOWN_LINK -> applyTextAction(
+                EditorTextActionPolicy.markdownLink(tfv.text, tfv.selection)
+            )
             EditorToolbarAction.UNDO -> {
                 if (localUndoStack.isNotEmpty()) {
                     val cur = tfv.text
@@ -916,11 +985,15 @@ fun NoteEditDialog(
                         Row(
                             modifier = Modifier.weight(2f),
                             verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .weight(1f)
-                                    .widthIn(min = 0.dp)
+                                    // The overlay is intentionally narrow on phones. Let the
+                                    // title yield space to the selector instead of pushing the
+                                    // selector outside the centered header row.
+                                    .weight(1f, fill = false)
+                                    .widthIn(min = 48.dp, max = 180.dp)
                                     .heightIn(min = 48.dp)
                                     .pointerInput(Unit) {
                                         detectDragGesturesAfterLongPress(
@@ -943,15 +1016,22 @@ fun NoteEditDialog(
                                     modifier = Modifier.fillMaxWidth(),
                                     style = MaterialTheme.typography.labelMedium,
                                     color = floater.onSurfaceVariant,
+                                    textAlign = TextAlign.Center,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
                             }
-                            IconButton(onClick = { targetMenuExpanded = true }) {
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clickable { targetMenuExpanded = true },
+                                contentAlignment = Alignment.Center,
+                            ) {
                                 Icon(
-                                    Icons.Default.KeyboardArrowDown,
+                                    Icons.Default.ExpandMore,
                                     contentDescription = "选择记录页面",
-                                    tint = floater.onSurfaceVariant,
+                                    tint = floater.primary,
+                                    modifier = Modifier.size(28.dp),
                                 )
                             }
                         }
@@ -982,7 +1062,11 @@ fun NoteEditDialog(
 
 
             // ── 内容区（撑满剩余空间，将工具栏推到最下方）──
-            Column(Modifier.weight(1f)) {
+            Column(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+            ) {
             // Thumbnail preview
             if (imageUris.isNotEmpty()) {
                 LazyRow(
@@ -992,17 +1076,17 @@ fun NoteEditDialog(
                     itemsIndexed(imageUris) { index, uri ->
                         Box(modifier = Modifier.size(60.dp)) {
                             val ctx = LocalContext.current
-                            val thumbBitmap = remember(uri) {
-                                runCatching {
-                                    val thumb = ctx.contentResolver.loadThumbnail(
-                                        uri, android.util.Size(120, 120), null
-                                    )
-                                    thumb?.asImageBitmap()
-                                }.getOrNull()
+                            val thumbBitmap by produceState<Bitmap?>(
+                                initialValue = null,
+                                key1 = uri,
+                            ) {
+                                value = withContext(Dispatchers.IO) {
+                                    EditorThumbnailLoader.load(ctx.contentResolver, uri)
+                                }
                             }
                             thumbBitmap?.let {
                                 Image(
-                                    bitmap = it,
+                                    bitmap = it.asImageBitmap(),
                                     contentDescription = null,
                                     modifier = Modifier.fillMaxSize(),
                                     contentScale = ContentScale.Crop
@@ -1035,7 +1119,10 @@ fun NoteEditDialog(
                         // IMEs that commit Enter as a newline still use the same explicit action.
                         saveOrClose()
                     } else {
-                        if (oldText != newText) recordUndo(oldText)
+                        if (oldText != newText) {
+                            stampToggleState = stampToggleState.clear()
+                            recordUndo(oldText)
+                        }
                         tfv = newTfv
                         onTextChange(newText)
                         onSelectionChange(newTfv.selection)
@@ -1049,13 +1136,15 @@ fun NoteEditDialog(
                     }
                 ),
                 keyboardActions = KeyboardActions(onDone = {
-                    if (noteMatchingWikilinks.isNotEmpty()) selectWikilink(noteMatchingWikilinks.first())
+                    if (noteMatchingTags.isNotEmpty()) noteSelectTag(noteMatchingTags.first())
+                    else if (noteMatchingWikilinks.isNotEmpty()) selectWikilink(noteMatchingWikilinks.first())
                     else if (enterToSave) saveOrClose()
                 }),
                 textStyle = TextStyle(fontSize = 15.sp, lineHeight = 22.sp, color = floater.onBackground),
                 cursorBrush = SolidColor(FloatingCursorPolicy.colorFor(floater.background)),
                 modifier = Modifier
                     .fillMaxWidth()
+                    .weight(1f)
                     .focusRequester(focusRequester)
                     .onFocusChanged {
                         if (it.isFocused) {
@@ -1063,7 +1152,11 @@ fun NoteEditDialog(
                             if (!imeShowRequested) {
                                 imeShowRequested = true
                                 onTiming("ime_show_request", null)
-                                keyboardController?.show()
+                                if (imePolicy == FloatingNoteImePolicy.OverlayInstant) {
+                                    FloatingNoteImeController.show(neView, onTiming)
+                                } else {
+                                    keyboardController?.show()
+                                }
                             }
                         }
                     }
@@ -1073,6 +1166,12 @@ fun NoteEditDialog(
                             wikilinkTriggerKey != null
                         ) {
                             wikilinkPopupDismissKey = wikilinkTriggerKey
+                            true
+                        } else if (event.type == KeyEventType.KeyDown &&
+                            event.key == Key.Enter &&
+                            noteMatchingTags.isNotEmpty()
+                        ) {
+                            noteSelectTag(noteMatchingTags.first())
                             true
                         } else if (event.type == KeyEventType.KeyDown &&
                             event.key == Key.Enter &&
@@ -1096,18 +1195,22 @@ fun NoteEditDialog(
             } // end content Column (weight)
             // ── Tag autocomplete row ──
             if (tagActive2 && noteMatchingTags.isNotEmpty()) {
-                LazyRow(
-                    modifier = Modifier.fillMaxWidth().height(36.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                QuickDailyAutocompleteSurface(
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp, max = 56.dp),
                 ) {
-                    itemsIndexed(noteMatchingTags, key = { _, tag -> tag }) { _, tag ->
-                        TextButton(
-                            onClick = { noteSelectTag(tag) },
-                            modifier = Modifier.height(36.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                        ) {
-                            Text("#$tag", style = MaterialTheme.typography.bodySmall, color = floater.primary)
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        itemsIndexed(noteMatchingTags, key = { _, tag -> tag }) { _, tag ->
+                            TextButton(
+                                onClick = { noteSelectTag(tag) },
+                                modifier = Modifier.heightIn(min = 48.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                            ) {
+                                Text("#$tag", style = MaterialTheme.typography.bodySmall, color = floater.primary)
+                            }
                         }
                     }
                 }
@@ -1117,42 +1220,46 @@ fun NoteEditDialog(
                 (wikilinkIndex.loading || noteMatchingWikilinks.isNotEmpty()) &&
                 wikilinkTriggerKey != wikilinkPopupDismissKey
             ) {
-                if (wikilinkIndex.loading) {
-                    Text(
-                        "正在建立双链索引…",
-                        modifier = Modifier.padding(vertical = 4.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = floater.onBackgroundDim,
-                    )
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 120.dp),
-                    ) {
-                        items(noteMatchingWikilinks, key = { it.stableKey }) { candidate ->
-                            TextButton(
-                                onClick = { selectWikilink(candidate) },
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 32.dp),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                            ) {
-                                Column(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalAlignment = Alignment.Start,
+                QuickDailyAutocompleteSurface(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp),
+                ) {
+                    if (wikilinkIndex.loading) {
+                        Text(
+                            "正在建立双链索引…",
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = floater.onBackgroundDim,
+                        )
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp),
+                        ) {
+                            items(noteMatchingWikilinks, key = { it.stableKey }) { candidate ->
+                                TextButton(
+                                    onClick = { selectWikilink(candidate) },
+                                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                                 ) {
-                                    Text(
-                                        candidate.displayText,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = floater.primary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                    if (candidate.alias != null && aliasCounts[candidate.alias] ?: 0 > 1) {
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalAlignment = Alignment.Start,
+                                    ) {
                                         Text(
-                                            candidate.targetPath,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = floater.onBackgroundDim,
+                                            candidate.displayText,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = floater.primary,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
                                         )
+                                        if (candidate.alias != null && aliasCounts[candidate.alias] ?: 0 > 1) {
+                                            Text(
+                                                candidate.targetPath,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = floater.onBackgroundDim,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -1168,6 +1275,8 @@ fun NoteEditDialog(
                     visible = toolbarVisible,
                     tint = floater.primary,
                     modifier = Modifier.weight(1f),
+                    buttonSize = 40.dp,
+                    compact = true,
                     recording = recording,
                     recordingDurationMs = recordingDurationMs,
                     enabled = { action ->
@@ -1179,15 +1288,16 @@ fun NoteEditDialog(
                     },
                     onAction = ::handleToolbarAction,
                 )
-                IconButton(
+                TextButton(
                     onClick = {
                         val t = tfv.text
                         if (t.isNotBlank() || imageUris.isNotEmpty() || hasAttachments) onSave() else onClose()
                         BetaLogger.log("Toolbar", "save")
                     },
-                    modifier = Modifier.size(dim.iconXl)
+                    modifier = Modifier.width(48.dp).height(48.dp),
+                    contentPadding = PaddingValues(horizontal = 0.dp),
                 ) {
-                    Icon(Icons.Default.Check, "保存", tint = floater.primary, modifier = Modifier.size(dim.iconMd))
+                    Text("保存", color = floater.primary, style = MaterialTheme.typography.labelMedium)
                 }
             } // end toolbar Row
         }

@@ -66,6 +66,8 @@ class FloatingNoteSaveUseCase(private val context: Context) {
                 "time_only_seconds" -> "$marker ${DateUtil.nowTimeSecondsStr()} $taskDesc"
                 "list_time" -> "$marker ${DateUtil.nowTimeStr()} $taskDesc"
                 "list_time_seconds" -> "$marker ${DateUtil.nowTimeSecondsStr()} $taskDesc"
+                "date_time" -> "$marker ${DateUtil.nowDateTimeChineseStr()} $taskDesc"
+                "list_date_time" -> "$marker ${DateUtil.nowDateTimeChineseStr()} $taskDesc"
                 else -> "$marker $taskDesc"
             }
         } else {
@@ -77,10 +79,14 @@ class FloatingNoteSaveUseCase(private val context: Context) {
                 "ordered" -> "1. $trimmedText"
                 "list_time" -> "- ${DateUtil.nowTimeStr()} $trimmedText"
                 "list_time_seconds" -> "- ${DateUtil.nowTimeSecondsStr()} $trimmedText"
+                "date_time" -> "${DateUtil.nowDateTimeChineseStr()} $trimmedText"
+                "list_date_time" -> "- ${DateUtil.nowDateTimeChineseStr()} $trimmedText"
                 else -> trimmedText
             }
         }
 
+        val mutationGuard = FileUtil.acquirePathMutation(path)
+        try {
         val existing = FileUtil.read(path)
         var parsed = ContentUtil.parseFrontmatter(existing)
         var body = if (parsed.hasFrontmatter) parsed.body else existing
@@ -156,5 +162,8 @@ class FloatingNoteSaveUseCase(private val context: Context) {
         RecentTags.recordFromText(context, text)
         WidgetRefreshHelper.refreshAll(context)
         FloatingNoteSaveResult.Saved
+        } finally {
+            mutationGuard.close()
+        }
     }
 }

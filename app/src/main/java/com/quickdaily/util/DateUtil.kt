@@ -72,15 +72,16 @@ object DateUtil {
     /**
      * 将 Obsidian (Moment.js) 日期格式转为 Java DateTimeFormatter 格式。
      *
-     * 修复点：原实现按 YYYY→YY→DD→dddd→ddd 顺序替换，
-     * 对 `DDDD` 输入靠巧合正确（DD→dd 后变 dddd 再→EEEE），但脆弱。
-     * 改为按 token 长度降序替换，保证长 token 优先匹配，避免子串冲突。
+     * Moment/Obsidian 的日期令牌区分大小写：`DD` 是两位日期，
+     * `dd` 是最短星期名，`ddd` 是短星期名，`dddd` 是完整星期名。
+     * 按令牌长度和大小写分别替换，避免 `DD` 与 `dd` 互相覆盖。
      */
     fun convertObsidianFormat(format: String): String {
         // 顺序很重要：长 token 必须先于其前缀 token 替换
         return format
             .replace("dddd", "EEEE")   // full day name
             .replace("ddd", "EEE")     // abbreviated day name
+            .replace("dd", "EEEEE")    // narrow day name: 日/一/二...
             .replace("YYYY", "yyyy")   // week-based year → calendar year
             .replace("WW", "ww")       // ISO week-of-year → Java week-of-year
             .replace("DD", "dd")       // day-of-month（修复关键差异）
@@ -112,4 +113,8 @@ object DateUtil {
     fun nowTimeSecondsStr(): String {
         return LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))
     }
+
+    /** 当前本地日期和时间，供 QuickDaily 的中文快速记录格式使用。 */
+    fun nowDateTimeChineseStr(): String =
+        LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy年M月d日 HH:mm"))
 }
