@@ -1,1 +1,0 @@
-Opened QuickDaily settings to configure toolbar actions.

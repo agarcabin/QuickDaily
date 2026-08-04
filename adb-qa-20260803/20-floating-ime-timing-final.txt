@@ -1,6 +1,0 @@
-[2026-08-03 16:05:59.824] [FloatingNote/Timing] stage=request_start elapsedRealtime=73513697 requestId=f66b7510-f4cf-4b8c-a6ab-d40045049fec source=WIDGET
-[2026-08-03 16:05:59.824] [FloatingNote/Timing] stage=activity_create elapsedRealtime=73513697 requestId=f66b7510-f4cf-4b8c-a6ab-d40045049fec source=WIDGET
-[2026-08-03 16:05:59.825] [FloatingNote/Selection] open source= target= title=2026-08-03 速记 options=2
-[2026-08-03 16:05:59.863] [FloatingNote/Timing] stage=focus_request elapsedRealtime=73513736 requestId=f66b7510-f4cf-4b8c-a6ab-d40045049fec source=WIDGET
-[2026-08-03 16:05:59.883] [FloatingNote/Timing] stage=focus_acquired elapsedRealtime=73513756 requestId=f66b7510-f4cf-4b8c-a6ab-d40045049fec source=WIDGET
-[2026-08-03 16:05:59.883] [FloatingNote/Timing] stage=ime_show_request elapsedRealtime=73513756 requestId=f66b7510-f4cf-4b8c-a6ab-d40045049fec source=WIDGET

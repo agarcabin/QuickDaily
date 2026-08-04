@@ -1,7 +1,0 @@
-package=com.quickdaily
-version lines from post-install dumpsys:
-    versionCode=70 minSdk=26 targetSdk=35
-    versionName=1.8.7-beta
-install=Success
-serial=192.168.10.9:35973
-A timed retest had device log lines in 20-QuickDaily_log_2026-08-03-final.txt.

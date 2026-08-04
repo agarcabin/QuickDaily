@@ -1,1 +1,0 @@
-Scrolled editor settings to toolbar configuration entry.

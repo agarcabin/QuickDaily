@@ -1,1 +1,0 @@
-Scrolled optional actions to ordered list and quote.

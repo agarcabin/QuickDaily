@@ -13,3 +13,13 @@ local.properties
 *.apk
 *.jks
 *.keystore
+# QuickDaily device QA evidence: keep raw artifacts outside Git
+.adb-test/
+/adb-qa-*/
+/perfetto-*/
+/adb-*.png
+/adb-*.xml
+/adb-*.txt
+/adb-*.log
+*.pftrace
+/qa-evidence/

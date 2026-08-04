@@ -1,1 +1,0 @@
-Closed floating editor via visible 关闭 action; no save action invoked.

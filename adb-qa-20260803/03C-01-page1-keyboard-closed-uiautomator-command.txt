@@ -1,3 +1,0 @@
-dump: UI hierchary dumped to: /sdcard/03C-01-page1-keyboard-closed-uiautomator.xml
-
-cat-status=0

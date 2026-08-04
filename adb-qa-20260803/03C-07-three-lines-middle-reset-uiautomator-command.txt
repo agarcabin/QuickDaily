@@ -1,3 +1,0 @@
-dump: UI hierchary dumped to: /sdcard/03C-07-three-lines-middle-reset-uiautomator.xml
-
-cat-status=0

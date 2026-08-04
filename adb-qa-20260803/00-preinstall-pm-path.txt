@@ -1,3 +1,0 @@
-command: adb -s 192.168.10.9:35973 shell pm path com.quickdaily
-package:/data/app/~~oIEmFS-vJWzz-4KuOsUSdQ==/com.quickdaily-U4E748Cj2ij5VAGvz-e3-w==/base.apk
-

@@ -1,1 +1,0 @@
-Returned to existing QuickDaily widget page after enabling logging.

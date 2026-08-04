@@ -1,1 +1,0 @@
-Real tap on 记录日志 switch; enabled for timing capture.

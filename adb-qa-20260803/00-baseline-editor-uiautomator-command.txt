@@ -1,3 +1,0 @@
-dump: UI hierchary dumped to: /sdcard/00-baseline-editor-uiautomator.xml
-
-cat-status=0

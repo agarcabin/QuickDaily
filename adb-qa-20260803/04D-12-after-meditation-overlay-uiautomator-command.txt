@@ -1,3 +1,0 @@
-dump=UI hierchary dumped to: /sdcard/04D-12-after-meditation-overlay-uiautomator.xml
-
-catError=closed

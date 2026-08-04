@@ -1,3 +1,0 @@
-command: adb -s 192.168.10.9:35973 shell echo wireless-adb-ok
-wireless-adb-ok
-

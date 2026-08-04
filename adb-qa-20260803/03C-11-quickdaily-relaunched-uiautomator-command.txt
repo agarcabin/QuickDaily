@@ -1,3 +1,0 @@
-dump=UI hierchary dumped to: /sdcard/03C-11-quickdaily-relaunched-uiautomator.xml
-
-catError=closed

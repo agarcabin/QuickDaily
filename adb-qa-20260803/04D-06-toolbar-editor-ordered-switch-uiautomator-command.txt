@@ -1,3 +1,0 @@
-dump=UI hierchary dumped to: /sdcard/04D-06-toolbar-editor-ordered-switch-uiautomator.xml
-
-catError=closed

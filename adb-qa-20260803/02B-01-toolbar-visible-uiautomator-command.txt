@@ -1,3 +1,0 @@
-dump: UI hierchary dumped to: /sdcard/02B-01-toolbar-visible-uiautomator.xml
-
-cat-status=0

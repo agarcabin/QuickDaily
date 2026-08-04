@@ -1,3 +1,0 @@
-dump=UI hierchary dumped to: /sdcard/02B-19-before-visible-actions-uiautomator.xml
-
-catError=closed
