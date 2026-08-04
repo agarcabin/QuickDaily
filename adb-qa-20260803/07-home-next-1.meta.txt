@@ -1,0 +1,1 @@
+Swipe on launcher to locate configured QuickDaily widget.

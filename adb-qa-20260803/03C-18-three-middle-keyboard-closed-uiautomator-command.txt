@@ -1,0 +1,3 @@
+dump=UI hierchary dumped to: /sdcard/03C-18-three-middle-keyboard-closed-uiautomator.xml
+
+catError=closed

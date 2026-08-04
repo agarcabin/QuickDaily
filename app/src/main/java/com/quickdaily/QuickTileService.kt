@@ -103,14 +103,14 @@ class QuickTileService : TileService() {
             Settings.canDrawOverlays(this) &&
             FloatingNoteControllerProvider.forContext(this).showOrFocus(
                 FloatingNoteRequest(
-                    source = FloatingNoteSource.SIDEBAR,
+                    source = FloatingNoteSource.TILE,
                     returnToHomeAfterClose = false
                 )
             )
         if (overlayStarted) return
 
         try {
-            FloatingNoteEntryPolicy.launchLegacyEditor(this)
+            FloatingNoteEntryPolicy.launchLegacyEditor(this, FloatingNoteSource.TILE)
         } catch (_: Exception) {
             startActivity(Intent(this, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK

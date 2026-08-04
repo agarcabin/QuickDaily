@@ -1,0 +1,3 @@
+dump: UI hierchary dumped to: /sdcard/03C-05-three-middle-toolbar-uiautomator.xml
+
+cat-status=0

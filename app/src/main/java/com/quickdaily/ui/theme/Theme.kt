@@ -212,7 +212,7 @@ internal object QuickDailyThemePreferences {
     const val KEY_ACCENT_PRESET = "theme_accent_preset"
     const val KEY_NIGHT_MODE = "theme_night_mode"
     const val KEY_DARK_BACKGROUND_BRIGHTNESS = "theme_dark_background_brightness"
-    const val DEFAULT_DARK_BACKGROUND_BRIGHTNESS = 35
+    const val DEFAULT_DARK_BACKGROUND_BRIGHTNESS = 40
 
     private fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -265,6 +265,9 @@ internal enum class QuickDailyNightMode(val key: String, val label: String) {
             entries.firstOrNull { it.key == key } ?: SYSTEM
     }
 }
+
+internal fun shouldShowDarkBackgroundBrightness(mode: QuickDailyNightMode): Boolean =
+    mode != QuickDailyNightMode.LIGHT
 
 private data class QuickDailyThemeSnapshot(
     val useMonet: Boolean,
@@ -355,7 +358,7 @@ val LocalFloaterColors = staticCompositionLocalOf { FloaterColors() }
 fun quickDailyFloaterColors(): FloaterColors {
     val colors = MaterialTheme.colorScheme
     return FloaterColors(
-        background = colors.surfaceContainerHigh.copy(alpha = 0.96f),
+        background = colors.background,
         onBackground = colors.onSurface,
         onBackgroundVariant = colors.onSurfaceVariant,
         onBackgroundDim = colors.onSurfaceVariant.copy(alpha = 0.72f),

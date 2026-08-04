@@ -15,7 +15,7 @@ class QuickShortcutActivity : ComponentActivity() {
         BetaLogger.init(this, "QuickShortcutActivity")
 
         val request = FloatingNoteRequest(
-            source = FloatingNoteSource.SIDEBAR,
+            source = FloatingNoteSource.SHORTCUT,
             returnToHomeAfterClose = false,
         )
         FloatingNoteTiming.begin(request.requestId, request.source)
@@ -24,10 +24,10 @@ class QuickShortcutActivity : ComponentActivity() {
             FloatingNoteControllerProvider.forContext(this).showOrFocus(request)
         BetaLogger.log(
             "FloatingNote/Launch",
-            "sidebar overlayStarted=$overlayStarted requestId=${request.requestId}",
+            "shortcut overlayStarted=$overlayStarted requestId=${request.requestId}",
         )
         if (!overlayStarted) {
-            FloatingNoteEntryPolicy.launchLegacyEditor(this, FloatingNoteSource.SIDEBAR)
+            FloatingNoteEntryPolicy.launchLegacyEditor(this, FloatingNoteSource.SHORTCUT)
             finish()
             overridePendingTransition(0, 0)
             return

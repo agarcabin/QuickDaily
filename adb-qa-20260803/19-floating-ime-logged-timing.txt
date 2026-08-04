@@ -1,0 +1,2 @@
+filter: QD-Beta.*FloatingNote|FloatingNote/Timing|ime_show|focus_acquired|ime_control
+

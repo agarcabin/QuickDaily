@@ -1,0 +1,3 @@
+dump=UI hierchary dumped to: /sdcard/04D-10-settings-saved-editor-uiautomator.xml
+
+catError=closed

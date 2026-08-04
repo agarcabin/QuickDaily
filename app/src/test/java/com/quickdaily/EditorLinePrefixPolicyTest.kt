@@ -89,4 +89,38 @@ class EditorLinePrefixPolicyTest {
         assertEquals("- [ ] body", inline.text)
         assertEquals(TextRange(2), inline.selection)
     }
+
+    @Test
+    fun collapsedCursorMapsAfterPrefixForEmptyAndMiddlePositions() {
+        val empty = EditorLinePrefixPolicy.apply("", TextRange(0), EditorToolbarAction.LIST)
+        assertEquals("- ", empty.text)
+        assertEquals(TextRange(2), empty.selection)
+
+        val middle = EditorLinePrefixPolicy.apply("body", TextRange(2), EditorToolbarAction.QUOTE)
+        assertEquals("> body", middle.text)
+        assertEquals(TextRange(4), middle.selection)
+
+        val end = EditorLinePrefixPolicy.apply("body", TextRange(4), EditorToolbarAction.TASK)
+        assertEquals("- [ ] body", end.text)
+        assertEquals(TextRange(10), end.selection)
+    }
+
+    @Test
+    fun multilineSelectionPreservesLogicalRangeAndRemovesExistingPrefixesWhenSwitching() {
+        val text = "- [ ] one\n> two"
+        val result = EditorLinePrefixPolicy.apply(text, TextRange(text.length, 0), EditorToolbarAction.LIST)
+        assertEquals("- one\n- two", result.text)
+        assertEquals(TextRange(result.text.length, 2), result.selection)
+
+        val removed = EditorLinePrefixPolicy.apply("- one\n- two", TextRange(0, 11), EditorToolbarAction.LIST)
+        assertEquals("one\ntwo", removed.text)
+        assertEquals(TextRange(0, 7), removed.selection)
+    }
+
+    @Test
+    fun reversedSelectionKeepsDirectionAfterAddingPrefixes() {
+        val result = EditorLinePrefixPolicy.apply("one\ntwo", TextRange(7, 0), EditorToolbarAction.QUOTE)
+        assertEquals("> one\n> two", result.text)
+        assertEquals(TextRange(11, 2), result.selection)
+    }
 }

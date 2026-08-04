@@ -52,17 +52,22 @@ class QuickNoteWidget : AppWidgetProvider() {
         private const val CORNER_RADIUS_DP = 16f
         private const val IMAGE_SIZE = 300
 
+        internal fun refreshNow(context: Context) {
+            val appContext = context.applicationContext
+            val appWidgetManager = AppWidgetManager.getInstance(appContext)
+            val component = ComponentName(appContext, QuickNoteWidget::class.java)
+            val widgetIds = appWidgetManager.getAppWidgetIds(component)
+            widgetIds.forEach { id ->
+                updateWidget(appContext, appWidgetManager, id)
+            }
+        }
+
         fun updateAllWidgets(context: Context) {
             val appContext = context.applicationContext
             QuickNoteWidgetUpdatePolicy.launch(
                 finishable = WidgetAsyncFinishable {},
             ) {
-                val appWidgetManager = AppWidgetManager.getInstance(appContext)
-                val component = ComponentName(appContext, QuickNoteWidget::class.java)
-                val widgetIds = appWidgetManager.getAppWidgetIds(component)
-                widgetIds.forEach { id ->
-                    updateWidget(appContext, appWidgetManager, id)
-                }
+                refreshNow(appContext)
             }
         }
 

@@ -1,0 +1,3 @@
+dump=UI hierchary dumped to: /sdcard/03C-12-mainactivity-recovered-uiautomator.xml
+
+catError=closed

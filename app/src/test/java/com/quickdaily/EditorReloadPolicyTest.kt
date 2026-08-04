@@ -65,6 +65,42 @@ class EditorReloadPolicyTest {
         )
     }
 
+    @Test
+    fun contentChangeIsDetectedEvenWhenMtimeMovesBackwards() {
+        val loaded = com.quickdaily.util.FileFingerprint(
+            exists = true,
+            length = 4L,
+            sha256 = "old",
+            lastModified = 200L,
+        )
+        val changed = loaded.copy(sha256 = "new", lastModified = 100L)
+        val request = EditorReloadSnapshot(
+            generation = 1L,
+            target = "A.md",
+            absolutePath = "/vault/A.md",
+            lastLoadedMtime = 200L,
+            lastLoadedFingerprint = loaded,
+        )
+
+        assertTrue(EditorReloadPolicy.shouldStart(request, 100L, changed))
+        assertTrue(EditorReloadPolicy.canApply(request, request, 100L, changed))
+    }
+
+    @Test
+    fun mtimeOnlyChangeDoesNotReloadSameContent() {
+        val loaded = com.quickdaily.util.FileFingerprint(true, 4L, "same", 200L)
+        val sameContent = loaded.copy(lastModified = 300L)
+        val request = EditorReloadSnapshot(
+            generation = 1L,
+            target = "A.md",
+            absolutePath = "/vault/A.md",
+            lastLoadedMtime = 200L,
+            lastLoadedFingerprint = loaded,
+        )
+
+        assertFalse(EditorReloadPolicy.shouldStart(request, 300L, sameContent))
+    }
+
     private class BlockingReader(
         private val started: CountDownLatch,
         private val release: CountDownLatch,

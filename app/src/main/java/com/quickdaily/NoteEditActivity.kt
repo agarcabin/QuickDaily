@@ -1,4 +1,4 @@
-﻿package com.quickdaily
+package com.quickdaily
 
 import android.app.Activity
 import android.content.Intent
@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.activity.OnBackPressedCallback
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -172,6 +173,7 @@ class NoteEditActivity : ComponentActivity() {
         const val EXTRA_RETURN_TO_HOME = "return_to_home"
         const val EXTRA_TARGET_RELATIVE_PATH = "target_relative_path"
         const val EXTRA_DIALOG_TITLE = "dialog_title"
+        const val EXTRA_REMEMBER_TARGET = "floating_remember_target"
     }
 
     private var noteText by mutableStateOf("")
@@ -183,6 +185,10 @@ class NoteEditActivity : ComponentActivity() {
     private var noteEnterToSave by mutableStateOf(false)
     private var noteTagAutocomplete by mutableStateOf(true)
     private var noteWikilinkAutocomplete by mutableStateOf(true)
+    private lateinit var floatingDraft: FloatingNoteEditorState
+    private var floatingSource = FloatingNoteSource.WIDGET
+    private var rememberTarget = true
+
     private var toolbarOrder by mutableStateOf(EditorToolbarPolicy.defaultOrder.map { it.id })
     private var toolbarVisible by mutableStateOf(EditorToolbarPolicy.defaultVisible)
     private var selectionRange by mutableStateOf(TextRange(0))
@@ -232,32 +238,45 @@ class NoteEditActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         BetaLogger.init(this, "NoteEditActivity")
-        val source = intent.getStringExtra("floating_source")
+        floatingSource = intent.getStringExtra("floating_source")
             ?.let { runCatching { FloatingNoteSource.valueOf(it) }.getOrNull() }
             ?: FloatingNoteSource.WIDGET
+        rememberTarget = intent.getBooleanExtra(EXTRA_REMEMBER_TARGET, true)
         val requestId = intent.getStringExtra("floating_request_id")
             ?.takeIf { it.isNotBlank() }
             ?: newFloatingNoteRequestId()
-        FloatingNoteTiming.begin(requestId, source)
+        FloatingNoteTiming.begin(requestId, floatingSource)
         FloatingNoteTiming.mark("activity_create")
         returnToHomeAfterClose = intent.getBooleanExtra(EXTRA_RETURN_TO_HOME, false)
-        targetRelativePath = intent.getStringExtra(EXTRA_TARGET_RELATIVE_PATH)
+        val requestedTarget = intent.getStringExtra(EXTRA_TARGET_RELATIVE_PATH)
             ?.trim()
             ?.takeIf { it.isNotBlank() }
-        targetOptions = FloatingNoteTargetStore.options(this, targetRelativePath)
-        dialogTitle = intent.getStringExtra(EXTRA_DIALOG_TITLE)
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
+        val request = FloatingNoteRequest(
+            source = floatingSource,
+            prefillText = intent.getStringExtra("prefill_text").orEmpty(),
+            returnToHomeAfterClose = returnToHomeAfterClose,
+            targetRelativePath = requestedTarget,
+            displayTitle = intent.getStringExtra(EXTRA_DIALOG_TITLE)
+                ?.trim()
+                ?.takeIf { it.isNotBlank() },
+            requestId = requestId,
+            rememberTarget = rememberTarget,
+        )
+        floatingDraft = FloatingNoteEditorState(this)
+        FloatingNoteDraftStore.loadInto(this, floatingDraft, request)
+        noteText = floatingDraft.text
+        selectedImages.addAll(floatingDraft.selectedImages)
+        pendingAttachments.addAll(floatingDraft.pendingAttachments)
+        selectionRange = TextRange(floatingDraft.selectionStart, floatingDraft.selectionEnd)
+        targetRelativePath = floatingDraft.targetRelativePath
+        dialogTitle = floatingDraft.displayTitle
             ?: FloatingNoteTargetStore.titleFor(this, targetRelativePath)
+        targetOptions = FloatingNoteTargetStore.options(this, targetRelativePath)
         BetaLogger.log(
             "FloatingNote/Selection",
-            "open source=${intent.getStringExtra("floating_source").orEmpty()} target=${targetRelativePath.orEmpty()} title=$dialogTitle options=${targetOptions.size}",
+            "open source=" + floatingSource + " target=" + targetRelativePath.orEmpty() +
+                " title=" + dialogTitle + " options=" + targetOptions.size,
         )
-        val prefillTxt = intent.getStringExtra("prefill_text") ?: ""
-        if (prefillTxt.isNotBlank()) {
-            noteText = prefillTxt
-            selectionRange = TextRange(prefillTxt.length)
-        }
         val prefs = getSharedPreferences("QuickDaily", 0)
         noteAddAnchorIfMissing = prefs.getBoolean("add_anchor_if_missing", true)
         noteTimestampOrder = prefs.getString("timestamp_order", "above") ?: "above"
@@ -276,7 +295,13 @@ class NoteEditActivity : ComponentActivity() {
         } else {
             EditorToolbarPolicy.defaultVisible
         }
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                closeFloatingEditor()
+            }
+        })
         lifecycleScope.launch {
+
             while (isActive) {
                 recordingStartedAt?.let { recordingElapsedMs = SystemClock.elapsedRealtime() - it }
                 delay(250)
@@ -307,10 +332,12 @@ class NoteEditActivity : ComponentActivity() {
             lp.x = position.x; lp.y = position.y; lp.width = w; lp.height = h
             lp.dimAmount = 0.0f
             lp.format = android.graphics.PixelFormat.TRANSLUCENT
+            lp.alpha = FloatingNoteAppearance.alpha(this@NoteEditActivity)
             lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_DIM_BEHIND.inv()
             attributes = lp
         }
 
+        FloatingNoteTiming.mark("activity_content_set_start", "host=activity width=$w height=$h alpha=${FloatingNoteAppearance.alpha(this)}")
         setContent {
             QuickDailyTheme {
                 Surface(
@@ -330,6 +357,9 @@ class NoteEditActivity : ComponentActivity() {
                         onTargetChange = { option ->
                             targetRelativePath = option.path
                             dialogTitle = option.title
+                            if (rememberTarget) {
+                                FloatingNoteTargetMemory.remember(this@NoteEditActivity, floatingSource, option.path)
+                            }
                             BetaLogger.log(
                                 "FloatingNote/Selection",
                                 "selected path=${option.path.orEmpty()} title=${option.title} menuTitle=${option.menuTitle}",
@@ -343,19 +373,23 @@ class NoteEditActivity : ComponentActivity() {
                             if (targetRelativePath == path) {
                                 targetRelativePath = null
                                 dialogTitle = FloatingNoteTargetStore.titleFor(this@NoteEditActivity, null)
+                                if (rememberTarget) {
+                                    FloatingNoteTargetMemory.remember(this@NoteEditActivity, floatingSource, null)
+                                }
                             }
                             TaskWidgetConfigStore.removeCustomPage(this@NoteEditActivity, path)
                             targetOptions = FloatingNoteTargetStore.options(this@NoteEditActivity, targetRelativePath)
                         },
                         onSave = {
-                    if (hasRealContent(noteText) || selectedImages.isNotEmpty() || pendingAttachments.isNotEmpty()) appendToDiary(noteText.trim())
-                    else finishEditor()
+                            if (hasRealContent(noteText) || selectedImages.isNotEmpty() || pendingAttachments.isNotEmpty()) {
+                                appendToDiary(noteText.trim())
+                            } else {
+                                FloatingNoteDraftStore.clear(this@NoteEditActivity, targetRelativePath)
+                                finishEditor()
+                            }
                         },
-                        onClose = { finishEditor() },
-                        onHome = {
-                            startActivity(MainActivity.editorIntent(this@NoteEditActivity, targetRelativePath))
-                            finish()
-                        },
+                        onClose = { closeFloatingEditor() },
+                        onHome = { closeFloatingEditor(openHomeAfterClose = true) },
                         imageUris = selectedImages,
                         hasAttachments = pendingAttachments.isNotEmpty(),
                         attachmentUris = pendingAttachments,
@@ -376,13 +410,29 @@ class NoteEditActivity : ComponentActivity() {
                          onMoveWindowStart = ::beginWindowMove,
                          onMoveWindow = ::moveWindow,
                          onMoveWindowEnd = ::endWindowMove,
-                         onTiming = { stage, detail -> FloatingNoteTiming.mark(stage, detail) },
+                         onTiming = { stage, detail ->
+                             FloatingNoteTiming.mark(
+                                 stage,
+                                 "host=activity imePolicy=ActivityDefault windowFocus=${window?.decorView?.hasWindowFocus() == true} " +
+                                     "detail=${detail.orEmpty()}",
+                             )
+                         },
 
                          onRemoveImage = { index -> selectedImages.removeAt(index) }
                         )
                     }
                 }
             }
+        }
+
+        FloatingNoteTiming.mark("activity_content_set_return", "host=activity")
+        window?.decorView?.post {
+            val view = window?.decorView ?: return@post
+            FloatingNoteTiming.mark(
+                "activity_post_content",
+                "host=activity attached=${view.isAttachedToWindow} laidOut=${view.isLaidOut} " +
+                    "focus=${view.hasFocus()} windowFocus=${view.hasWindowFocus()} ${FloatingNoteImeController.debugState(view)}",
+            )
         }
     }
 
@@ -553,6 +603,9 @@ class NoteEditActivity : ComponentActivity() {
             TaskWidgetConfigStore.recordCustomPage(this, path)
             targetRelativePath = path
             dialogTitle = FloatingNoteTargetStore.titleFor(this, path)
+            if (rememberTarget) {
+                FloatingNoteTargetMemory.remember(this, floatingSource, path)
+            }
             targetOptions = FloatingNoteTargetStore.options(this, targetRelativePath)
         } else if (uri != null) {
             BetaLogger.log("FloatingNote/Picker", "custom page rejected uri=$uri")
@@ -569,24 +622,82 @@ class NoteEditActivity : ComponentActivity() {
         BetaLogger.log("Lifecycle", "NoteEditActivity reused")
     }
 
-    private fun finishEditor() {
+    private fun syncFloatingDraft() {
+        floatingDraft.text = noteText
+        floatingDraft.selectedImages.clear()
+        floatingDraft.selectedImages.addAll(selectedImages)
+        floatingDraft.pendingAttachments.clear()
+        floatingDraft.pendingAttachments.addAll(pendingAttachments)
+        floatingDraft.source = floatingSource
+        floatingDraft.rememberTarget = rememberTarget
+        floatingDraft.targetRelativePath = targetRelativePath
+        floatingDraft.displayTitle = dialogTitle
+        floatingDraft.selectionStart = selectionRange.start
+        floatingDraft.selectionEnd = selectionRange.end
+    }
+
+    private fun persistDraftAndFinish(openHomeAfterClose: Boolean = false) {
+        syncFloatingDraft()
+        FloatingNoteDraftStore.persistOrClear(this, floatingDraft)
+        finishEditor(openHomeAfterClose)
+    }
+
+    private fun requestActivityImeHide() {
+        val view = window?.decorView ?: return
+        val manager = getSystemService(InputMethodManager::class.java)
+        val token = view.windowToken
+        FloatingNoteTiming.mark(
+            "ime_hide_request",
+            "host=activity managerAvailable=${manager != null} token=${token != null} " +
+                "focus=${view.hasFocus()} ${FloatingNoteImeController.debugState(view)}",
+        )
+        val accepted = token != null && manager?.hideSoftInputFromWindow(token, InputMethodManager.HIDE_NOT_ALWAYS) == true
+        FloatingNoteTiming.mark(
+            "ime_hide_called",
+            "host=activity accepted=$accepted managerAvailable=${manager != null} token=${token != null} " +
+                "focus=${view.hasFocus()} ${FloatingNoteImeController.debugState(view)}",
+        )
+        view.post {
+            FloatingNoteTiming.mark(
+                "ime_hide_post",
+                "host=activity attached=${view.isAttachedToWindow} focus=${view.hasFocus()} " +
+                    "${FloatingNoteImeController.debugState(view)}",
+            )
+        }
+    }
+
+    private fun finishEditor(openHomeAfterClose: Boolean = false) {
         FloatingNoteTiming.mark("hide_start", "host=activity")
         stopRecording()
-        if (returnToHomeAfterClose) {
+        requestActivityImeHide()
+        if (returnToHomeAfterClose || openHomeAfterClose) {
             startActivity(MainActivity.editorIntent(this, targetRelativePath))
         }
         finish()
         FloatingNoteTiming.mark("hide_end", "host=activity")
     }
 
-    private fun appendToDiary(text: String) {
+    private fun closeFloatingEditor(openHomeAfterClose: Boolean = false) {
+        if (noteSaveInProgress) return
+        val hasContent = hasRealContent(noteText) || selectedImages.isNotEmpty() || pendingAttachments.isNotEmpty()
+        if (FloatingNoteEntryPolicy.shouldSaveOnClose(this) && hasContent) {
+            appendToDiary(noteText.trim(), openHomeAfterClose)
+        } else {
+            persistDraftAndFinish(openHomeAfterClose)
+        }
+    }
+
+    private fun appendToDiary(text: String, openHomeAfterClose: Boolean = false) {
         stopRecording()
         if (noteSaveInProgress) return
         if (!hasRealContent(text) && selectedImages.isEmpty() && pendingAttachments.isEmpty()) {
-            finishEditor()
+            FloatingNoteDraftStore.clear(this, targetRelativePath)
+            finishEditor(openHomeAfterClose)
             return
         }
         noteSaveInProgress = true
+        syncFloatingDraft()
+        FloatingNoteDraftStore.persist(this, floatingDraft)
         lifecycleScope.launch {
             when (val result = FloatingNoteSaveUseCase(this@NoteEditActivity).save(
                 text,
@@ -597,13 +708,17 @@ class NoteEditActivity : ComponentActivity() {
                 FloatingNoteSaveResult.Saved -> {
                     selectedImages.clear()
                     pendingAttachments.clear()
+                    FloatingNoteDraftStore.clear(this@NoteEditActivity, targetRelativePath)
                     Toast.makeText(this@NoteEditActivity, "已保存", Toast.LENGTH_SHORT).show()
-                    finishEditor()
+                    finishEditor(openHomeAfterClose)
                 }
-                FloatingNoteSaveResult.NoContent -> finishEditor()
+                FloatingNoteSaveResult.NoContent -> {
+                    FloatingNoteDraftStore.clear(this@NoteEditActivity, targetRelativePath)
+                    finishEditor(openHomeAfterClose)
+                }
                 is FloatingNoteSaveResult.Failed -> {
                     noteSaveInProgress = false
-                    BetaLogger.log("NoteEdit", "save failed=${result.message}")
+                    BetaLogger.log("NoteEdit", "save failed=" + result.message)
                     Toast.makeText(this@NoteEditActivity, result.message, Toast.LENGTH_LONG).show()
                 }
             }
@@ -612,16 +727,11 @@ class NoteEditActivity : ComponentActivity() {
 
     override fun onTouchEvent(event: MotionEvent?): Boolean {
         if (event?.action == MotionEvent.ACTION_OUTSIDE) {
-            if (hasRealContent(noteText) || selectedImages.isNotEmpty() || pendingAttachments.isNotEmpty()) {
-                    appendToDiary(noteText.trim())
-            } else {
-                finishEditor()
-            }
+            closeFloatingEditor()
             return true
         }
         return super.onTouchEvent(event)
     }
-
     override fun onDestroy() {
         FloatingNoteTiming.mark("activity_destroy")
         super.onDestroy()
@@ -662,6 +772,7 @@ fun NoteEditDialog(
     imageUris: List<Uri>,
     hasAttachments: Boolean,
     attachmentUris: List<Uri>,
+    invalidAttachmentUris: List<Uri> = emptyList(),
     imePolicy: FloatingNoteImePolicy = FloatingNoteImePolicy.ActivityDefault,
     onPickImages: () -> Unit,
     onPickAttachment: () -> Unit,
@@ -677,6 +788,7 @@ fun NoteEditDialog(
     onMoveWindow: (dx: Float, dy: Float) -> Unit = { _, _ -> },
     onMoveWindowEnd: () -> Unit = {},
     onRemoveImage: (Int) -> Unit,
+    onRemoveAttachment: (Int) -> Unit = {},
     onTiming: (stage: String, detail: String?) -> Unit = { _, _ -> }
 ) {
     val floater = LocalFloaterColors.current
@@ -730,19 +842,25 @@ fun NoteEditDialog(
         // A service-hosted ComposeView may not have attached the BasicTextField node
         // when the first composition side effect runs. Wait for a frame and tolerate
         // a vendor focus failure instead of taking down the overlay process.
+        onTiming("editor_effect_start", "imePolicy=$imePolicy")
         withFrameNanos { }
+        onTiming("editor_frame_ready", "imePolicy=$imePolicy")
         if (!focusRequested) {
             focusRequested = true
-            onTiming("focus_request", null)
-            runCatching { focusRequester.requestFocus() }
-                .onFailure { onTiming("focus_failed", it.javaClass.simpleName) }
+            onTiming("focus_request", "imePolicy=$imePolicy")
+            runCatching {
+                val accepted = focusRequester.requestFocus()
+                onTiming("focus_result", "accepted=$accepted imePolicy=$imePolicy")
+            }.onFailure { onTiming("focus_failed", "imePolicy=$imePolicy error=${it.javaClass.simpleName}") }
         }
     }
     LaunchedEffect(density, imeInsets) {
         snapshotFlow { imeInsets.getBottom(density) > 0 }
             .filter { it }
             .take(1)
-            .collect { onTiming("ime_visible", null) }
+            .collect {
+                onTiming("ime_visible", "imePolicy=$imePolicy bottom=${imeInsets.getBottom(density)}")
+            }
     }
     LaunchedEffect(text, initialSelection) {
         if (text != tfv.text || (initialSelection != null && tfv.selection != initialSelection)) {
@@ -1103,14 +1221,31 @@ fun NoteEditDialog(
                 }
             }
             if (attachmentUris.isNotEmpty()) {
-                Text(
-                    text = "已添加附件：${attachmentUris.size} 个",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = floater.primary,
-                    modifier = Modifier.padding(vertical = 4.dp)
-                )
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    attachmentUris.forEachIndexed { index, uri ->
+                        val invalid = uri in invalidAttachmentUris
+                        Row(
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = if (invalid) "附件失效：${uri.lastPathSegment ?: uri}" else "附件：${uri.lastPathSegment ?: uri}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (invalid) MaterialTheme.colorScheme.error else floater.primary,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            IconButton(onClick = { onRemoveAttachment(index) }) {
+                                Icon(Icons.Default.Close, contentDescription = "移除附件", tint = floater.onBackgroundVariant)
+                            }
+                        }
+                    }
+                }
             }
-
             BasicTextField(value = tfv, onValueChange = { newTfv ->
                     val oldText = tfv.text
                     val newText = newTfv.text
@@ -1147,15 +1282,33 @@ fun NoteEditDialog(
                     .weight(1f)
                     .focusRequester(focusRequester)
                     .onFocusChanged {
+                        onTiming("focus_state", "focused=${it.isFocused} imePolicy=$imePolicy")
                         if (it.isFocused) {
-                            onTiming("focus_acquired", null)
+                            onTiming("focus_acquired", "imePolicy=$imePolicy")
                             if (!imeShowRequested) {
                                 imeShowRequested = true
-                                onTiming("ime_show_request", null)
+                                val keyboardControllerAvailable = keyboardController != null
+                                onTiming(
+                                    "ime_show_request",
+                                    "imePolicy=$imePolicy keyboardControllerAvailable=$keyboardControllerAvailable " +
+                                        "attached=${neView.isAttachedToWindow} ${FloatingNoteImeController.debugState(neView)}",
+                                )
                                 if (imePolicy == FloatingNoteImePolicy.OverlayInstant) {
                                     FloatingNoteImeController.show(neView, onTiming)
                                 } else {
                                     keyboardController?.show()
+                                    onTiming(
+                                        "ime_show_called",
+                                        "imePolicy=$imePolicy keyboardControllerAvailable=$keyboardControllerAvailable " +
+                                            "attached=${neView.isAttachedToWindow} ${FloatingNoteImeController.debugState(neView)}",
+                                    )
+                                    neView.post {
+                                        onTiming(
+                                            "ime_show_post",
+                                            "imePolicy=$imePolicy attached=${neView.isAttachedToWindow} " +
+                                                "focus=${neView.hasFocus()} ${FloatingNoteImeController.debugState(neView)}",
+                                        )
+                                    }
                                 }
                             }
                         }

@@ -30,7 +30,11 @@ object WidgetRefreshCoordinator {
     fun refreshAll(context: Context, immediate: Boolean = false) {
         refreshRead(context, immediate)
         refreshTasks(context, immediate)
+        refreshQuickNote(context, immediate)
     }
+
+    fun refreshQuickNote(context: Context, immediate: Boolean = false) =
+        request(context, "quicknote", immediate) { QuickNoteWidget.refreshNow(context.applicationContext) }
 
     private fun request(context: Context, key: String, immediate: Boolean, work: suspend () -> Unit) {
         synchronized(lock) {

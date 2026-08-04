@@ -1,0 +1,25 @@
+command: adb -s 192.168.10.9:35973 shell am start -W -n com.quickdaily/.TaskWidgetConfigActivity
+exitCode: 255
+stdout:
+Starting: Intent { cmp=com.quickdaily/.TaskWidgetConfigActivity }
+
+stderr:
+
+Exception occurred while executing 'start':
+java.lang.SecurityException: Permission Denial: starting Intent { flg=0x10000000 xflg=0x4 cmp=com.quickdaily/.TaskWidgetConfigActivity } from null (pid=4569, uid=2000) not exported from uid 10468
+	at com.android.server.wm.ActivityTaskSupervisor.checkStartAnyActivityPermission(ActivityTaskSupervisor.java:1318)
+	at com.android.server.wm.ActivityStarter.executeRequest(ActivityStarter.java:1406)
+	at com.android.server.wm.ActivityStarter.execute(ActivityStarter.java:1005)
+	at com.android.server.wm.ActivityTaskManagerService.startActivityAndWait(ActivityTaskManagerService.java:1864)
+	at com.android.server.am.ActivityManagerService.startActivityAndWait(ActivityManagerService.java:3746)
+	at com.android.server.am.ActivityManagerShellCommand.runStartActivity(ActivityManagerShellCommand.java:976)
+	at com.android.server.am.ActivityManagerShellCommand.onCommand(ActivityManagerShellCommand.java:279)
+	at com.android.modules.utils.BasicShellCommandHandler.exec(BasicShellCommandHandler.java:97)
+	at android.os.ShellCommand.exec(ShellCommand.java:38)
+	at com.android.server.am.ActivityManagerService.onShellCommand(ActivityManagerService.java:11654)
+	at android.os.Binder.shellCommand(Binder.java:1158)
+	at android.os.Binder.onTransact(Binder.java:960)
+	at android.app.IActivityManager$Stub.onTransact(IActivityManager.java:6262)
+	at com.android.server.am.ActivityManagerService.onTransact(ActivityManagerService.java:3175)
+	at android.os.Binder.execTransactInternal(Binder.java:1433)
+	at android.os.Binder.execTransact(Binder.java:1372)

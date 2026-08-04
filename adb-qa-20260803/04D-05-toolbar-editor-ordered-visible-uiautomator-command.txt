@@ -1,0 +1,3 @@
+dump=UI hierchary dumped to: /sdcard/04D-05-toolbar-editor-ordered-visible-uiautomator.xml
+
+catError=closed

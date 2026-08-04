@@ -1,0 +1,230 @@
+### NoteEditActivity 680-760
+680:     onTiming: (stage: String, detail: String?) -> Unit = { _, _ -> }
+681: ) {
+682:     val floater = LocalFloaterColors.current
+683:     val dim = LocalAppDimensions.current
+684:     val focusRequester = remember { FocusRequester() }
+685:     val keyboardController = LocalSoftwareKeyboardController.current
+686:     val density = LocalDensity.current
+687:     val imeInsets = WindowInsets.ime
+688:     var focusRequested by remember { mutableStateOf(false) }
+689:     var imeShowRequested by remember { mutableStateOf(false) }
+690:     var targetMenuExpanded by remember { mutableStateOf(false) }
+691:     var wikilinkPopupDismissKey by remember { mutableStateOf<String?>(null) }
+692:     var tfv by remember { mutableStateOf(TextFieldValue(text, initialSelection ?: TextRange(text.length))) }
+693:     var stampToggleState by remember { mutableStateOf(EditorStampToggleState()) }
+694:     val localUndoStack = remember { mutableStateListOf<String>() }
+695:     val localRedoStack = remember { mutableStateListOf<String>() }
+696:     var lastUndoTime by remember { mutableLongStateOf(0L) }
+697:     val neCtx = LocalContext.current
+698:     val neView = LocalView.current
+699:     val clipboardManager = LocalClipboardManager.current
+700:     var recentWikilinks by remember { mutableStateOf(WikilinkRecentStore.load(neCtx)) }
+701: 
+702:     fun recordUndo(previousText: String, force: Boolean = false) {
+703:         val now = System.currentTimeMillis()
+704:         localRedoStack.clear()
+705:         if (force || now - lastUndoTime > 1500) {
+706:             localUndoStack.add(previousText)
+707:             if (localUndoStack.size > 50) localUndoStack.removeAt(0)
+708:             lastUndoTime = if (force) 0L else now
+709:         }
+710:     }
+711: 
+712:     fun applyTextChange(
+713:         newValue: TextFieldValue,
+714:         forceUndo: Boolean = false,
+715:         invalidateStamp: Boolean = true,
+716:     ) {
+717:         val oldText = tfv.text
+718:         if (oldText == newValue.text) {
+719:             tfv = newValue
+720:             return
+721:         }
+722:         if (invalidateStamp) stampToggleState = stampToggleState.clear()
+723:         recordUndo(oldText, forceUndo)
+724:         tfv = newValue
+725:         onTextChange(newValue.text)
+726:         onSelectionChange(newValue.selection)
+727:     }
+728: 
+729:     LaunchedEffect(Unit) {
+730:         // A service-hosted ComposeView may not have attached the BasicTextField node
+731:         // when the first composition side effect runs. Wait for a frame and tolerate
+732:         // a vendor focus failure instead of taking down the overlay process.
+733:         withFrameNanos { }
+734:         if (!focusRequested) {
+735:             focusRequested = true
+736:             onTiming("focus_request", null)
+737:             runCatching { focusRequester.requestFocus() }
+738:                 .onFailure { onTiming("focus_failed", it.javaClass.simpleName) }
+739:         }
+740:     }
+741:     LaunchedEffect(density, imeInsets) {
+742:         snapshotFlow { imeInsets.getBottom(density) > 0 }
+743:             .filter { it }
+744:             .take(1)
+745:             .collect { onTiming("ime_visible", null) }
+746:     }
+747:     LaunchedEffect(text, initialSelection) {
+748:         if (text != tfv.text || (initialSelection != null && tfv.selection != initialSelection)) {
+749:             stampToggleState = stampToggleState.clear()
+750:             tfv = TextFieldValue(text, initialSelection ?: TextRange(text.length))
+751:         }
+752:     }
+753:     val tagVaultPath = neCtx.getSharedPreferences("QuickDaily", 0).getString("vault_path", "") ?: ""
+754:     val wikilinkIndex by WikilinkIndexRepository.indexState.collectAsStateWithLifecycle()
+755:     val completionIndex = wikilinkIndex.takeIf {
+756:         it.rootPath == tagVaultPath && it.indexed && it.tagsIndexed && it.error == null
+757:     }
+758:     val noteTagList = completionIndex?.tags.orEmpty()
+759:     val tagCompletion = remember(tfv.text, tfv.selection, noteTagList, tagAutocomplete, completionIndex?.rootPath) {
+760:         if (!tagAutocomplete || completionIndex == null) return@remember Triple(false, "", 0)
+
+### FloatingNoteComposeView timing hits
+7: import androidx.compose.runtime.Composable
+11: /** Delivers hardware Back to the Service window even while an IME owns the input connection. */
+36:     override fun dispatchKeyEventPreIme(event: KeyEvent): Boolean {
+40:         return super.dispatchKeyEventPreIme(event)
+
+### FloatingNoteImeController
+1: package com.quickdaily
+2: 
+3: import android.os.Build
+4: import android.view.View
+5: import android.view.WindowInsets
+6: import android.view.WindowInsetsAnimationControlListener
+7: import android.view.WindowInsetsAnimationController
+8: import android.view.inputmethod.InputMethodManager
+9: import androidx.annotation.RequiresApi
+10: import java.util.concurrent.atomic.AtomicBoolean
+11: 
+12: /** The editor host determines whether the platform Activity or an overlay owns IME startup. */
+13: enum class FloatingNoteImePolicy {
+14:     ActivityDefault,
+15:     OverlayInstant,
+16: }
+17: 
+18: /** Best-effort zero-duration IME handoff for TYPE_APPLICATION_OVERLAY windows. */
+19: internal object FloatingNoteImeController {
+20:     private const val CONTROL_TIMEOUT_MS = 80L
+21: 
+22:     fun show(view: View, onStage: (String, String?) -> Unit) {
+23:         val earlyAccepted = requestShowSoftInput(view, onStage, "early")
+24:         onStage(
+25:             "ime_show_early",
+26:             "attached=" + view.isAttachedToWindow + " accepted=" + earlyAccepted,
+27:         )
+28:         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && tryControl(view, true, onStage)) return
+29:         fallbackShow(view, onStage, "initial")
+30:     }
+31: 
+32:     fun hide(view: View, onStage: (String, String?) -> Unit) {
+33:         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && tryControl(view, false, onStage)) return
+34:         fallbackHide(view, onStage)
+35:     }
+36: 
+37:     @RequiresApi(Build.VERSION_CODES.R)
+38:     private fun tryControl(
+39:         view: View,
+40:         show: Boolean,
+41:         onStage: (String, String?) -> Unit,
+42:     ): Boolean {
+43:         val windowController = view.windowInsetsController ?: return false
+44:         val direction = if (show) "show" else "hide"
+45:         val completed = AtomicBoolean(false)
+46: 
+47:         fun fallback(reason: String) {
+48:             if (!completed.compareAndSet(false, true)) return
+49:             onStage("ime_control_fallback", "direction=" + direction + " reason=" + reason)
+50:             if (show) {
+51:                 fallbackShow(view, onStage, reason)
+52:             } else {
+53:                 fallbackHide(view, onStage)
+54:             }
+55:         }
+56: 
+57:         return runCatching {
+58:             onStage("ime_control_request", "direction=" + direction + " duration=0 timeoutMs=" + CONTROL_TIMEOUT_MS)
+59:             windowController.controlWindowInsetsAnimation(
+60:                 WindowInsets.Type.ime(),
+61:                 0L,
+62:                 null,
+63:                 null,
+64:                 object : WindowInsetsAnimationControlListener {
+65:                     override fun onReady(controller: WindowInsetsAnimationController, types: Int) {
+66:                         if (completed.compareAndSet(false, true)) {
+67:                             onStage("ime_control_ready", "direction=" + direction + " types=" + types)
+68:                             if (show) {
+69:                                 val accepted = requestShowSoftInput(view, onStage, "control_ready")
+70:                                 onStage("ime_show_ready", "accepted=" + accepted)
+71:                             }
+72:                             runCatching { controller.finish(show) }
+73:                                 .onFailure {
+74:                                     onStage(
+75:                                         "ime_control_finish_error",
+76:                                         "direction=$direction error=${it.javaClass.simpleName}",
+77:                                     )
+78:                                 }
+79:                         }
+80:                     }
+81: 
+82:                     override fun onFinished(controller: WindowInsetsAnimationController) {
+83:                         onStage("ime_control_finished", "direction=$direction")
+84:                     }
+85: 
+86:                     override fun onCancelled(controller: WindowInsetsAnimationController?) {
+87:                         fallback("cancelled")
+88:                     }
+89:                 },
+90:             )
+91:             view.postDelayed({ fallback("timeout") }, CONTROL_TIMEOUT_MS)
+92:             true
+93:         }.getOrElse {
+94:             onStage("ime_control_error", "direction=$direction error=${it.javaClass.simpleName}")
+95:             false
+96:         }
+97:     }
+98: 
+99:     private fun fallbackShow(
+100:         view: View,
+101:         onStage: (String, String?) -> Unit,
+102:         reason: String,
+103:     ) {
+104:         if (!view.isAttachedToWindow) {
+105:             onStage("ime_show_fallback_deferred", "reason=" + reason + " attached=false")
+106:             view.post {
+107:                 if (view.isAttachedToWindow) {
+108:                     val accepted = requestShowSoftInput(view, onStage, "fallback_" + reason)
+109:                     onStage("ime_show_fallback", "reason=" + reason + " accepted=" + accepted)
+110:                 } else {
+111:                     onStage("ime_show_fallback_skipped", "reason=" + reason + " detached=true")
+112:                 }
+113:             }
+114:             return
+115:         }
+116:         val accepted = requestShowSoftInput(view, onStage, "fallback_" + reason)
+117:         onStage("ime_show_fallback", "reason=" + reason + " accepted=" + accepted)
+118:     }
+119: 
+120:     private fun requestShowSoftInput(
+121:         view: View,
+122:         onStage: (String, String?) -> Unit,
+123:         reason: String,
+124:     ): Boolean {
+125:         if (!view.isAttachedToWindow) return false
+126:         val manager = view.context.getSystemService(InputMethodManager::class.java)
+127:         val accepted = manager?.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT) == true
+128:         onStage("ime_show_soft_input", "reason=" + reason + " accepted=" + accepted)
+129:         return accepted
+130:     }
+131: 
+132:     private fun fallbackHide(view: View, onStage: (String, String?) -> Unit) {
+133:         val token = view.windowToken
+134:         val hidden = token != null && view.context
+135:             .getSystemService(InputMethodManager::class.java)
+136:             ?.hideSoftInputFromWindow(token, InputMethodManager.HIDE_NOT_ALWAYS) == true
+137:         onStage("ime_hide_fallback", "accepted=$hidden token=${token != null}")
+138:     }
+139: }
+140: 

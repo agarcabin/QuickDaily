@@ -1,0 +1,3 @@
+dump: UI hierchary dumped to: /sdcard/01-editor-unlocked-uiautomator.xml
+
+cat-status=0

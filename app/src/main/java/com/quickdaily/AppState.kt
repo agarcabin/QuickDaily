@@ -1,4 +1,4 @@
-﻿package com.quickdaily
+package com.quickdaily
 
 import android.app.Application
 import android.content.SharedPreferences
@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.quickdaily.util.DateUtil
 import com.quickdaily.util.Debounce
 import com.quickdaily.util.FileUtil
+import com.quickdaily.util.FileFingerprint
 import com.quickdaily.util.ContentUtil
 import com.quickdaily.util.ReadResult
 import com.quickdaily.util.VaultPathUtil
@@ -31,6 +32,7 @@ data class DiaryConfig(
     val addAnchorIfMissing: Boolean = true,
     val timestampOrder: String = "above",
     val enterToSave: Boolean = true,
+    val keepDraftOnFloatingClose: Boolean = FloatingNoteEntryPolicy.DEFAULT_KEEP_DRAFT_ON_CLOSE,
     val widgetImageUri: String = "",
     val autoCheckUpdate: Boolean = true,
     val filterFrontmatter: Boolean = true,
@@ -53,6 +55,7 @@ data class DiaryConfig(
     val widgetStyle: String = "dark",
     val widgetBackgroundColor: Long = 0xFF202124L,
     val widgetOpacity: Int = WidgetAppearance.DEFAULT_OPACITY_PERCENT,
+    val floatingOpacity: Int = FloatingNoteAppearance.DEFAULT_OPACITY_PERCENT,
 )
 
 enum class ObsidianConfigReadStatus {
@@ -71,27 +74,41 @@ data class EditorReloadSnapshot(
     val target: String,
     val absolutePath: String,
     val lastLoadedMtime: Long,
+    val lastLoadedFingerprint: FileFingerprint? = null,
 )
 
 object EditorReloadPolicy {
-    fun shouldStart(request: EditorReloadSnapshot, observedMtime: Long): Boolean =
-        observedMtime > request.lastLoadedMtime
+    fun shouldStart(request: EditorReloadSnapshot, observedMtime: Long, observedFingerprint: FileFingerprint? = null): Boolean =
+        fileChanged(request.lastLoadedMtime, observedMtime, request.lastLoadedFingerprint, observedFingerprint)
 
     fun canApply(
         request: EditorReloadSnapshot,
         current: EditorReloadSnapshot,
         observedMtime: Long,
+        observedFingerprint: FileFingerprint? = null,
     ): Boolean =
         request.generation == current.generation &&
             request.target == current.target &&
             request.absolutePath == current.absolutePath &&
-            observedMtime > current.lastLoadedMtime
+            fileChanged(current.lastLoadedMtime, observedMtime, current.lastLoadedFingerprint, observedFingerprint)
+}
+
+private fun fileChanged(
+    lastLoadedMtime: Long,
+    observedMtime: Long,
+    lastLoadedFingerprint: FileFingerprint?,
+    observedFingerprint: FileFingerprint?,
+): Boolean = if (lastLoadedFingerprint != null && observedFingerprint != null) {
+    !lastLoadedFingerprint.hasSameContentAs(observedFingerprint)
+} else {
+    observedMtime != lastLoadedMtime
 }
 
 internal data class EditorConflict(
     val absolutePath: String,
     val externalContent: String,
     val externalMtime: Long,
+    val externalFingerprint: FileFingerprint? = null,
 )
 
 internal object EditorConflictPolicy {
@@ -100,10 +117,17 @@ internal object EditorConflictPolicy {
         observedMtime: Long,
         lastLoadedMtime: Long,
         ignoredExternalMtime: Long,
+        observedFingerprint: FileFingerprint? = null,
+        lastLoadedFingerprint: FileFingerprint? = null,
+        ignoredExternalFingerprint: FileFingerprint? = null,
     ): Boolean =
         isDirty &&
-            observedMtime > lastLoadedMtime &&
-            observedMtime > ignoredExternalMtime
+            fileChanged(lastLoadedMtime, observedMtime, lastLoadedFingerprint, observedFingerprint) &&
+            if (ignoredExternalFingerprint != null && observedFingerprint != null) {
+                !ignoredExternalFingerprint.hasSameContentAs(observedFingerprint)
+            } else {
+                observedMtime != ignoredExternalMtime
+            }
 
     fun canClearDirty(writeSucceeded: Boolean, savedVersion: Long, currentVersion: Long): Boolean =
         writeSucceeded && savedVersion == currentVersion
@@ -114,7 +138,9 @@ private data class EditorSaveSnapshot(
     val saveContent: String,
     val contentVersion: Long,
     val lastLoadedMtime: Long,
+    val lastLoadedFingerprint: FileFingerprint?,
     val ignoredExternalMtime: Long,
+    val ignoredExternalFingerprint: FileFingerprint?,
 )
 
 const val TASK_PERIOD_TODAY = "today"
@@ -168,7 +194,9 @@ class AppState(application: Application) : AndroidViewModel(application) {
     private var autoSave: Debounce? = null
 
     private var _lastLoadedMtime: Long = 0L
+    private var _lastLoadedFingerprint: FileFingerprint? = null
     private var ignoredExternalMtime: Long = 0L
+    private var ignoredExternalFingerprint: FileFingerprint? = null
     private var contentVersion: Long = 0L
     private val loadLock = Any()
     private var loadGeneration = 0L
@@ -209,6 +237,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
             addAnchorIfMissing = prefs.getBoolean("add_anchor_if_missing", true),
             timestampOrder = prefs.getString("timestamp_order", "above") ?: "above",
             enterToSave = prefs.getBoolean("enter_to_save", true),
+            keepDraftOnFloatingClose = FloatingNoteEntryPolicy.keepDraftOnClose(app),
             widgetImageUri = prefs.getString("widget_image_uri", "") ?: "",
             autoCheckUpdate = prefs.getBoolean("auto_check_update", true),
             filterFrontmatter = prefs.getBoolean("filter_frontmatter", true),
@@ -254,6 +283,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
             widgetStyle = prefs.getString("widget_style", "dark") ?: "dark",
             widgetBackgroundColor = prefs.getLong("widget_background_color", 0xFF202124L),
             widgetOpacity = prefs.getInt("widget_opacity", WidgetAppearance.DEFAULT_OPACITY_PERCENT).coerceIn(0, 100),
+            floatingOpacity = prefs.getInt(FloatingNoteAppearance.PREF_OPACITY, FloatingNoteAppearance.DEFAULT_OPACITY_PERCENT).coerceIn(0, 100),
         )
     }
 
@@ -271,6 +301,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
             addAnchorIfMissing = raw.addAnchorIfMissing,
             timestampOrder = raw.timestampOrder,
             enterToSave = raw.enterToSave,
+            keepDraftOnFloatingClose = raw.keepDraftOnFloatingClose,
             widgetImageUri = raw.widgetImageUri,
             autoCheckUpdate = raw.autoCheckUpdate,
         filterFrontmatter = raw.filterFrontmatter,
@@ -292,6 +323,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
             taskShowFullContent = raw.taskShowFullContent,
             widgetStyle = raw.widgetStyle,
             widgetBackgroundColor = raw.widgetBackgroundColor,
+            floatingOpacity = raw.floatingOpacity.coerceIn(0, 100),
             widgetOpacity = raw.widgetOpacity.coerceIn(0, 100),
         )
         prefs.edit()
@@ -305,7 +337,9 @@ class AppState(application: Application) : AndroidViewModel(application) {
             .putString("timestamp_format", config.timestampFormat)
             .putBoolean("add_anchor_if_missing", config.addAnchorIfMissing)
             .putString("timestamp_order", config.timestampOrder)
+            .putBoolean(FloatingNoteEntryPolicy.PREF_SAVE_ON_CLOSE, !config.keepDraftOnFloatingClose)
             .putBoolean("enter_to_save", config.enterToSave)
+            .putBoolean(FloatingNoteEntryPolicy.PREF_KEEP_DRAFT_ON_CLOSE, config.keepDraftOnFloatingClose)
             .putString("widget_image_uri", config.widgetImageUri)
             .putBoolean("auto_check_update", config.autoCheckUpdate)
             .putBoolean("filter_frontmatter", config.filterFrontmatter)
@@ -326,6 +360,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
             .putBoolean(TaskCompletionTimestampPolicy.PREF_KEY, config.taskCompletionTimestamp)
             .putBoolean(TaskWidgetDisplayPolicy.SHOW_COMPLETED_PREF_KEY, config.taskShowCompleted)
             .putBoolean(TaskWidgetDisplayPolicy.SHOW_FULL_CONTENT_PREF_KEY, config.taskShowFullContent)
+            .putInt(FloatingNoteAppearance.PREF_OPACITY, config.floatingOpacity.coerceIn(0, 100))
             .putString("widget_style", config.widgetStyle)
             .putLong("widget_background_color", config.widgetBackgroundColor)
             .putInt("widget_opacity", config.widgetOpacity.coerceIn(0, 100))
@@ -463,6 +498,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
             _isDirty.value = false
             _editorConflict.value = null
             ignoredExternalMtime = 0L
+            ignoredExternalFingerprint = null
             loadGeneration
         }
         if (_config.value.vaultPath.isBlank() && normalized.isBlank()) {
@@ -470,6 +506,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
                 if (generation == loadGeneration) {
                     _todayPath.value = ""
                     _lastLoadedMtime = 0L
+                    _lastLoadedFingerprint = null
                     _diaryContent.value = ""
                     _frontmatter.value = ""
                     _isDirty.value = false
@@ -518,6 +555,8 @@ class AppState(application: Application) : AndroidViewModel(application) {
                 rawContent = ""
             }
             BetaLogger.log(logTag, "rawContent from=$contentSource raw_len=${rawContent.length}")
+            val loadedMtimeAfterRead = FileUtil.lastModified(path)
+            val loadedFingerprint = FileUtil.fingerprint(path)
 
             val parsed = ContentUtil.parseFrontmatter(rawContent)
             val applied = synchronized(loadLock) {
@@ -525,8 +564,10 @@ class AppState(application: Application) : AndroidViewModel(application) {
                     false
                 } else {
                     _todayPath.value = path
-                    _lastLoadedMtime = loadedMtime
+                    _lastLoadedMtime = loadedMtimeAfterRead
+                    _lastLoadedFingerprint = loadedFingerprint
                     ignoredExternalMtime = 0L
+                    ignoredExternalFingerprint = null
                     _isDirty.value = false
                     _editorConflict.value = null
                     _frontmatter.value = parsed.frontmatter
@@ -569,6 +610,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
                         target = _editorTargetRelativePath.value,
                         absolutePath = path,
                         lastLoadedMtime = _lastLoadedMtime,
+                        lastLoadedFingerprint = _lastLoadedFingerprint,
                     )
                 }
             }
@@ -577,26 +619,35 @@ class AppState(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
             val mtime = FileUtil.lastModified(request.absolutePath)
+            val observedFingerprint = FileUtil.fingerprint(request.absolutePath)
             BetaLogger.log("ReloadIfNewer", "old_mtime=${request.lastLoadedMtime} new_mtime=$mtime")
-            if (!EditorReloadPolicy.shouldStart(request, mtime)) return@launch
+            if (!EditorReloadPolicy.shouldStart(request, mtime, observedFingerprint)) return@launch
 
             val existingConflict = synchronized(loadLock) { _editorConflict.value }
             if (existingConflict?.absolutePath == request.absolutePath &&
-                mtime <= existingConflict.externalMtime
+                if (existingConflict.externalFingerprint != null && observedFingerprint != null) {
+                    existingConflict.externalFingerprint.hasSameContentAs(observedFingerprint)
+                } else {
+                    mtime <= existingConflict.externalMtime
+                }
             ) {
                 return@launch
             }
 
             val dirty = synchronized(loadLock) { _isDirty.value }
             val ignoredMtime = synchronized(loadLock) { ignoredExternalMtime }
+            val ignoredFingerprint = synchronized(loadLock) { ignoredExternalFingerprint }
             if (EditorConflictPolicy.shouldPrompt(
                     isDirty = dirty,
                     observedMtime = mtime,
                     lastLoadedMtime = request.lastLoadedMtime,
                     ignoredExternalMtime = ignoredMtime,
+                    observedFingerprint = observedFingerprint,
+                    lastLoadedFingerprint = request.lastLoadedFingerprint,
+                    ignoredExternalFingerprint = ignoredFingerprint,
                 )
             ) {
-                val conflict = readEditorConflict(request.absolutePath, mtime)
+                val conflict = readEditorConflict(request.absolutePath, mtime, observedFingerprint)
                 if (conflict == null) return@launch
                 val shown = synchronized(loadLock) {
                     val current = EditorReloadSnapshot(
@@ -604,13 +655,17 @@ class AppState(application: Application) : AndroidViewModel(application) {
                         target = _editorTargetRelativePath.value,
                         absolutePath = _todayPath.value,
                         lastLoadedMtime = _lastLoadedMtime,
+                        lastLoadedFingerprint = _lastLoadedFingerprint,
                     )
-                    if (EditorReloadPolicy.canApply(request, current, mtime) &&
+                    if (EditorReloadPolicy.canApply(request, current, mtime, observedFingerprint) &&
                         EditorConflictPolicy.shouldPrompt(
                             isDirty = _isDirty.value,
                             observedMtime = mtime,
                             lastLoadedMtime = _lastLoadedMtime,
                             ignoredExternalMtime = ignoredExternalMtime,
+                            observedFingerprint = observedFingerprint,
+                            lastLoadedFingerprint = _lastLoadedFingerprint,
+                            ignoredExternalFingerprint = ignoredExternalFingerprint,
                         )
                     ) {
                         _editorConflict.value = conflict
@@ -626,6 +681,13 @@ class AppState(application: Application) : AndroidViewModel(application) {
             }
 
             if (existingConflict != null) return@launch
+            if (dirty && ignoredFingerprint != null && observedFingerprint != null &&
+                ignoredFingerprint.hasSameContentAs(observedFingerprint)
+            ) {
+                BetaLogger.log("ReloadIfNewer", "skip_acknowledged_external path=${request.absolutePath}")
+                return@launch
+            }
+
 
             val content = when (val result = FileUtil.readResult(request.absolutePath)) {
                 is ReadResult.Success -> result.content
@@ -634,6 +696,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
             }
+            val reloadedFingerprint = FileUtil.fingerprint(request.absolutePath)
             val parsed = ContentUtil.parseFrontmatter(content)
             // If file has only frontmatter (empty body), try loading template.
             val effectiveContent = if (parsed.hasFrontmatter && parsed.body.isBlank()) {
@@ -649,8 +712,9 @@ class AppState(application: Application) : AndroidViewModel(application) {
                     target = _editorTargetRelativePath.value,
                     absolutePath = _todayPath.value,
                     lastLoadedMtime = _lastLoadedMtime,
+                    lastLoadedFingerprint = _lastLoadedFingerprint,
                 )
-                if (!EditorReloadPolicy.canApply(request, current, mtime)) {
+                if (!EditorReloadPolicy.canApply(request, current, mtime, reloadedFingerprint)) {
                     false
                 } else {
                     _frontmatter.value = effectiveParsed.frontmatter
@@ -660,9 +724,11 @@ class AppState(application: Application) : AndroidViewModel(application) {
                         _diaryContent.value = effectiveContent
                     }
                     _lastLoadedMtime = mtime
+                    _lastLoadedFingerprint = reloadedFingerprint
                     _isDirty.value = false
                     _editorConflict.value = null
                     ignoredExternalMtime = 0L
+                    ignoredExternalFingerprint = null
                     true
                 }
             }
@@ -718,9 +784,11 @@ class AppState(application: Application) : AndroidViewModel(application) {
                 conflict.externalContent
             }
             _lastLoadedMtime = conflict.externalMtime
+            _lastLoadedFingerprint = conflict.externalFingerprint ?: FileUtil.fingerprint(conflict.absolutePath)
             _isDirty.value = false
             _editorConflict.value = null
             ignoredExternalMtime = 0L
+            ignoredExternalFingerprint = null
             contentVersion += 1L
             _undoStack.clear()
             _redoStack.clear()
@@ -736,6 +804,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
         val conflict = synchronized(loadLock) {
             val current = _editorConflict.value ?: return@synchronized null
             ignoredExternalMtime = maxOf(ignoredExternalMtime, current.externalMtime)
+            ignoredExternalFingerprint = current.externalFingerprint
             _editorConflict.value = null
             current
         } ?: return
@@ -743,9 +812,9 @@ class AppState(application: Application) : AndroidViewModel(application) {
         saveNow()
     }
 
-    private fun readEditorConflict(path: String, mtime: Long): EditorConflict? =
+    private fun readEditorConflict(path: String, mtime: Long, fingerprint: FileFingerprint?): EditorConflict? =
         when (val result = FileUtil.readResult(path)) {
-            is ReadResult.Success -> EditorConflict(path, result.content, mtime)
+            is ReadResult.Success -> EditorConflict(path, result.content, mtime, fingerprint)
             else -> {
                 BetaLogger.log("ReloadIfNewer", "conflict_read_failed path=$path")
                 null
@@ -812,10 +881,14 @@ class AppState(application: Application) : AndroidViewModel(application) {
         scanTags()
     }
 
-    fun saveNow() {
+    fun saveNow(onComplete: (() -> Unit)? = null) {
         val snapshot = synchronized(loadLock) {
             val path = _todayPath.value
             val content = _diaryContent.value
+            if (!_isDirty.value) {
+                BetaLogger.log("SaveNow", "skip saving clean content path=$path")
+                return@synchronized null
+            }
             // don't create empty file if diary hasn't been loaded yet
             if (content.isEmpty() && path.isNotEmpty() && !java.io.File(path).exists()) {
                 BetaLogger.log("SaveNow", "skip saving empty content for new file")
@@ -838,9 +911,14 @@ class AppState(application: Application) : AndroidViewModel(application) {
                 saveContent = saveContent,
                 contentVersion = contentVersion,
                 lastLoadedMtime = _lastLoadedMtime,
+                lastLoadedFingerprint = _lastLoadedFingerprint,
                 ignoredExternalMtime = ignoredExternalMtime,
+                ignoredExternalFingerprint = ignoredExternalFingerprint,
             )
-        } ?: return
+        } ?: run {
+            onComplete?.invoke()
+            return
+        }
 
         BetaLogger.log(
             "SaveNow",
@@ -850,17 +928,34 @@ class AppState(application: Application) : AndroidViewModel(application) {
         appScope.launch(Dispatchers.IO) {
             val mutationGuard = FileUtil.acquirePathMutation(snapshot.path)
             try {
+            val snapshotStillCurrent = synchronized(loadLock) {
+                _todayPath.value == snapshot.path &&
+                    _isDirty.value &&
+                    contentVersion == snapshot.contentVersion
+            }
+            if (!snapshotStillCurrent) {
+                BetaLogger.log("SaveNow", "skip stale snapshot path=${snapshot.path}")
+                return@launch
+            }
             val observedMtime = FileUtil.lastModified(snapshot.path)
+            val observedFingerprint = FileUtil.fingerprint(snapshot.path)
+            if (observedFingerprint == null) {
+                BetaLogger.log("SaveNow", "blocked_by_unavailable_fingerprint path=${snapshot.path}")
+                return@launch
+            }
             val conflictNeeded = synchronized(loadLock) {
                 EditorConflictPolicy.shouldPrompt(
                     isDirty = _isDirty.value,
                     observedMtime = observedMtime,
-                    lastLoadedMtime = _lastLoadedMtime,
-                    ignoredExternalMtime = ignoredExternalMtime,
+                    lastLoadedMtime = snapshot.lastLoadedMtime,
+                    ignoredExternalMtime = snapshot.ignoredExternalMtime,
+                    observedFingerprint = observedFingerprint,
+                    lastLoadedFingerprint = snapshot.lastLoadedFingerprint,
+                    ignoredExternalFingerprint = snapshot.ignoredExternalFingerprint,
                 )
             }
             if (conflictNeeded) {
-                readEditorConflict(snapshot.path, observedMtime)?.let { conflict ->
+                readEditorConflict(snapshot.path, observedMtime, observedFingerprint)?.let { conflict ->
                     synchronized(loadLock) {
                         if (_todayPath.value == snapshot.path && _isDirty.value) {
                             _editorConflict.value = conflict
@@ -872,11 +967,14 @@ class AppState(application: Application) : AndroidViewModel(application) {
             }
 
             val writeSucceeded = FileUtil.write(snapshot.path, snapshot.saveContent)
-            val writtenMtime = if (writeSucceeded) FileUtil.lastModified(snapshot.path) else 0L
+            val writtenFingerprint = if (writeSucceeded) FileUtil.fingerprint(snapshot.path) else null
+            val writtenMtime = writtenFingerprint?.lastModified ?: if (writeSucceeded) FileUtil.lastModified(snapshot.path) else 0L
             synchronized(loadLock) {
                 if (writeSucceeded && _todayPath.value == snapshot.path) {
                     _lastLoadedMtime = writtenMtime
+                    _lastLoadedFingerprint = writtenFingerprint
                     ignoredExternalMtime = 0L
+                    ignoredExternalFingerprint = null
                     if (EditorConflictPolicy.canClearDirty(
                             writeSucceeded = true,
                             savedVersion = snapshot.contentVersion,
@@ -895,6 +993,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
             }
             } finally {
                 mutationGuard.close()
+                onComplete?.let { callback -> viewModelScope.launch { callback() } }
             }
         }
     }

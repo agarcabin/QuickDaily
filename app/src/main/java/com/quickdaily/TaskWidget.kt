@@ -287,6 +287,7 @@ class TaskWidget : AppWidgetProvider() {
                 returnToHomeAfterClose = false,
                 targetRelativePath = target,
                 displayTitle = title,
+                rememberTarget = false,
             )
             if (target != null && FloatingNoteControllerProvider.forContext(context).showOrFocus(request)) {
                 return
@@ -297,6 +298,8 @@ class TaskWidget : AppWidgetProvider() {
                 putExtra("prefill_text", "- [ ] ")
                 putExtra(NoteEditActivity.EXTRA_TARGET_RELATIVE_PATH, target.orEmpty())
                 putExtra(NoteEditActivity.EXTRA_DIALOG_TITLE, title.orEmpty())
+                putExtra("floating_source", FloatingNoteSource.WIDGET.name)
+                putExtra(NoteEditActivity.EXTRA_REMEMBER_TARGET, false)
             })
         }
 

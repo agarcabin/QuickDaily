@@ -1,0 +1,456 @@
+Activity Resolver Table:
+  Full MIME Types:
+      text/plain:
+        909478a com.quickdaily/.MainActivity filter b7bb1fb
+          Action: "android.intent.action.SEND"
+          Category: "android.intent.category.DEFAULT"
+          StaticType: "text/plain"
+      image/*:
+        909478a com.quickdaily/.MainActivity filter 7077218
+          Action: "android.intent.action.SEND"
+          Category: "android.intent.category.DEFAULT"
+          StaticType: "image"
+          mPriority=0, mOrder=0, mHasStaticPartialTypes=true, mHasDynamicPartialTypes=false
+        909478a com.quickdaily/.MainActivity filter 97f1471
+          Action: "android.intent.action.SEND_MULTIPLE"
+          Category: "android.intent.category.DEFAULT"
+          StaticType: "image"
+          mPriority=0, mOrder=0, mHasStaticPartialTypes=true, mHasDynamicPartialTypes=false
+
+  Base MIME Types:
+      text:
+        909478a com.quickdaily/.MainActivity filter b7bb1fb
+          Action: "android.intent.action.SEND"
+          Category: "android.intent.category.DEFAULT"
+          StaticType: "text/plain"
+
+  Wild MIME Types:
+      image:
+        909478a com.quickdaily/.MainActivity filter 7077218
+          Action: "android.intent.action.SEND"
+          Category: "android.intent.category.DEFAULT"
+          StaticType: "image"
+          mPriority=0, mOrder=0, mHasStaticPartialTypes=true, mHasDynamicPartialTypes=false
+        909478a com.quickdaily/.MainActivity filter 97f1471
+          Action: "android.intent.action.SEND_MULTIPLE"
+          Category: "android.intent.category.DEFAULT"
+          StaticType: "image"
+          mPriority=0, mOrder=0, mHasStaticPartialTypes=true, mHasDynamicPartialTypes=false
+
+  Non-Data Actions:
+      android.intent.action.MAIN:
+        3bc5256 com.quickdaily/.LauncherActivity filter cc972d7
+          Action: "android.intent.action.MAIN"
+          Category: "android.intent.category.LAUNCHER"
+
+  MIME Typed Actions:
+      android.intent.action.SEND:
+        909478a com.quickdaily/.MainActivity filter b7bb1fb
+          Action: "android.intent.action.SEND"
+          Category: "android.intent.category.DEFAULT"
+          StaticType: "text/plain"
+        909478a com.quickdaily/.MainActivity filter 7077218
+          Action: "android.intent.action.SEND"
+          Category: "android.intent.category.DEFAULT"
+          StaticType: "image"
+          mPriority=0, mOrder=0, mHasStaticPartialTypes=true, mHasDynamicPartialTypes=false
+      android.intent.action.SEND_MULTIPLE:
+        909478a com.quickdaily/.MainActivity filter 97f1471
+          Action: "android.intent.action.SEND_MULTIPLE"
+          Category: "android.intent.category.DEFAULT"
+          StaticType: "image"
+          mPriority=0, mOrder=0, mHasStaticPartialTypes=true, mHasDynamicPartialTypes=false
+
+Receiver Resolver Table:
+  Non-Data Actions:
+      androidx.profileinstaller.action.SAVE_PROFILE:
+        25b562e com.quickdaily/androidx.profileinstaller.ProfileInstallReceiver filter 957de65
+          Action: "androidx.profileinstaller.action.SAVE_PROFILE"
+      androidx.profileinstaller.action.INSTALL_PROFILE:
+        25b562e com.quickdaily/androidx.profileinstaller.ProfileInstallReceiver filter ab9e5cf
+          Action: "androidx.profileinstaller.action.INSTALL_PROFILE"
+      androidx.profileinstaller.action.SKIP_FILE:
+        25b562e com.quickdaily/androidx.profileinstaller.ProfileInstallReceiver filter 2461b5c
+          Action: "androidx.profileinstaller.action.SKIP_FILE"
+      androidx.profileinstaller.action.BENCHMARK_OPERATION:
+        25b562e com.quickdaily/androidx.profileinstaller.ProfileInstallReceiver filter 74aa73a
+          Action: "androidx.profileinstaller.action.BENCHMARK_OPERATION"
+      android.appwidget.action.APPWIDGET_UPDATE:
+        c0d97c4 com.quickdaily/.QuickNoteWidget filter b9f86ad
+          Action: "android.appwidget.action.APPWIDGET_UPDATE"
+        4c33de2 com.quickdaily/.TaskWidget filter 2c86573
+          Action: "android.appwidget.action.APPWIDGET_UPDATE"
+        82e6c30 com.quickdaily/.QuickDailyReadWidget filter ddae0a9
+          Action: "android.appwidget.action.APPWIDGET_UPDATE"
+
+Service Resolver Table:
+  Non-Data Actions:
+      android.service.quicksettings.action.QS_TILE:
+        a990feb com.quickdaily/.QuickTileService filter c79148 permission android.permission.BIND_QUICK_SETTINGS_TILE
+          Action: "android.service.quicksettings.action.QS_TILE"
+      android.accessibilityservice.AccessibilityService:
+        8ecfbe1 com.quickdaily/.QuickAccessibilityService filter 2abfd06 permission android.permission.BIND_ACCESSIBILITY_SERVICE
+          Action: "android.accessibilityservice.AccessibilityService"
+
+Domain verification status:
+
+Permissions:
+  Permission [com.quickdaily.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION] (318c8fa):
+    sourcePackage=com.quickdaily
+    uid=10468 gids=[] type=0 prot=signature
+    perm=PermissionInfo{a25eeab com.quickdaily.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION}
+    flags=0x0
+
+Registered ContentProviders:
+  com.quickdaily/androidx.startup.InitializationProvider:
+    Provider{420e908 com.quickdaily/androidx.startup.InitializationProvider}
+  com.quickdaily/androidx.core.content.FileProvider:
+    Provider{d33d8a1 com.quickdaily/androidx.core.content.FileProvider}
+
+ContentProvider Authorities:
+  [com.quickdaily.androidx-startup]:
+    Provider{420e908 com.quickdaily/androidx.startup.InitializationProvider}
+      applicationInfo=ApplicationInfo{89a7ac6 com.quickdaily}
+  [com.quickdaily.fileprovider]:
+    Provider{d33d8a1 com.quickdaily/androidx.core.content.FileProvider}
+      applicationInfo=ApplicationInfo{652ca87 com.quickdaily}
+
+Key Set Manager:
+  [com.quickdaily]
+      Signing KeySets: 419
+
+Packages:
+  Package [com.quickdaily] (90d4eef):
+    appId=10468
+    pkg=Package{65f8db4 com.quickdaily}
+    codePath=/data/app/~~oIEmFS-vJWzz-4KuOsUSdQ==/com.quickdaily-U4E748Cj2ij5VAGvz-e3-w==
+    resourcePath=/data/app/~~oIEmFS-vJWzz-4KuOsUSdQ==/com.quickdaily-U4E748Cj2ij5VAGvz-e3-w==
+    legacyNativeLibraryDir=/data/app/~~oIEmFS-vJWzz-4KuOsUSdQ==/com.quickdaily-U4E748Cj2ij5VAGvz-e3-w==/lib
+    extractNativeLibs=false
+    primaryCpuAbi=arm64-v8a
+    secondaryCpuAbi=null
+    cpuAbiOverride=null
+    versionCode=70 minSdk=26 targetSdk=35
+    minExtensionVersions=[]
+    versionName=1.8.7-beta
+    hiddenApiEnforcementPolicy=2
+    usesNonSdkApi=false
+    isMiuiPreinstall=false
+    splits=[base]
+    apkSigningVersion=2
+    flags=[ HAS_CODE ALLOW_CLEAR_USER_DATA ]
+    privateFlags=[ PRIVATE_FLAG_ACTIVITIES_RESIZE_MODE_RESIZEABLE_VIA_SDK_VERSION ALLOW_AUDIO_PLAYBACK_CAPTURE PRIVATE_FLAG_ALLOW_NATIVE_HEAP_POINTER_TAGGING ]
+    forceQueryable=false
+    pageSizeCompat=0
+    queriesPackages=[md.obsidian]
+    scannedAsStoppedSystemApp=false
+    supportsScreens=[small, medium, large, xlarge, resizeable, anyDensity]
+    usesOptionalLibraries:
+      androidx.window.extensions
+      androidx.window.sidecar
+    usesLibraryFiles:
+      /system_ext/framework/androidx.window.extensions.jar
+      /system_ext/framework/androidx.window.sidecar.jar
+    timeStamp=2026-08-03 15:28:45
+    lastUpdateTime=2026-08-03 15:28:46
+    installerPackageName=null
+    installerPackageUid=-1
+    initiatingPackageName=com.android.shell
+    originatingPackageName=null
+    packageSource=1
+    appMetadataFilePath=null
+    appMetadataSource=0
+    signatures=PackageSignatures{728c90b version:2, signatures:[f904a129], past signatures:[]}
+    installPermissionsFixed=false
+    pkgFlags=[ HAS_CODE ALLOW_CLEAR_USER_DATA ]
+    privatePkgFlags=[ PRIVATE_FLAG_ACTIVITIES_RESIZE_MODE_RESIZEABLE_VIA_SDK_VERSION ALLOW_AUDIO_PLAYBACK_CAPTURE PRIVATE_FLAG_ALLOW_NATIVE_HEAP_POINTER_TAGGING ]
+    apexModuleName=null
+    declared permissions:
+      com.quickdaily.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION: prot=signature
+    requested permissions:
+      android.permission.POST_NOTIFICATIONS
+      android.permission.MANAGE_EXTERNAL_STORAGE
+      android.permission.SYSTEM_ALERT_WINDOW
+      com.quickdaily.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+      android.permission.FOREGROUND_SERVICE
+      android.permission.FOREGROUND_SERVICE_SPECIAL_USE
+      com.android.launcher.permission.UNINSTALL_SHORTCUT
+      android.permission.INTERNET
+      android.permission.ACCESS_NETWORK_STATE
+      android.permission.CAMERA
+      com.android.launcher.permission.INSTALL_SHORTCUT
+      android.permission.RECORD_AUDIO
+    install permissions:
+      com.quickdaily.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION: granted=true
+      android.permission.FOREGROUND_SERVICE: granted=true
+      android.permission.FOREGROUND_SERVICE_SPECIAL_USE: granted=true
+      com.android.launcher.permission.UNINSTALL_SHORTCUT: granted=true
+      android.permission.INTERNET: granted=true
+      android.permission.ACCESS_NETWORK_STATE: granted=true
+      com.android.launcher.permission.INSTALL_SHORTCUT: granted=true
+    User 0: ceDataInode=1430328 deDataInode=1430332 installed=true hidden=false suspended=false distractionFlags=0 stopped=false notLaunched=false enabled=0 instant=false virtual=false quarantined=false
+      installReason=0
+      dataDir=/data/user/0/com.quickdaily
+      firstInstallTime=2026-07-19 15:50:47
+      uninstallReason=0
+      overlay paths:
+        /product/overlay/GestureLineOverlay.apk
+        /product/overlay/TransparentNavigationBar/TransparentNavigationBarOverlay.apk
+        /data/resource-cache/com.android.systemui-neutral-qkwb.frro
+        /data/resource-cache/com.android.systemui-accent-Zgm6.frro
+        /data/resource-cache/com.android.systemui-dynamic-OO5f.frro
+      legacy overlay paths:
+        /product/overlay/GestureLineOverlay.apk
+        /product/overlay/TransparentNavigationBar/TransparentNavigationBarOverlay.apk
+      gids=[3003]
+      runtime permissions:
+        android.permission.POST_NOTIFICATIONS: granted=false, flags=[ USER_SENSITIVE_WHEN_GRANTED|USER_SENSITIVE_WHEN_DENIED]
+        android.permission.CAMERA: granted=true, flags=[ USER_SET|USER_SENSITIVE_WHEN_GRANTED|USER_SENSITIVE_WHEN_DENIED]
+        android.permission.RECORD_AUDIO: granted=true, flags=[ USER_SET|USER_SENSITIVE_WHEN_GRANTED|USER_SENSITIVE_WHEN_DENIED]
+    User 999: ceDataInode=0 deDataInode=0 installed=false hidden=false suspended=false distractionFlags=0 stopped=true notLaunched=true enabled=0 instant=false virtual=false quarantined=false
+      installReason=0
+      dataDir=null
+      firstInstallTime=1970-01-01 08:00:00
+      uninstallReason=0
+      gids=[3003]
+      runtime permissions:
+
+Queries:
+  system apps queryable: false
+  queries via forceQueryable:
+  queries via package name:
+    com.quickdaily:
+      md.obsidian
+  queries via component:
+    [com.mediatek.voicecommand,com.miui.thirdappassistant,android,com.xiaomi.joyose,com.novatek.novavis,com.xiaomi.aon,com.android.keychain,com.android.server.telecom,com.xiaomi.digitalkey,com.miui.powerkeeper,com.xiaomi.mi_connect_service,com.xiaomi.misettings,com.mediatek.omacp,com.miui.qr,com.xiaomi.trustservice,miui.systemui.plugin,com.android.location.fused,com.miui.wmsvc,com.miui.contentcatcher,com.miui.touchassistant,com.mediatek,com.miui.notification,com.xiaomi.mtb,com.android.localtransport,com.miui.securitycore,com.miui.daemon,com.mediatek.atci.service,com.miui.bugreport,com.android.providers.settings,com.xiaomi.touchservice,com.miui.aod,com.miui.securitycenter,com.xiaomi.barrage,com.android.settings,com.android.systemui,com.android.provision,com.miui.face,com.miui.audiomonitor,com.xiaomi.mirror,com.android.DeviceAsWebcam,com.bsp.catchlog,com.xiaomi.otrpbroker,com.xiaomi.aiasst.vision,com.miui.misightservice,com.xiaomi.gnss.polaris,com.wapi.wapicertmanager,com.xiaomi.aiasst.service,com.xiaomi.location.fused,com.android.dynsystem,com.android.inputdevices,com.miui.uireporter,com.mediatek.location.lppe.main,com.miui.cit]:
+      com.quickdaily
+    [com.android.nfc,com.miui.tsmclient]:
+      com.quickdaily
+    com.android.thememanager:
+      com.quickdaily
+    com.xiaomi.finddevice:
+      com.quickdaily
+    com.xiaomi.aicr:
+      com.quickdaily
+    com.android.contacts:
+      com.quickdaily
+    com.miui.packageinstaller:
+      com.quickdaily
+    com.miui.personalassistant:
+      com.quickdaily
+    com.xiaomi.minigame:
+      com.quickdaily
+    com.xiaomi.gamecenter.sdk.service:
+      com.quickdaily
+    com.android.settings.intelligence:
+      com.quickdaily
+    com.android.camera:
+      com.quickdaily
+    com.miui.carlink:
+      com.quickdaily
+    com.miui.nextpay:
+      com.quickdaily
+    com.xiaomi.mis:
+      com.quickdaily
+    com.xiaomi.market:
+      com.quickdaily
+    com.xiaomi.account:
+      com.quickdaily
+    com.miui.greenguard:
+      com.quickdaily
+    com.xiaomi.payment:
+      com.quickdaily
+    com.xiaomi.xmsf:
+      com.quickdaily
+    com.android.rkpdapp:
+      com.quickdaily
+    com.android.providers.downloads.ui:
+      com.quickdaily
+    com.xiaomi.smarthome:
+      com.quickdaily
+    com.duokan.phone.remotecontroller:
+      com.quickdaily
+    com.android.calendar:
+      com.quickdaily
+    com.miui.gallery:
+      com.quickdaily
+    com.android.soundrecorder:
+      com.quickdaily
+    com.coolapk.market:
+      com.quickdaily
+    com.tencent.mm:
+      com.quickdaily
+    com.larus.nova:
+      com.quickdaily
+    com.microsoft.teams:
+      com.quickdaily
+    com.quark.browser:
+      com.quickdaily
+    com.xingin.xhs:
+      com.quickdaily
+    com.taobao.taobao:
+      com.quickdaily
+    com.xunmeng.pinduoduo:
+      com.quickdaily
+    com.whatsapp:
+      com.quickdaily
+    cn.ticktick.task:
+      com.quickdaily
+    com.google.android.apps.photos:
+      com.quickdaily
+    ru.yandex.taxi:
+      com.quickdaily
+    ru.mts.mymts:
+      com.quickdaily
+    com.google.android.youtube:
+      com.quickdaily
+    com.greenpoint.android.mc10086.activity:
+      com.quickdaily
+    com.idamob.tinkoff.android:
+      com.quickdaily
+    com.microsoft.office.outlook:
+      com.quickdaily
+    nutstore.android:
+      com.quickdaily
+    cn.wps.moffice_eng:
+      com.quickdaily
+    com.sankuai.meituan:
+      com.quickdaily
+    ctrip.android.view:
+      com.quickdaily
+    com.ss.android.lark:
+      com.quickdaily
+    com.ct.client:
+      com.quickdaily
+    com.netease.uuremote:
+      com.quickdaily
+    me.rerere.rikkahub:
+      com.quickdaily
+    com.tipsoon.android:
+      com.quickdaily
+    com.cmri.universalapp:
+      com.quickdaily
+    com.mfcloudcalculate.networkdisk:
+      com.quickdaily
+    com.wifi.masterkey.lite:
+      com.quickdaily
+    ru.sberbankmobile:
+      com.quickdaily
+    com.cainiao.wireless:
+      com.quickdaily
+    com.baidu.BaiduMap:
+      com.quickdaily
+    com.chaochaoshishi.slytherin:
+      com.quickdaily
+    make.more.r2d2.cellular_pro:
+      com.quickdaily
+    com.weico.international:
+      com.quickdaily
+    com.xxwolo.cc5:
+      com.quickdaily
+    com.xiaomi.shop:
+      com.quickdaily
+    com.phoenix.read:
+      com.quickdaily
+    com.binance.dev:
+      com.quickdaily
+    com.apegroup.mcdonaldsrussia:
+      com.quickdaily
+    com.jingdong.app.mall:
+      com.quickdaily
+    com.lemon.lv:
+      com.quickdaily
+    com.netease.cloudmusic:
+      com.quickdaily
+    ru.oneme.app:
+      com.quickdaily
+    com.baidu.netdisk:
+      com.quickdaily
+    com.iflyrec.tjapp:
+      com.quickdaily
+    com.autonavi.minimap:
+      com.quickdaily
+    com.taobao.idlefish:
+      com.quickdaily
+    com.gorgeous.lite:
+      com.quickdaily
+    com.taptap:
+      com.quickdaily
+    com.hpbr.bosszhipin:
+      com.quickdaily
+    io.dcloud.H576E6CC7:
+      com.quickdaily
+    com.lietou.mishu:
+      com.quickdaily
+    com.google.android.apps.maps:
+      com.quickdaily
+    ru.yandex.yandexmaps:
+      com.quickdaily
+    com.baidu.tieba:
+      com.quickdaily
+    com.masseffect.suki:
+      com.quickdaily
+    com.abjlvcha.main:
+      com.quickdaily
+    com.salt.music:
+      com.quickdaily
+    com.tencent.wemeet.app:
+      com.quickdaily
+    ru.ozon.app.android:
+      com.quickdaily
+    com.fat.vpn:
+      com.quickdaily
+    app.jumpjumpvpn.jumpjumpvpn:
+      com.quickdaily
+    com.wildberries.ru:
+      com.quickdaily
+    com.vkontakte.android:
+      com.quickdaily
+    com.ubercab:
+      com.quickdaily
+    com.maimemo.markji.android:
+      com.quickdaily
+    ru.cardsmobile.mw3:
+      com.quickdaily
+    com.mi.earphone:
+      com.quickdaily
+    com.piplnetwork.piplvpn:
+      com.quickdaily
+    com.urbandroid.sleep:
+      com.quickdaily
+    com.jxedt:
+      com.quickdaily
+    com.taobao.trip:
+      com.quickdaily
+    com.pingsecure.client.app:
+      com.quickdaily
+    com.xd.bloonstd.taptap:
+      com.quickdaily
+  queryable via interaction:
+    User 0:
+      [com.mediatek.voicecommand,com.miui.thirdappassistant,android,com.xiaomi.joyose,com.novatek.novavis,com.xiaomi.aon,com.android.keychain,com.android.server.telecom,com.xiaomi.digitalkey,com.miui.powerkeeper,com.xiaomi.mi_connect_service,com.xiaomi.misettings,com.mediatek.omacp,com.miui.qr,com.xiaomi.trustservice,miui.systemui.plugin,com.android.location.fused,com.miui.wmsvc,com.miui.contentcatcher,com.miui.touchassistant,com.mediatek,com.miui.notification,com.xiaomi.mtb,com.android.localtransport,com.miui.securitycore,com.miui.daemon,com.mediatek.atci.service,com.miui.bugreport,com.android.providers.settings,com.xiaomi.touchservice,com.miui.aod,com.miui.securitycenter,com.xiaomi.barrage,com.android.settings,com.android.systemui,com.android.provision,com.miui.face,com.miui.audiomonitor,com.xiaomi.mirror,com.android.DeviceAsWebcam,com.bsp.catchlog,com.xiaomi.otrpbroker,com.xiaomi.aiasst.vision,com.miui.misightservice,com.xiaomi.gnss.polaris,com.wapi.wapicertmanager,com.xiaomi.aiasst.service,com.xiaomi.location.fused,com.android.dynsystem,com.android.inputdevices,com.miui.uireporter,com.mediatek.location.lppe.main,com.miui.cit]:
+        com.quickdaily
+      com.google.android.gms:
+        com.quickdaily
+      com.bytedance.android.doubaoime:
+        com.quickdaily
+      com.quickdaily:
+        [com.mediatek.voicecommand,com.miui.thirdappassistant,android,com.xiaomi.joyose,com.novatek.novavis,com.xiaomi.aon,com.android.keychain,com.android.server.telecom,com.xiaomi.digitalkey,com.miui.powerkeeper,com.xiaomi.mi_connect_service,com.xiaomi.misettings,com.mediatek.omacp,com.miui.qr,com.xiaomi.trustservice,miui.systemui.plugin,com.android.location.fused,com.miui.wmsvc,com.miui.contentcatcher,com.miui.touchassistant,com.mediatek,com.miui.notification,com.xiaomi.mtb,com.android.localtransport,com.miui.securitycore,com.miui.daemon,com.mediatek.atci.service,com.miui.bugreport,com.android.providers.settings,com.xiaomi.touchservice,com.miui.aod,com.miui.securitycenter,com.xiaomi.barrage,com.android.settings,com.android.systemui,com.android.provision,com.miui.face,com.miui.audiomonitor,com.xiaomi.mirror,com.android.DeviceAsWebcam,com.bsp.catchlog,com.xiaomi.otrpbroker,com.xiaomi.aiasst.vision,com.miui.misightservice,com.xiaomi.gnss.polaris,com.wapi.wapicertmanager,com.xiaomi.aiasst.service,com.xiaomi.location.fused,com.android.dynsystem,com.android.inputdevices,com.miui.uireporter,com.mediatek.location.lppe.main,com.miui.cit]
+      com.quickdaily:
+        com.android.externalstorage
+        com.android.fileexplorer
+        com.android.providers.media.module
+    User 999:
+  queryable via uses-library:
+
+Dexopt state:
+  [com.quickdaily]
+    path: /data/app/~~oIEmFS-vJWzz-4KuOsUSdQ==/com.quickdaily-U4E748Cj2ij5VAGvz-e3-w==/base.apk
+      arm64: [status=speed-profile] [reason=baseline] [primary-abi]
+        [location is /data/app/~~oIEmFS-vJWzz-4KuOsUSdQ==/com.quickdaily-U4E748Cj2ij5VAGvz-e3-w==/oat/arm64/base.odex]
+    base APK odex file size: base.art: 588Kb base.odex: 5143Kb base.vdex: 3867Kb 
+
+Compiler stats:
+  [com.quickdaily]
+     base.apk - 1178
+

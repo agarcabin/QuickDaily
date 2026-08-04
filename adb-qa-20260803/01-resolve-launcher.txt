@@ -1,0 +1,4 @@
+command: adb -s 192.168.10.9:35973 shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER com.quickdaily
+priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false
+com.quickdaily/.LauncherActivity
+

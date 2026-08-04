@@ -46,6 +46,40 @@ class EditorConflictPolicyTest {
     }
 
     @Test
+    fun changedDiskContentPromptsEvenWhenMtimeMovesBackwards() {
+        val loaded = com.quickdaily.util.FileFingerprint(true, 4L, "old", 200L)
+        val changed = loaded.copy(sha256 = "new", lastModified = 100L)
+
+        assertTrue(
+            EditorConflictPolicy.shouldPrompt(
+                isDirty = true,
+                observedMtime = 100L,
+                lastLoadedMtime = 200L,
+                ignoredExternalMtime = 0L,
+                observedFingerprint = changed,
+                lastLoadedFingerprint = loaded,
+            ),
+        )
+    }
+
+    @Test
+    fun acknowledgedSameContentDoesNotPromptAfterMtimeOnlyChange() {
+        val loaded = com.quickdaily.util.FileFingerprint(true, 4L, "same", 200L)
+        val sameContent = loaded.copy(lastModified = 100L)
+
+        assertFalse(
+            EditorConflictPolicy.shouldPrompt(
+                isDirty = true,
+                observedMtime = 100L,
+                lastLoadedMtime = 200L,
+                ignoredExternalMtime = 0L,
+                observedFingerprint = sameContent,
+                lastLoadedFingerprint = loaded,
+            ),
+        )
+    }
+
+    @Test
     fun failedOrStaleSaveKeepsDirtyState() {
         assertFalse(EditorConflictPolicy.canClearDirty(false, savedVersion = 1L, currentVersion = 1L))
         assertFalse(EditorConflictPolicy.canClearDirty(true, savedVersion = 1L, currentVersion = 2L))

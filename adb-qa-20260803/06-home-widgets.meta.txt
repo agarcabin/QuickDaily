@@ -1,0 +1,1 @@
+Real HOME keyevent to inspect existing QuickDaily task widgets.

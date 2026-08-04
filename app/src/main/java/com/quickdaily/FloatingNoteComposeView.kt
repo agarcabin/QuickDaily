@@ -47,6 +47,14 @@ internal class FloatingNoteComposeView(
         return super.dispatchKeyEvent(event)
     }
 
+    override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
+        if (event.action == android.view.MotionEvent.ACTION_OUTSIDE) {
+            onBackRequested()
+            return true
+        }
+        return super.onTouchEvent(event)
+    }
+
     private fun consumeBack(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN) {
             backDown = true

@@ -1,0 +1,2 @@
+filters: FloatingNote.*ime|ime_show_request|focus_acquired|ime_control
+

@@ -2,12 +2,7 @@ package com.quickdaily
 
 import androidx.compose.ui.text.TextRange
 
-/**
- * Pure line-prefix transformations shared by the Activity editor and the overlay editor.
- *
- * The six block-level prefixes are mutually exclusive on the cursor line. Inline actions
- * intentionally do not go through this policy.
- */
+/** Pure line-prefix transformations shared by the Activity editor and the overlay editor. */
 object EditorLinePrefixPolicy {
     private val mutuallyExclusiveActions = setOf(
         EditorToolbarAction.TASK,
@@ -25,10 +20,7 @@ object EditorLinePrefixPolicy {
     private val codeBlockPrefix = Regex("""^```""")
     private val orderedListPrefix = Regex("""^(\d+)\.\s+""")
 
-    private data class LineBounds(
-        val start: Int,
-        val end: Int,
-    )
+    private data class LineBounds(val start: Int, val end: Int)
 
     private data class PrefixMatch(
         val action: EditorToolbarAction,
@@ -39,245 +31,175 @@ object EditorLinePrefixPolicy {
         val checked: Boolean = false,
     )
 
-    fun isMutuallyExclusive(action: EditorToolbarAction): Boolean =
-        action in mutuallyExclusiveActions
+    private data class LineMapping(
+        val oldStart: Int,
+        val oldEnd: Int,
+        val oldContentStart: Int,
+        val oldContentLength: Int,
+        val newStart: Int,
+        val newContentStart: Int,
+    )
 
-    /** Removes a different block prefix from the cursor line without applying a new action. */
-    fun clearOtherPrefix(
-        text: String,
-        selection: TextRange,
-        action: EditorToolbarAction,
-    ): EditorTextActionResult {
+    fun isMutuallyExclusive(action: EditorToolbarAction): Boolean = action in mutuallyExclusiveActions
+
+    fun clearOtherPrefix(text: String, selection: TextRange, action: EditorToolbarAction): EditorTextActionResult {
         if (!isMutuallyExclusive(action)) return EditorTextActionResult(text, selection)
-        val bounds = lineBounds(text, selection.start)
-        val prefix = prefixAt(text, bounds)
-        return if (prefix == null || prefix.action == action) {
-            EditorTextActionResult(text, selection)
+        return if (selection.start == selection.end) {
+            val bounds = lineBounds(text, selection.start)
+            val current = prefixAt(text, bounds)
+            if (current == null || current.action == action) {
+                EditorTextActionResult(text, selection)
+            } else {
+                rewriteSingleLine(text, selection, action, bounds, current, forceOnlyClear = true)
+            }
         } else {
-            clearPrefix(text, selection, bounds, prefix)
+            applyLines(text, selection, action, clearOnly = true)
         }
     }
 
-    /** Applies a mutually-exclusive block action at the current cursor line. */
-    fun apply(
+    fun apply(text: String, selection: TextRange, action: EditorToolbarAction): EditorTextActionResult {
+        if (!isMutuallyExclusive(action)) return EditorTextActionResult(text, selection)
+        if (action == EditorToolbarAction.CODE_BLOCK && selection.start != selection.end) {
+            return applyFencedBlock(text, selection)
+        }
+        return if (selection.start == selection.end) {
+            val bounds = lineBounds(text, selection.start)
+            rewriteSingleLine(text, selection, action, bounds, prefixAt(text, bounds))
+        } else {
+            applyLines(text, selection, action, clearOnly = false)
+        }
+    }
+
+    private fun rewriteSingleLine(
         text: String,
         selection: TextRange,
         action: EditorToolbarAction,
+        bounds: LineBounds,
+        currentPrefix: PrefixMatch?,
+        forceOnlyClear: Boolean = false,
     ): EditorTextActionResult {
-        if (!isMutuallyExclusive(action)) return EditorTextActionResult(text, selection)
+        val line = text.substring(bounds.start, bounds.end)
+        val indentLength = leadingWhitespaceLength(line)
+        val indent = line.substring(0, indentLength)
+        val currentIsSame = currentPrefix?.action == action
+        val bodyStart = currentPrefix?.end ?: bounds.start + indentLength
+        val body = line.substring((bodyStart - bounds.start).coerceIn(0, line.length)).trimStart()
+        val replacementPrefix = if (forceOnlyClear) {
+            ""
+        } else {
+            when (action) {
+                EditorToolbarAction.TASK -> when {
+                    currentIsSame && currentPrefix?.checked == true -> ""
+                    currentIsSame -> "- [x] "
+                    else -> "- [ ] "
+                }
+                EditorToolbarAction.LIST -> if (currentIsSame) "" else "- "
+                EditorToolbarAction.HEADING -> {
+                    val currentLevel = currentPrefix?.takeIf { currentIsSame }?.level
+                    val nextLevel = when {
+                        currentLevel == null -> 1
+                        currentLevel < 3 -> currentLevel + 1
+                        else -> 0
+                    }
+                    if (nextLevel == 0) "" else "#".repeat(nextLevel) + " "
+                }
+                EditorToolbarAction.QUOTE -> if (currentIsSame) "" else "> "
+                EditorToolbarAction.CODE_BLOCK -> if (currentIsSame) "" else "```"
+                EditorToolbarAction.ORDERED_LIST -> if (currentIsSame) "" else "${previousNumber(text, bounds.start) ?: 1}. "
+                else -> ""
+            }
+        }
+        val oldContentStart = currentPrefix?.end ?: bounds.start + indentLength
+        return rewriteLine(
+            text = text,
+            selection = selection,
+            bounds = bounds,
+            oldContentStart = oldContentStart,
+            newLine = indent + replacementPrefix + body,
+            newContentStart = indentLength + replacementPrefix.length,
+        )
+    }
 
-        val prepared = clearOtherPrefix(text, selection, action)
-        val bounds = lineBounds(prepared.text, prepared.selection.start)
-        val currentPrefix = prefixAt(prepared.text, bounds)
-
-        return when (action) {
-            EditorToolbarAction.TASK -> toggleTask(prepared.text, prepared.selection, bounds, currentPrefix)
-            EditorToolbarAction.LIST -> toggleSimplePrefix(
-                prepared.text,
-                prepared.selection,
-                bounds,
-                currentPrefix,
-                EditorToolbarAction.LIST,
-                "- ",
-            )
-            EditorToolbarAction.HEADING -> cycleHeading(
-                prepared.text,
-                prepared.selection,
-                bounds,
-                currentPrefix,
-            )
-            EditorToolbarAction.QUOTE -> {
-                val toggled = toggleSimplePrefix(
-                    prepared.text,
-                    prepared.selection,
-                    bounds,
-                    currentPrefix,
-                    EditorToolbarAction.QUOTE,
-                    "> ",
-                )
-                // Preserve the existing multi-line quote behavior when a selection spans lines.
-                if (prepared.selection.min != prepared.selection.max) {
-                    EditorTextActionPolicy.prefixLines(
-                        prepared.text,
-                        prepared.selection,
-                        "> ",
-                    )
-                } else {
-                    toggled
+    private fun applyLines(
+        text: String,
+        selection: TextRange,
+        action: EditorToolbarAction,
+        clearOnly: Boolean,
+    ): EditorTextActionResult {
+        val start = selection.min.coerceIn(0, text.length)
+        val end = selection.max.coerceIn(start, text.length)
+        val firstLineStart = lineStart(text, start)
+        val lastLineStart = lineStart(text, if (end > start) end - 1 else end)
+        val boundsList = buildList {
+            var lineStart = firstLineStart
+            while (true) {
+                val lineEnd = text.indexOf('\n', lineStart).let { if (it < 0) text.length else it }
+                add(LineBounds(lineStart, lineEnd))
+                if (lineStart == lastLineStart) break
+                lineStart = lineEnd + 1
+            }
+        }
+        val matches = boundsList.map { prefixAt(text, it) }
+        val removeSame = !clearOnly && matches.isNotEmpty() && matches.all { it?.action == action }
+        val builder = StringBuilder(text.substring(0, firstLineStart))
+        val mappings = mutableListOf<LineMapping>()
+        boundsList.forEachIndexed { index, bounds ->
+            val line = text.substring(bounds.start, bounds.end)
+            val indentLength = leadingWhitespaceLength(line)
+            val indent = line.substring(0, indentLength)
+            val current = matches[index]
+            val currentIsSame = current?.action == action
+            val bodyStart = current?.end ?: bounds.start + indentLength
+            val body = line.substring((bodyStart - bounds.start).coerceIn(0, line.length)).trimStart()
+            val prefix = if (clearOnly || (removeSame && currentIsSame)) {
+                ""
+            } else {
+                when (action) {
+                    EditorToolbarAction.TASK -> "- [ ] "
+                    EditorToolbarAction.LIST -> "- "
+                    EditorToolbarAction.HEADING -> "# "
+                    EditorToolbarAction.QUOTE -> "> "
+                    EditorToolbarAction.CODE_BLOCK -> "```"
+                    EditorToolbarAction.ORDERED_LIST -> "${index + (previousNumber(text, firstLineStart) ?: 1)}. "
+                    else -> ""
                 }
             }
-            EditorToolbarAction.CODE_BLOCK -> if (currentPrefix?.action == EditorToolbarAction.CODE_BLOCK) {
-                clearPrefix(prepared.text, prepared.selection, bounds, currentPrefix)
-            } else {
-                EditorTextActionPolicy.codeBlock(prepared.text, prepared.selection)
-            }
-            EditorToolbarAction.ORDERED_LIST -> toggleOrderedList(
-                prepared.text,
-                prepared.selection,
-                bounds,
-                currentPrefix,
+            val newLine = indent + prefix + body
+            val newStart = builder.length
+            builder.append(newLine)
+            mappings += LineMapping(
+                oldStart = bounds.start,
+                oldEnd = bounds.end,
+                oldContentStart = bodyStart,
+                oldContentLength = (bounds.end - bodyStart).coerceAtLeast(0),
+                newStart = newStart,
+                newContentStart = indentLength + prefix.length,
             )
-            else -> EditorTextActionResult(prepared.text, prepared.selection)
+            if (index < boundsList.lastIndex) builder.append('\n')
         }
+        val output = builder.toString() + text.substring(boundsList.last().end)
+        fun map(position: Int): Int {
+            val mapping = mappings.firstOrNull { position <= it.oldEnd && position >= it.oldStart }
+            if (mapping != null) {
+                val relative = (position - mapping.oldContentStart).coerceIn(0, mapping.oldContentLength)
+                return (mapping.newStart + mapping.newContentStart + relative).coerceIn(0, output.length)
+            }
+            val delta = output.length - text.length
+            return (position + delta).coerceIn(0, output.length)
+        }
+        return EditorTextActionResult(output, TextRange(map(selection.start), map(selection.end)))
     }
 
-    private fun toggleTask(
-        text: String,
-        selection: TextRange,
-        bounds: LineBounds,
-        currentPrefix: PrefixMatch?,
-    ): EditorTextActionResult {
-        val line = text.substring(bounds.start, bounds.end)
-        val indentLength = leadingWhitespaceLength(line)
-        val indent = line.substring(0, indentLength)
-        val rest = if (currentPrefix?.action == EditorToolbarAction.TASK) {
-            line.substring(currentPrefix.end - bounds.start).trimStart()
-        } else {
-            line.substring(indentLength).trimStart()
-        }
-        val checked = currentPrefix?.takeIf { it.action == EditorToolbarAction.TASK }?.checked == true
-        val prefix = if (currentPrefix?.action == EditorToolbarAction.TASK && checked) {
-            ""
-        } else if (currentPrefix?.action == EditorToolbarAction.TASK) {
-            "- [x] "
-        } else {
-            "- [ ] "
-        }
-        val newLine = indent + prefix + rest
-        return rewriteLine(
-            text = text,
-            selection = selection,
-            bounds = bounds,
-            oldContentStart = if (currentPrefix?.action == EditorToolbarAction.TASK) {
-                currentPrefix.end
-            } else {
-                bounds.start + indentLength
-            },
-            newLine = newLine,
-            newContentStart = indentLength + prefix.length,
-        )
-    }
-
-    private fun cycleHeading(
-        text: String,
-        selection: TextRange,
-        bounds: LineBounds,
-        currentPrefix: PrefixMatch?,
-    ): EditorTextActionResult {
-        val line = text.substring(bounds.start, bounds.end)
-        val indentLength = leadingWhitespaceLength(line)
-        val indent = line.substring(0, indentLength)
-        val rest = if (currentPrefix?.action == EditorToolbarAction.HEADING) {
-            line.substring(currentPrefix.end - bounds.start).trimStart()
-        } else {
-            line.substring(indentLength).trimStart()
-        }
-        val currentLevel = currentPrefix?.takeIf { it.action == EditorToolbarAction.HEADING }?.level
-        val nextLevel = when {
-            currentLevel == null -> 1
-            currentLevel < 3 -> currentLevel + 1
-            else -> 0
-        }
-        val prefix = if (nextLevel == 0) "" else "#".repeat(nextLevel) + " "
-        return rewriteLine(
-            text = text,
-            selection = selection,
-            bounds = bounds,
-            oldContentStart = if (currentPrefix?.action == EditorToolbarAction.HEADING) {
-                currentPrefix.end
-            } else {
-                bounds.start + indentLength
-            },
-            newLine = indent + prefix + rest,
-            newContentStart = indentLength + prefix.length,
-        )
-    }
-
-    private fun toggleSimplePrefix(
-        text: String,
-        selection: TextRange,
-        bounds: LineBounds,
-        currentPrefix: PrefixMatch?,
-        action: EditorToolbarAction,
-        prefix: String,
-    ): EditorTextActionResult {
-        val line = text.substring(bounds.start, bounds.end)
-        val indentLength = leadingWhitespaceLength(line)
-        val indent = line.substring(0, indentLength)
-        val hasSamePrefix = currentPrefix?.action == action
-        val rest = if (hasSamePrefix) {
-            line.substring(currentPrefix!!.end - bounds.start).trimStart()
-        } else {
-            line.substring(indentLength).trimStart()
-        }
-        val appliedPrefix = if (hasSamePrefix) "" else prefix
-        return rewriteLine(
-            text = text,
-            selection = selection,
-            bounds = bounds,
-            oldContentStart = if (hasSamePrefix) currentPrefix!!.end else bounds.start + indentLength,
-            newLine = indent + appliedPrefix + rest,
-            newContentStart = indentLength + appliedPrefix.length,
-        )
-    }
-
-    private fun toggleOrderedList(
-        text: String,
-        selection: TextRange,
-        bounds: LineBounds,
-        currentPrefix: PrefixMatch?,
-    ): EditorTextActionResult {
-        val line = text.substring(bounds.start, bounds.end)
-        val indentLength = leadingWhitespaceLength(line)
-        val indent = line.substring(0, indentLength)
-        val hasSamePrefix = currentPrefix?.action == EditorToolbarAction.ORDERED_LIST
-        val rest = if (hasSamePrefix) {
-            line.substring(currentPrefix!!.end - bounds.start).trimStart()
-        } else {
-            line.substring(indentLength).trimStart()
-        }
-        val appliedPrefix = if (hasSamePrefix) {
-            ""
-        } else {
-            (previousNumber(text, bounds.start) ?: 1).toString() + ". "
-        }
-        return rewriteLine(
-            text = text,
-            selection = selection,
-            bounds = bounds,
-            oldContentStart = if (hasSamePrefix) currentPrefix!!.end else bounds.start + indentLength,
-            newLine = indent + appliedPrefix + rest,
-            newContentStart = indentLength + appliedPrefix.length,
-        )
-    }
-
-    private fun previousNumber(text: String, currentLineStart: Int): Long? {
-        if (currentLineStart <= 0) return null
-        val previousEnd = currentLineStart - 1
-        val previousStart = lineStart(text, previousEnd)
-        return prefixAt(text, LineBounds(previousStart, previousEnd))
-            ?.takeIf { it.action == EditorToolbarAction.ORDERED_LIST }
-            ?.number
-            ?.let { if (it == Long.MAX_VALUE) null else it + 1 }
-    }
-
-    private fun clearPrefix(
-        text: String,
-        selection: TextRange,
-        bounds: LineBounds,
-        prefix: PrefixMatch,
-    ): EditorTextActionResult {
-        val line = text.substring(bounds.start, bounds.end)
-        val indentLength = prefix.start - bounds.start
-        val indent = line.substring(0, indentLength)
-        val rest = line.substring(prefix.end - bounds.start).trimStart()
-        return rewriteLine(
-            text = text,
-            selection = selection,
-            bounds = bounds,
-            oldContentStart = prefix.end,
-            newLine = indent + rest,
-            newContentStart = indentLength,
+    private fun applyFencedBlock(text: String, selection: TextRange): EditorTextActionResult {
+        val start = selection.min.coerceIn(0, text.length)
+        val end = selection.max.coerceIn(start, text.length)
+        val selected = text.substring(start, end)
+        val insertion = "```\n$selected\n```"
+        val output = text.substring(0, start) + insertion + text.substring(end)
+        val offset = 4
+        return EditorTextActionResult(
+            output,
+            TextRange(selection.start + offset, selection.end + offset),
         )
     }
 
@@ -295,7 +217,7 @@ object EditorLinePrefixPolicy {
         val oldContentLength = (bounds.end - oldContentStart).coerceAtLeast(0)
         fun map(position: Int): Int {
             val mapped = when {
-                position <= bounds.start -> position
+                position < bounds.start -> position
                 position <= oldContentStart -> bounds.start + newContentStart
                 position < bounds.end -> bounds.start + newContentStart +
                     (position - oldContentStart).coerceAtMost(oldContentLength)
@@ -306,63 +228,49 @@ object EditorLinePrefixPolicy {
         return EditorTextActionResult(output, TextRange(map(selection.start), map(selection.end)))
     }
 
+    private fun previousNumber(text: String, currentLineStart: Int): Long? {
+        if (currentLineStart <= 0) return null
+        val previousEnd = currentLineStart - 1
+        val previousStart = lineStart(text, previousEnd)
+        return prefixAt(text, LineBounds(previousStart, previousEnd))
+            ?.takeIf { it.action == EditorToolbarAction.ORDERED_LIST }
+            ?.number
+            ?.let { if (it == Long.MAX_VALUE) null else it + 1 }
+    }
+
     private fun prefixAt(text: String, bounds: LineBounds): PrefixMatch? {
         val line = text.substring(bounds.start, bounds.end)
         val indentLength = leadingWhitespaceLength(line)
         val content = line.substring(indentLength)
-        fun match(
-            action: EditorToolbarAction,
-            regex: Regex,
-            level: Int? = null,
-            number: Long? = null,
-            checked: Boolean = false,
-        ): PrefixMatch? {
-            val found = regex.find(content) ?: return null
-            return PrefixMatch(
-                action = action,
-                start = bounds.start + indentLength,
-                end = bounds.start + indentLength + found.value.length,
-                level = level ?: found.groupValues.getOrNull(1)?.takeIf { action == EditorToolbarAction.HEADING }?.length,
-                number = number ?: found.groupValues.getOrNull(1)?.toLongOrNull()
-                    ?.takeIf { action == EditorToolbarAction.ORDERED_LIST },
-                checked = checked || (action == EditorToolbarAction.TASK && found.groupValues.getOrNull(1)?.trim()?.isNotEmpty() == true),
-            )
-        }
-
         taskPrefix.find(content)?.let { found ->
             return PrefixMatch(
-                action = EditorToolbarAction.TASK,
-                start = bounds.start + indentLength,
-                end = bounds.start + indentLength + found.value.length,
+                EditorToolbarAction.TASK,
+                bounds.start + indentLength,
+                bounds.start + indentLength + found.value.length,
                 checked = found.groupValues[1].trim().isNotEmpty(),
             )
         }
-        match(EditorToolbarAction.LIST, listPrefix)?.let { return it }
-        headingPrefix.find(content)?.let { found ->
-            return PrefixMatch(
-                action = EditorToolbarAction.HEADING,
-                start = bounds.start + indentLength,
-                end = bounds.start + indentLength + found.value.length,
-                level = found.groupValues[1].length,
-            )
+        listPrefix.find(content)?.let { found ->
+            return PrefixMatch(EditorToolbarAction.LIST, bounds.start + indentLength, bounds.start + indentLength + found.value.length)
         }
-        match(EditorToolbarAction.QUOTE, quotePrefix)?.let { return it }
-        match(EditorToolbarAction.CODE_BLOCK, codeBlockPrefix)?.let { return it }
+        headingPrefix.find(content)?.let { found ->
+            return PrefixMatch(EditorToolbarAction.HEADING, bounds.start + indentLength, bounds.start + indentLength + found.value.length, level = found.groupValues[1].length)
+        }
+        quotePrefix.find(content)?.let { found ->
+            return PrefixMatch(EditorToolbarAction.QUOTE, bounds.start + indentLength, bounds.start + indentLength + found.value.length)
+        }
+        codeBlockPrefix.find(content)?.let { found ->
+            return PrefixMatch(EditorToolbarAction.CODE_BLOCK, bounds.start + indentLength, bounds.start + indentLength + found.value.length)
+        }
         orderedListPrefix.find(content)?.let { found ->
-            return PrefixMatch(
-                action = EditorToolbarAction.ORDERED_LIST,
-                start = bounds.start + indentLength,
-                end = bounds.start + indentLength + found.value.length,
-                number = found.groupValues[1].toLongOrNull(),
-            )
+            return PrefixMatch(EditorToolbarAction.ORDERED_LIST, bounds.start + indentLength, bounds.start + indentLength + found.value.length, number = found.groupValues[1].toLongOrNull())
         }
         return null
     }
 
     private fun lineBounds(text: String, position: Int): LineBounds {
         val cursor = position.coerceIn(0, text.length)
-        val start = text.lastIndexOf('\n', (cursor - 1).coerceAtLeast(0))
-            .let { if (it < 0) 0 else it + 1 }
+        val start = text.lastIndexOf('\n', (cursor - 1).coerceAtLeast(0)).let { if (it < 0) 0 else it + 1 }
         val end = text.indexOf('\n', cursor).let { if (it < 0) text.length else it }
         return LineBounds(start, end)
     }

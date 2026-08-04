@@ -19,16 +19,19 @@ import java.io.File
 class FloatingNotePickerActivity : ComponentActivity() {
     private var pendingCameraFile: File? = null
     private var pendingCameraUri: Uri? = null
+    private var activeTargetPath: String? = null
+    private var activeSource: FloatingNoteSource = FloatingNoteSource.SIDEBAR
+    private var rememberTarget = true
 
     private val imagePicker = registerForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
-        if (uris.isNotEmpty()) FloatingNoteDraftStore.addImages(this, uris)
+        if (uris.isNotEmpty()) FloatingNoteDraftStore.addImages(this, uris, activeTargetPath)
         refreshOverlayAndFinish()
     }
 
     private val attachmentPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         uri?.let {
             runCatching { contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-            FloatingNoteDraftStore.addAttachment(this, it)
+            FloatingNoteDraftStore.addAttachment(this, it, activeTargetPath)
         }
         refreshOverlayAndFinish()
     }
@@ -38,12 +41,14 @@ class FloatingNotePickerActivity : ComponentActivity() {
         if (path != null) {
             BetaLogger.log("FloatingNote/Picker", "overlay custom page selected uri=$uri path=$path")
             FloatingNoteDraftStore.setTarget(this, path)
+            refreshOverlayAndFinish(path)
         } else if (uri == null) {
             BetaLogger.log("FloatingNote/Picker", "overlay custom page picker cancelled")
+            refreshOverlayAndFinish()
         } else {
             BetaLogger.log("FloatingNote/Picker", "overlay custom page rejected uri=$uri")
+            refreshOverlayAndFinish()
         }
-        refreshOverlayAndFinish()
     }
 
     private val cameraPicker = registerForActivityResult(ActivityResultContracts.TakePicture()) { success ->
@@ -60,7 +65,7 @@ class FloatingNotePickerActivity : ComponentActivity() {
             val link = runCatching { EditorMediaUtil.imageLink(this@FloatingNotePickerActivity, uri) }.getOrNull()
             withContext(Dispatchers.Main) {
                 if (link != null) {
-                    FloatingNoteDraftStore.insertLink(this@FloatingNotePickerActivity, link)
+                    FloatingNoteDraftStore.insertLink(this@FloatingNotePickerActivity, link, activeTargetPath)
                 } else {
                     Toast.makeText(this@FloatingNotePickerActivity, "照片保存失败", Toast.LENGTH_SHORT).show()
                 }
@@ -92,7 +97,11 @@ class FloatingNotePickerActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        activeSource = intent.getStringExtra(EXTRA_SOURCE)?.let { runCatching { FloatingNoteSource.valueOf(it) }.getOrNull() }
+            ?: FloatingNoteSource.SIDEBAR
         BetaLogger.init(this, "FloatingNotePickerActivity")
+        rememberTarget = intent.getBooleanExtra(EXTRA_REMEMBER_TARGET, true)
+        activeTargetPath = intent.getStringExtra(EXTRA_TARGET_PATH)
         val mode = intent.getStringExtra(EXTRA_MODE)
         BetaLogger.log("FloatingNote/Picker", "open mode=${mode.orEmpty()}")
         when (mode) {
@@ -126,17 +135,29 @@ class FloatingNotePickerActivity : ComponentActivity() {
         cameraPicker.launch(uri)
     }
 
-    private fun refreshOverlayAndFinish() {
-        runCatching { startService(FloatingNoteService.refreshIntent(this)) }
+    private fun refreshOverlayAndFinish(selectedTargetPath: String? = null) {
+        runCatching {
+            startService(
+                FloatingNoteService.refreshIntent(
+                    this,
+                    previousTargetPath = activeTargetPath,
+                    selectedTargetPath = selectedTargetPath,
+                    source = activeSource,
+                    rememberTarget = rememberTarget,
+                )
+            )
+        }
         finish()
     }
-
     companion object {
         const val EXTRA_MODE = "picker_mode"
+        const val EXTRA_TARGET_PATH = "picker_target_path"
         const val MODE_IMAGES = "images"
         const val MODE_ATTACHMENT = "attachment"
         const val MODE_CUSTOM_PAGE = "custom_page"
         const val MODE_CAMERA = "camera"
         const val MODE_RECORD_PERMISSION = "record_permission"
+        const val EXTRA_SOURCE = "floating_source"
+        const val EXTRA_REMEMBER_TARGET = "floating_remember_target"
     }
 }

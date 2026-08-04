@@ -33,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import com.quickdaily.ui.EditorScreen
@@ -521,7 +522,7 @@ class MainActivity : ComponentActivity() {
                 awaitingFloatingPermission = false
                 FloatingNoteControllerProvider.forContext(this).showOrFocus(
                     FloatingNoteRequest(
-                        source = FloatingNoteSource.HOME_AUTH_FLOW,
+                        source = FloatingNoteSource.DESKTOP_LAUNCHER,
                         returnToHomeAfterClose = true
                     )
                 )
@@ -534,9 +535,17 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         BetaLogger.log("Lifecycle", "onPause")
-       if (::appState.isInitialized) {
-            WidgetRefreshHelper.refreshAll(this)
-       }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (EditorLifecycleRefreshPolicy.shouldRefreshOn(Lifecycle.Event.ON_STOP) && ::appState.isInitialized) {
+            BetaLogger.log("Lifecycle", "onStop editor_refresh_wait_for_save")
+            appState.saveNow {
+                BetaLogger.log("Lifecycle", "onStop editor_refresh_after_save")
+                WidgetRefreshHelper.refreshAll(applicationContext)
+            }
+        }
     }
 
     override fun onUserLeaveHint() {

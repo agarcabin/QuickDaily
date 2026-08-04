@@ -1,0 +1,3 @@
+dump=UI hierchary dumped to: /sdcard/03C-19-three-middle-page2-valid-uiautomator.xml
+
+catError=closed

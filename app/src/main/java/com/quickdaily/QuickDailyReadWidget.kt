@@ -154,6 +154,8 @@ class QuickDailyReadWidget : AppWidgetProvider() {
             // Add button
             val addIntent = Intent(ctx, NoteEditActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                putExtra("floating_source", FloatingNoteSource.WIDGET.name)
+                putExtra(NoteEditActivity.EXTRA_REMEMBER_TARGET, false)
             }
             val addPi = PendingIntent.getActivity(ctx, widgetId + 200, addIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)

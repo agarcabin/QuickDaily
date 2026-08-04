@@ -1,0 +1,3 @@
+dump=UI hierchary dumped to: /sdcard/03C-16-after-forward-clear-uiautomator.xml
+
+catError=closed

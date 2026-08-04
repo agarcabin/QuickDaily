@@ -1,11 +1,22 @@
 ﻿package com.quickdaily.util
 
 import java.io.File
+import java.security.MessageDigest
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.concurrent.locks.ReentrantLock
 import java.util.concurrent.ConcurrentHashMap
+
+data class FileFingerprint(
+    val exists: Boolean,
+    val length: Long,
+    val sha256: String,
+    val lastModified: Long,
+) {
+    fun hasSameContentAs(other: FileFingerprint?): Boolean =
+        other != null && exists == other.exists && length == other.length && sha256 == other.sha256
+}
 
 object FileUtil {
 
@@ -84,6 +95,29 @@ object FileUtil {
         } catch (e: Exception) {
             ReadResult.Error(e)
         }
+    }
+
+    /** Reads a stable content fingerprint for external-edit detection. */
+    fun fingerprint(path: String): FileFingerprint? {
+        val file = File(path)
+        if (!file.exists()) return FileFingerprint(false, 0L, "", 0L)
+        return runCatching {
+            val digest = MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    digest.update(buffer, 0, read)
+                }
+            }
+            FileFingerprint(
+                exists = true,
+                length = file.length(),
+                sha256 = digest.digest().joinToString("") { byte -> "%02x".format(byte) },
+                lastModified = file.lastModified(),
+            )
+        }.getOrNull()
     }
 
     fun writeResult(path: String, content: String): WriteResult {

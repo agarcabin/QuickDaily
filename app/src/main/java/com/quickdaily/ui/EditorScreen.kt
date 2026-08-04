@@ -1,4 +1,4 @@
-﻿package com.quickdaily.ui
+package com.quickdaily.ui
 
 import android.app.Activity
 import android.Manifest
@@ -40,6 +40,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -80,6 +81,7 @@ import com.quickdaily.EditorStampToggleState
 import com.quickdaily.TextIndentPolicy
 import com.quickdaily.EditorTextActionPolicy
 import com.quickdaily.EditorLinePrefixPolicy
+import com.quickdaily.FloatingCursorPolicy
 import com.quickdaily.EditorStampPolicy
 import com.quickdaily.ui.theme.LocalQuickDailyMotion
 import com.quickdaily.WikilinkIndexRepository
@@ -827,6 +829,7 @@ fun EditorScreen(
                         },
                         onTextLayout = { textLayoutResult = it },
                         textStyle = TextStyle(fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface, lineHeight = 24.sp),
+                        cursorBrush = SolidColor(FloatingCursorPolicy.colorFor(MaterialTheme.colorScheme.background)),
                         modifier = Modifier
                             .fillMaxWidth()
                             .defaultMinSize(minHeight = 400.dp)

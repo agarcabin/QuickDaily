@@ -1,0 +1,1 @@
+Floating editor opened from 今日任务 widget after enabling list, quote, ordered list.

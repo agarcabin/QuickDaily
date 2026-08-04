@@ -1,0 +1,11 @@
+command: adb -s 192.168.10.9:35973 shell am start -W -n com.quickdaily/.LauncherActivity
+stdout:
+Starting: Intent { cmp=com.quickdaily/.LauncherActivity }
+Status: ok
+LaunchState: COLD
+Activity: com.quickdaily/.MainActivity
+TotalTime: 339
+WaitTime: 345
+Complete
+
+stderr:

@@ -1,4 +1,4 @@
-﻿package com.quickdaily.ui
+package com.quickdaily.ui
 import android.content.Intent
 import android.app.Activity
 import android.content.ContentValues
@@ -99,6 +99,7 @@ import com.quickdaily.ui.theme.LocalAppDimensions
 import com.quickdaily.ui.theme.QuickDailyAccentPreset
 import com.quickdaily.ui.theme.QuickDailyNightMode
 import com.quickdaily.ui.theme.QuickDailyThemePreferences
+import com.quickdaily.ui.theme.shouldShowDarkBackgroundBrightness
 
 
 import androidx.compose.material.icons.filled.Widgets
@@ -589,6 +590,7 @@ fun SettingsScreen(
         addAnchorIfMissing = currentConfig.addAnchorIfMissing,
         timestampOrder = currentConfig.timestampOrder,
         enterToSave = currentConfig.enterToSave,
+        keepDraftOnFloatingClose = currentConfig.keepDraftOnFloatingClose,
         widgetImageUri = widgetImageUri,
         autoCheckUpdate = currentConfig.autoCheckUpdate,
         filterFrontmatter = currentConfig.filterFrontmatter,
@@ -611,6 +613,7 @@ fun SettingsScreen(
         widgetStyle = currentConfig.widgetStyle,
         widgetBackgroundColor = currentConfig.widgetBackgroundColor,
         widgetOpacity = currentConfig.widgetOpacity,
+        floatingOpacity = currentConfig.floatingOpacity,
         )
     }
 
@@ -1339,6 +1342,18 @@ private fun EditorSettingsTab(
                     }
                 )
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                ListItem(
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    headlineContent = { Text("悬浮窗关闭后立刻保存内容") },
+                    supportingContent = { Text("关闭后草稿内容将保存到悬浮窗中，直到手动保存。") },
+                    trailingContent = {
+                        Switch(
+                            checked = !config.keepDraftOnFloatingClose,
+                            onCheckedChange = { onConfigChange { copy(keepDraftOnFloatingClose = !it) } },
+                        )
+                    },
+                )
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                 ListItem(colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                     headlineContent = { Text("系统侧边启动器支持") },
                     supportingContent = {
@@ -1353,6 +1368,27 @@ private fun EditorSettingsTab(
                         )
                     }
                 )
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                var floatingOpacity by remember(config.floatingOpacity) {
+                    mutableIntStateOf(config.floatingOpacity)
+                }
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text("悬浮窗透明度", style = MaterialTheme.typography.bodyLarge)
+                        Text(floatingOpacity.toString() + "%", style = MaterialTheme.typography.labelMedium)
+                    }
+                    Slider(
+                        value = floatingOpacity / 100f,
+                        onValueChange = { floatingOpacity = (it * 100).roundToInt().coerceIn(0, 100) },
+                        onValueChangeFinished = { onConfigChange { copy(floatingOpacity = floatingOpacity) } },
+                    )
+                }
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
             }
         }
 
@@ -2416,7 +2452,7 @@ private fun AppearanceSettingsSection(context: android.content.Context) {
                             }
                         }
                 }
-                if (selectedNightMode == QuickDailyNightMode.DARK) {
+                if (shouldShowDarkBackgroundBrightness(selectedNightMode)) {
                     Spacer(Modifier.height(12.dp))
                     Text(
                         "暗色背景亮度 ${darkBackgroundBrightness}%",

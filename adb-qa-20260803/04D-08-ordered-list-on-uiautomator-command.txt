@@ -1,0 +1,3 @@
+dump=UI hierchary dumped to: /sdcard/04D-08-ordered-list-on-uiautomator.xml
+
+catError=closed
