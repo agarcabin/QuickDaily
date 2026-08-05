@@ -1,5 +1,7 @@
 package com.quickdaily
 
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -97,6 +99,7 @@ object BetaLogger {
         if (!enabled) return
         val prefs = context.getSharedPreferences("QuickDaily", Context.MODE_PRIVATE)
         val customPages = TaskWidgetConfigStore.recentCustomPaths(context).joinToString("|")
+        val featureStats = collectFeatureStats(context, prefs)
         log(
             "ConfigSnapshot",
             "source=$source loggingEnabled=${prefs.getBoolean("logging_enabled", false)} " +
@@ -110,14 +113,62 @@ object BetaLogger {
                 "taskCompletionSound=${prefs.getBoolean(TaskCompletionSoundPolicy.PREF_KEY, TaskCompletionSoundPolicy.DEFAULT_ENABLED)} " +
                 "taskShowCompleted=${prefs.getBoolean(TaskWidgetDisplayPolicy.SHOW_COMPLETED_PREF_KEY, TaskWidgetDisplayPolicy.DEFAULT_SHOW_COMPLETED)} " +
                 "systemSidebarSupport=${prefs.getBoolean(FloatingNoteEntryPolicy.PREF_SYSTEM_SIDEBAR_SUPPORT, FloatingNoteEntryPolicy.DEFAULT_SYSTEM_SIDEBAR_SUPPORT)} " +
-                "homeEntryMode=${prefs.getString("home_entry_mode", HomeEntryMode.OVERLAY.key).orEmpty()} " +
+                "homeEntryMode=${prefs.getString("home_entry_mode", HomeEntryMode.EDITOR.key).orEmpty()} " +
                 "themeMonet=${prefs.getBoolean("theme_use_monet", true)} " +
                 "themeAccent=${prefs.getString("theme_accent_preset", "blue").orEmpty()} " +
                 "themeNightMode=${prefs.getString("theme_night_mode", "system").orEmpty()} " +
                 "tagAutocomplete=${prefs.getBoolean("tag_autocomplete", true)} " +
                 "wikilinkAutocomplete=${prefs.getBoolean("wikilink_autocomplete", true)} " +
-                "customPages=$customPages",
+                "customPages=$customPages " +
+                "featureStats=" + LogFeatureStatsPolicy.encode(featureStats),
         )
+    }
+
+    private fun collectFeatureStats(
+        context: Context,
+        prefs: android.content.SharedPreferences,
+    ): LogFeatureStats {
+        val readIds = appWidgetIds(context, QuickDailyReadWidget::class.java)
+        val readConfigs = readIds.map { ReadWidgetConfigStore.peek(context, it) }
+        val taskIds = appWidgetIds(context, TaskWidget::class.java)
+        val taskConfigs = taskIds.map { TaskWidgetConfigStore.peek(context, it) }
+        val toolbarOrder = if (prefs.contains(EditorToolbarPolicy.PREF_ORDER)) {
+            EditorToolbarPolicy.parseOrder(prefs.getString(EditorToolbarPolicy.PREF_ORDER, null))
+        } else {
+            EditorToolbarPolicy.defaultOrder.map { it.id }
+        }
+        val toolbarVisible = if (prefs.contains(EditorToolbarPolicy.PREF_VISIBLE)) {
+            EditorToolbarPolicy.readVisible(
+                prefs.getString(EditorToolbarPolicy.PREF_VISIBLE, null),
+                prefs.getInt(EditorToolbarPolicy.PREF_SCHEMA_VERSION, 0),
+            )
+        } else {
+            EditorToolbarPolicy.defaultVisible
+        }
+        val saveOnClose = FloatingNoteEntryPolicy.shouldSaveOnClose(context)
+        return LogFeatureStats(
+            readWidgetCount = readConfigs.size,
+            readWidgetTodayCount = readConfigs.count { it.target == ReadWidgetTarget.TODAY },
+            readWidgetCustomCount = readConfigs.count { it.target == ReadWidgetTarget.CUSTOM },
+            taskWidgetCount = taskConfigs.size,
+            taskWidgetTodayCount = taskConfigs.count { it.scope == TaskWidgetScope.TODAY },
+            taskWidgetWeekCount = taskConfigs.count { it.scope == TaskWidgetScope.WEEK },
+            taskWidgetMonthCount = taskConfigs.count { it.scope == TaskWidgetScope.MONTH },
+            taskWidgetCustomCount = taskConfigs.count { it.scope == TaskWidgetScope.CUSTOM },
+            customPageCount = TaskWidgetConfigStore.recentCustomPaths(context).size,
+            floatingSaveOnClose = saveOnClose,
+            floatingKeepDraftOnClose = !saveOnClose,
+            floatingOpacityPercent = FloatingNoteAppearance.percent(context),
+            toolbarVisibleCount = toolbarVisible.size,
+            toolbarOrder = toolbarOrder,
+        )
+    }
+
+    private fun <T> appWidgetIds(context: Context, provider: Class<T>): IntArray {
+        return runCatching {
+            AppWidgetManager.getInstance(context)
+                .getAppWidgetIds(ComponentName(context, provider))
+        }.getOrDefault(IntArray(0))
     }
 
     private fun disable() {

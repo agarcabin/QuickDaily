@@ -37,7 +37,7 @@
                 android:background="@null"
                 android:contentDescription="选择任务范围"
                 android:scaleType="centerInside"
-                android:src="@android:drawable/arrow_down_float" />
+                android:src="@drawable/ic_expand_more_white" />
         </LinearLayout>
 
         <LinearLayout

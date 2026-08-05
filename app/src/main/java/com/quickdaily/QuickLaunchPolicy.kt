@@ -13,14 +13,28 @@ internal object QuickLaunchPolicy {
         categories: Set<String>?,
         vaultPath: String,
         hasStorageAccess: Boolean,
-        homeEntryMode: String = HomeEntryMode.OVERLAY.key,
-    ): Boolean {
-        return action == Intent.ACTION_MAIN &&
-            categories?.contains(Intent.CATEGORY_LAUNCHER) == true &&
-            vaultPath.isNotBlank() &&
-            hasStorageAccess &&
-            HomeEntryMode.fromKey(homeEntryMode) == HomeEntryMode.OVERLAY
-    }
+        homeEntryMode: String = HomeEntryMode.EDITOR.key,
+    ): Boolean = isConfiguredLauncher(action, categories, vaultPath, hasStorageAccess) &&
+        HomeEntryMode.fromKey(homeEntryMode) == HomeEntryMode.OVERLAY
+
+    fun shouldOpenFullScreen(
+        action: String?,
+        categories: Set<String>?,
+        vaultPath: String,
+        hasStorageAccess: Boolean,
+        homeEntryMode: String = HomeEntryMode.EDITOR.key,
+    ): Boolean = isConfiguredLauncher(action, categories, vaultPath, hasStorageAccess) &&
+        HomeEntryMode.fromKey(homeEntryMode) == HomeEntryMode.FULLSCREEN
+
+    private fun isConfiguredLauncher(
+        action: String?,
+        categories: Set<String>?,
+        vaultPath: String,
+        hasStorageAccess: Boolean,
+    ): Boolean = action == Intent.ACTION_MAIN &&
+        categories?.contains(Intent.CATEGORY_LAUNCHER) == true &&
+        vaultPath.isNotBlank() &&
+        hasStorageAccess
 
     fun shouldUseSystemOverlay(
         systemSidebarSupport: Boolean,

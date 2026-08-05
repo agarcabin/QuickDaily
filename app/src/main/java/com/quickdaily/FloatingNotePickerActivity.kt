@@ -23,9 +23,41 @@ class FloatingNotePickerActivity : ComponentActivity() {
     private var activeSource: FloatingNoteSource = FloatingNoteSource.SIDEBAR
     private var rememberTarget = true
 
-    private val imagePicker = registerForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
-        if (uris.isNotEmpty()) FloatingNoteDraftStore.addImages(this, uris, activeTargetPath)
-        refreshOverlayAndFinish()
+    private val imagePicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isEmpty()) {
+            refreshOverlayAndFinish()
+            return@registerForActivityResult
+        }
+        uris.forEach { uri ->
+            runCatching {
+                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }.onFailure { error ->
+                BetaLogger.logException("FloatingNote/Picker", "image_permission_failed uri=$uri", error)
+            }
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            val links = EditorImageInsertPolicy.processInSelectionOrder(uris) { uri ->
+                runCatching { EditorMediaUtil.imageLink(this@FloatingNotePickerActivity, uri) }
+                    .onFailure { error ->
+                        BetaLogger.logException("FloatingNote/Picker", "image_process_failed uri=$uri", error)
+                    }
+                    .getOrNull()
+            }
+            val successfulLinks = links.filterNotNull()
+            withContext(Dispatchers.Main) {
+                if (successfulLinks.isNotEmpty()) {
+                    FloatingNoteDraftStore.insertLinks(this@FloatingNotePickerActivity, successfulLinks, activeTargetPath)
+                }
+                BetaLogger.log(
+                    "FloatingNote/Picker",
+                    "images selected=${uris.size} inserted=${successfulLinks.size} target=${activeTargetPath.orEmpty()}",
+                )
+                if (successfulLinks.size < uris.size) {
+                    Toast.makeText(this@FloatingNotePickerActivity, "部分图片保存失败，请检查图片存储路径", Toast.LENGTH_LONG).show()
+                }
+                refreshOverlayAndFinish()
+            }
+        }
     }
 
     private val attachmentPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
@@ -118,7 +150,7 @@ class FloatingNotePickerActivity : ComponentActivity() {
             } else {
                 recordPermission.launch(Manifest.permission.RECORD_AUDIO)
             }
-            else -> imagePicker.launch("image/*")
+            else -> imagePicker.launch(arrayOf("image/*"))
         }
     }
 

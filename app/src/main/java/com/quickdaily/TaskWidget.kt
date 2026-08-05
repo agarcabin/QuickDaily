@@ -222,10 +222,10 @@ class TaskWidget : AppWidgetProvider() {
                 ),
             )
 
-            val homeIntent = MainActivity.editorIntent(
-                context,
-                TaskWidgetConfigStore.customFilePath(context, config)
-            )
+            val editorTarget = config.customRelativePath.takeIf {
+                config.scope == TaskWidgetScope.CUSTOM && it.isNotBlank()
+            }
+            val homeIntent = MainActivity.editorIntent(context, editorTarget)
             val homePi = PendingIntent.getActivity(
                 context,
                 widgetId + 100,

@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
@@ -102,6 +102,13 @@
             android:taskAffinity=""
             android:launchMode="singleTop" />
 
+        <activity
+            android:name=".ReadWidgetConfigActivity"
+            android:exported="false"
+            android:theme="@style/Theme.QuickDaily.Transparent"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:launchMode="singleTop" />
         <service
             android:name=".FloatingNoteService"
             android:exported="false"

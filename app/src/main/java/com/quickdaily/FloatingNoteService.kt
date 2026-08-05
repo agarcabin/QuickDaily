@@ -239,6 +239,7 @@ class FloatingNoteService : LifecycleService() {
                                 useInlineTargetMenu = true,
                                 onSave = { saveDraft() },
                                 onClose = { requestClose("close") },
+                                onFullScreen = ::openFullScreen,
                                 onHome = { requestClose("home", openHomeAfterClose = true) },
                                 imageUris = state.selectedImages,
                                 hasAttachments = state.pendingAttachments.isNotEmpty() || state.invalidAttachments.isNotEmpty(),
@@ -398,8 +399,13 @@ class FloatingNoteService : LifecycleService() {
     private fun requestClose(reason: String, openHomeAfterClose: Boolean = false) {
         if (overlayView == null || closingOverlay || closeJob?.isActive == true) return
         FloatingNoteTiming.mark("close_requested", "reason=$reason target=${state.targetRelativePath.orEmpty()}")
+        if (FloatingNoteExitPolicy.shouldDiscard(reason)) {
+            FloatingNoteDraftStore.clear(this, state.targetRelativePath)
+            completeClose(reason, openHomeAfterClose)
+            return
+        }
         val saveOnClose = FloatingNoteEntryPolicy.shouldSaveOnClose(this)
-        if (!saveOnClose || !state.hasContent()) {
+        if (!FloatingNoteExitPolicy.shouldSave(reason, saveOnClose, state.hasContent())) {
             FloatingNoteDraftStore.persistOrClear(this, state)
             completeClose(reason, openHomeAfterClose)
             return
@@ -434,7 +440,6 @@ class FloatingNoteService : LifecycleService() {
             }
         }
     }
-
     private fun completeClose(reason: String, openHomeAfterClose: Boolean) {
         if (openHomeAfterClose) openHome() else hideOverlay(reason, persistDraft = false)
     }
@@ -677,6 +682,28 @@ class FloatingNoteService : LifecycleService() {
     private fun openHome() {
         startActivity(MainActivity.editorIntent(this, state.targetRelativePath))
         hideOverlay("home", persistDraft = false)
+    }
+
+    private fun openFullScreen() {
+        if (closingOverlay) return
+        FloatingNoteDraftStore.persistOrClear(this, state)
+        val baseTitle = state.displayTitle.orEmpty().ifBlank {
+            FloatingNoteTargetStore.titleFor(this, state.targetRelativePath)
+        }
+        val title = if (baseTitle.endsWith("速录")) baseTitle else "$baseTitle 速录"
+        BetaLogger.log(
+            "FloatingNote/Fullscreen",
+            "open source=" + state.source + " target=" + state.targetRelativePath.orEmpty(),
+        )
+        startActivity(
+            NoteEditActivity.fullScreenIntent(
+                context = this,
+                source = state.source,
+                targetRelativePath = state.targetRelativePath,
+                title = title,
+            )
+        )
+        hideOverlay("fullscreen", persistDraft = false)
     }
     private fun hideOverlay(reason: String, persistDraft: Boolean = true) {
         if (closingOverlay) {

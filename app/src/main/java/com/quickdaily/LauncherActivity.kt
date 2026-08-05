@@ -45,7 +45,20 @@ class LauncherActivity : ComponentActivity() {
             } else {
                 openHomeForOverlayPermission()
             }
+        } else if (shouldOpenFullScreen()) {
+            BetaLogger.log("FloatingNote/Launch", "launcher route=fullscreen")
+            val baseTitle = FloatingNoteTargetStore.titleFor(this, null)
+            val title = if (baseTitle.endsWith("速录")) baseTitle else "$baseTitle 速录"
+            startActivity(
+                NoteEditActivity.fullScreenIntent(
+                    context = this,
+                    source = FloatingNoteSource.DESKTOP_LAUNCHER,
+                    targetRelativePath = null,
+                    title = title,
+                )
+            )
         } else {
+            BetaLogger.log("FloatingNote/Launch", "launcher route=editor_fallback")
             // First launch or unavailable storage keeps the existing full-home fallback.
             startActivity(Intent(this, MainActivity::class.java).apply {
                 addFlags(
@@ -67,6 +80,19 @@ class LauncherActivity : ComponentActivity() {
         })
     }
 
+    private fun shouldOpenFullScreen(): Boolean {
+        val prefs = getSharedPreferences("QuickDaily", 0)
+        val vaultPath = prefs.getString("vault_path", "").orEmpty()
+        return QuickLaunchPolicy.shouldOpenFullScreen(
+            action = intent.action,
+            categories = intent.categories,
+            vaultPath = vaultPath,
+            hasStorageAccess = hasStorageAccess(),
+            homeEntryMode = prefs.getString("home_entry_mode", HomeEntryMode.EDITOR.key)
+                ?: HomeEntryMode.EDITOR.key,
+        )
+    }
+
     private fun shouldOpenQuickNote(): Boolean {
         val vaultPath = getSharedPreferences("QuickDaily", 0)
             .getString("vault_path", "")
@@ -77,8 +103,8 @@ class LauncherActivity : ComponentActivity() {
             vaultPath = vaultPath,
             hasStorageAccess = hasStorageAccess(),
             homeEntryMode = getSharedPreferences("QuickDaily", 0)
-                .getString("home_entry_mode", HomeEntryMode.OVERLAY.key)
-                ?: HomeEntryMode.OVERLAY.key,
+                .getString("home_entry_mode", HomeEntryMode.EDITOR.key)
+                ?: HomeEntryMode.EDITOR.key,
         )
         BetaLogger.log(
             "FloatingNote/Launch",

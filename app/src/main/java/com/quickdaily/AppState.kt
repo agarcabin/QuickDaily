@@ -43,7 +43,7 @@ data class DiaryConfig(
     val tagAutocomplete: Boolean = true,
     val wikilinkAutocomplete: Boolean = true,
     val systemSidebarSupport: Boolean = FloatingNoteEntryPolicy.DEFAULT_SYSTEM_SIDEBAR_SUPPORT,
-    val homeEntryMode: String = HomeEntryMode.OVERLAY.key,
+    val homeEntryMode: String = HomeEntryMode.EDITOR.key,
     val toolbarOrder: List<String> = EditorToolbarPolicy.defaultOrder.map { it.id },
     val toolbarVisible: Set<String> = EditorToolbarPolicy.defaultVisible,
     val loggingEnabled: Boolean = false,
@@ -251,7 +251,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
                 FloatingNoteEntryPolicy.PREF_SYSTEM_SIDEBAR_SUPPORT,
                 FloatingNoteEntryPolicy.DEFAULT_SYSTEM_SIDEBAR_SUPPORT,
             ),
-            homeEntryMode = HomeEntryMode.fromKey(prefs.getString("home_entry_mode", HomeEntryMode.OVERLAY.key)).key,
+            homeEntryMode = HomeEntryMode.fromKey(prefs.getString("home_entry_mode", HomeEntryMode.EDITOR.key)).key,
             toolbarOrder = if (prefs.contains(EditorToolbarPolicy.PREF_ORDER)) {
                 EditorToolbarPolicy.migrateOrder(
                     prefs.getString(EditorToolbarPolicy.PREF_ORDER, null),
@@ -615,7 +615,9 @@ class AppState(application: Application) : AndroidViewModel(application) {
                 }
             }
             if (request == null) {
-                loadToday()
+                val currentTarget = synchronized(loadLock) { _editorTargetRelativePath.value }
+                val targetToReload = EditorReloadTargetPolicy.targetToReload(currentTarget)
+                if (targetToReload.isBlank()) loadToday() else loadEditorTarget(targetToReload)
                 return@launch
             }
             val mtime = FileUtil.lastModified(request.absolutePath)

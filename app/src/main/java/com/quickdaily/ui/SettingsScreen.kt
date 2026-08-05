@@ -94,6 +94,7 @@ import com.quickdaily.util.DateUtil
 import com.quickdaily.util.ShortcutHelper
 import com.quickdaily.util.UriUtil
 import kotlinx.coroutines.launch
+
 import kotlinx.coroutines.flow.distinctUntilChanged
 import com.quickdaily.ui.theme.LocalAppDimensions
 import com.quickdaily.ui.theme.QuickDailyAccentPreset
@@ -123,6 +124,52 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
+
+private const val CHANGELOG_1_9 = """1.9:
+• 新增 悬浮窗透明度设置
+• 新增 悬浮窗全屏/悬浮窗模式切换
+• 新增 悬浮窗自定义页面录入
+• 新增 悬浮窗沿用上次选择的目标位置
+• 新增 悬浮窗标题拖动悬浮窗位置
+• 新增 悬浮窗关闭后保留草稿内容开关
+• 新增 首页自定义设置，可选择编辑页/悬浮窗录入/全屏录入
+• 新增 工具栏顺序自定义
+• 新增 工具栏按钮：删除线、分割线、Markdown 链接、行内代码、代码块、有序列表、双链、拍照、录音、剪切行、上移、下移、时间戳、日期戳、缩进、反缩进
+• 新增 输入 "[[" 后根据页面内容自动补全
+• 新增 双链补全悬浮窗页面别称支持
+• 新增 时间戳格式："- YYYY-MM-DD hh:mm"
+• 新增 时间格式对 "dd周" 的解析支持
+• 新增 任务小部件自定义页面任务显示
+• 新增 任务小部件子任务显示
+• 新增 任务小部件显示任务完整内容开关
+• 新增 任务小部件显示已完成任务开关
+• 新增 便签小部件自定义页面
+• 新增 夜间模式
+• 新增 莫奈取色
+• 新增 自定义深色模式背景亮度
+• 新增 权限申请列表
+• 调整 使用 MD3 风格，重绘 UI
+• 调整 标签和双链补全悬浮窗样式
+• 调整 关于页面信息排版
+• 调整 悬浮窗首页 Logo，点击后进入编辑页
+• 调整 悬浮窗下拉框
+• 调整 悬浮窗文件名过长时省略部分文本
+• 调整 编辑页面，支持子任务缩进渲染
+• 调整 第二次点击日期戳或时间戳按钮时撤回插入内容
+• 调整 输入法弹出速度优化
+• 调整 双链补全内容，包含页面别称
+• 调整 自定义图片，支持 PNG 格式
+• 修复 悬浮窗拉起相机时概率覆盖相机的问题
+• 修复 悬浮窗点击下方空白处无法拉起输入法的问题
+• 修复 悬浮窗添加图片时概率失效的问题
+• 修复 侧边栏启动器悬浮窗概率闪退的问题
+• 修复 侧边栏启动器悬浮窗遮挡自定义文件选择器的问题
+• 修复 子任务渲染失败的问题
+• 修复 标题、列表、任务等格式混用时导致的文本错误
+• 修复 澎湃系统无法选择自定义页面任务的问题
+• 修复 文件名解析 "dd" 出错的问题
+• 修复 便签小部件内容更新不及时的问题
+• 修复 澎湃系统图速记添加附件时概率闪退的问题"""
 
 private typealias ConfigChange = DiaryConfig.() -> DiaryConfig
 private typealias OnConfigChange = (ConfigChange) -> Unit
@@ -1250,16 +1297,16 @@ private fun EditorSettingsTab(
                 )
                 Spacer(Modifier.height(8.dp))
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    SegmentedButton(
-                        selected = HomeEntryMode.fromKey(config.homeEntryMode) == HomeEntryMode.OVERLAY,
-                        onClick = { onConfigChange { copy(homeEntryMode = HomeEntryMode.OVERLAY.key) } },
-                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-                    ) { Text(HomeEntryMode.OVERLAY.label) }
-                    SegmentedButton(
-                        selected = HomeEntryMode.fromKey(config.homeEntryMode) == HomeEntryMode.EDITOR,
-                        onClick = { onConfigChange { copy(homeEntryMode = HomeEntryMode.EDITOR.key) } },
-                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-                    ) { Text(HomeEntryMode.EDITOR.label) }
+                    HomeEntryMode.entries.forEachIndexed { index, mode ->
+                        SegmentedButton(
+                            selected = HomeEntryMode.fromKey(config.homeEntryMode) == mode,
+                            onClick = { onConfigChange { copy(homeEntryMode = mode.key) } },
+                            shape = SegmentedButtonDefaults.itemShape(
+                                index = index,
+                                count = HomeEntryMode.entries.size,
+                            ),
+                        ) { Text(mode.label) }
+                    }
                 }
                 HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
                 ListItem(colors = ListItemDefaults.colors(containerColor = Color.Transparent),
@@ -2170,7 +2217,8 @@ private fun OtherTab(
 
                 Text("更新内容：", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
                 if (showAllChangelog) {
-                Text("1.8:\n" +
+                Text(CHANGELOG_1_9 + "\n\n" +
+                    "1.8:\n" +
                     "• 新增 小部件大小调整支持自适应\n" +
                     "• 新增 任务小部件滴声开关\n" +
                     "• 新增 任务小部件完成时间戳\n" +
@@ -2251,21 +2299,8 @@ private fun OtherTab(
                     "• 开源发布到 GitHub",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                 } else {
-                    Text(
-                        "1.8:\n" +
-                            "• 新增 小部件大小调整支持自适应\n" +
-                            "• 新增 任务小部件滴声开关\n" +
-                            "• 新增 任务小部件完成时间戳\n" +
-                            "• 新增 自定义ob配置文件路径\n" +
-                            "• 新增 系统自带侧边栏启动器触发悬浮窗\n" +
-                            "• 调整 悬浮窗光标颜色自适应\n" +
-                            "• 调整 更完整的调试日志收集\n" +
-                            "• 调整 降低小部件刷新频率，防止小部件卡死\n" +
-                            "• 调整 配置文件统一存放目录 0/Document/QuickDaily\n" +
-                            "• 调整 首页调整为悬浮窗，原首页调整为次级编辑器页面，入口在悬浮窗左上角\n" +
-                            "• 修复 快速添加（桌面图标）添加失败\n" +
-                            "• 修复 图片堆积BUG\n" +
-                            "• 修复 小部件回车换行失效",
+                Text(
+                        CHANGELOG_1_9,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     )

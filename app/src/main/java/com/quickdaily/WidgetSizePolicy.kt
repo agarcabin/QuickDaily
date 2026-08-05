@@ -42,6 +42,7 @@ object WidgetSizePolicy {
 
     fun applyReadChrome(views: RemoteViews, size: WidgetSize) {
         views.setViewVisibility(R.id.btn_eye, if (size.isNarrow) View.GONE else View.VISIBLE)
+        views.setViewVisibility(R.id.btn_scope, if (size.isTiny) View.GONE else View.VISIBLE)
         views.setViewVisibility(R.id.btn_home, if (size.isTiny) View.GONE else View.VISIBLE)
         views.setFloat(R.id.widget_title, "setTextSize", if (size.isTiny) 11f else 13f)
     }

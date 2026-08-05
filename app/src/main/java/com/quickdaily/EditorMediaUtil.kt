@@ -44,4 +44,9 @@ object EditorMediaUtil {
         val cursor = start + insertion.length
         return TextFieldValue(nextText, TextRange(cursor))
     }
+
+    fun insertLinks(text: String, selection: TextRange, links: List<String>): TextFieldValue =
+        links.fold(TextFieldValue(text, selection)) { current, link ->
+            insertLink(current.text, current.selection, link)
+        }
 }

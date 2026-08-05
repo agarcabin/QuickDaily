@@ -398,6 +398,29 @@ object FloatingNoteDraftStore {
         persist(context, state)
     }
 
+    fun insertLinks(context: Context, links: List<String>, targetRelativePath: String? = null) {
+        if (links.isEmpty()) return
+        val state = FloatingNoteEditorState(context)
+        loadInto(context, state, FloatingNoteRequest(
+            FloatingNoteSource.SIDEBAR,
+            returnToHomeAfterClose = false,
+            targetRelativePath = targetRelativePath,
+        ))
+        val next = EditorMediaUtil.insertLinks(
+            state.text,
+            TextRange(state.selectionStart, state.selectionEnd),
+            links,
+        )
+        state.text = next.text
+        state.selectionStart = next.selection.start
+        state.selectionEnd = next.selection.end
+        persist(context, state)
+        BetaLogger.log(
+            "FloatingNote/Draft",
+            "insertLinks targetKey=${FloatingNoteDraftTargetPolicy.keyFor(context, targetRelativePath)} count=${links.size} textLength=${state.text.length}",
+        )
+    }
+
     private data class StoredDraft(
         val text: String,
         val images: List<Uri>,

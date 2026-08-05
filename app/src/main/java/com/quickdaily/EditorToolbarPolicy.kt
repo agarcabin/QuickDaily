@@ -35,12 +35,13 @@ enum class EditorToolbarAction(val id: String, val label: String) {
 }
 
 enum class HomeEntryMode(val key: String, val label: String) {
-    OVERLAY("overlay", "悬浮窗"),
+    OVERLAY("overlay", "悬浮窗速录"),
+    FULLSCREEN("fullscreen", "全屏速录"),
     EDITOR("editor", "编辑页面");
 
     companion object {
         fun fromKey(key: String?): HomeEntryMode =
-            entries.firstOrNull { it.key == key } ?: OVERLAY
+            entries.firstOrNull { it.key == key } ?: EDITOR
     }
 }
 

@@ -30,4 +30,13 @@ class EditorMediaUtilTest {
         assertEquals("before ![[photo.png]]\n after", result.text)
         assertEquals(TextRange(22), result.selection)
     }
+
+    @Test
+    fun insertLinksKeepsSelectionOrderAndAdvancesTheCursor() {
+        val links = listOf("![[first.png]]", "![[second.png]]")
+        val result = EditorMediaUtil.insertLinks("before", TextRange(6), links)
+
+        assertEquals("before![[first.png]]\n![[second.png]]\n", result.text)
+        assertEquals(TextRange(result.text.length), result.selection)
+    }
 }

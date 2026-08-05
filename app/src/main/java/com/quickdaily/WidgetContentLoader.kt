@@ -45,22 +45,42 @@ object WidgetContentLoader {
     /** Extra left padding per nested task level in both widget renderers. */
     const val SUBTASK_INDENT_DP = 20
 
-    fun loadRead(context: Context): WidgetLoadResult<List<ReadWidgetItem>> {
+    fun loadRead(context: Context): WidgetLoadResult<List<ReadWidgetItem>> =
+        loadRead(context, ReadWidgetConfig())
+
+    fun loadRead(
+        context: Context,
+        widgetConfig: ReadWidgetConfig,
+    ): WidgetLoadResult<List<ReadWidgetItem>> {
+        val customTarget = widgetConfig.target == ReadWidgetTarget.CUSTOM
         return try {
             val prefs = context.getSharedPreferences("QuickDaily", 0)
-            val vaultPath = prefs.getString("vault_path", "") ?: ""
-            if (vaultPath.isBlank()) return WidgetLoadResult.Empty("请先配置仓库")
+            val vaultPath = prefs.getString("vault_path", "").orEmpty()
+            if (vaultPath.isBlank()) {
+                return if (customTarget) {
+                    WidgetLoadResult.Failure("页面不存在")
+                } else {
+                    WidgetLoadResult.Empty("请先配置仓库")
+                }
+            }
 
-            val diaryFolder = prefs.getString("diary_folder", "Daily") ?: "Daily"
-            val dateFormat = prefs.getString("date_format", "YYYY-MM-DD") ?: "YYYY-MM-DD"
-            val date = DateUtil.todayStr(dateFormat)
-            val path = "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/$date.md"
+            val path = ReadWidgetConfigStore.targetFilePath(context, widgetConfig)
+                ?: return if (customTarget) {
+                    WidgetLoadResult.Failure("页面不存在")
+                } else {
+                    WidgetLoadResult.Empty("请先配置仓库")
+                }
+            val emptyMessage = if (customTarget) "暂无内容" else "暂无日记"
             val content = when (val result = FileUtil.readResult(path)) {
                 is ReadResult.Success -> result.content
-                is ReadResult.NotFound -> return WidgetLoadResult.Empty("暂无日记", path)
+                is ReadResult.NotFound -> return if (customTarget) {
+                    WidgetLoadResult.Failure("页面不存在", path)
+                } else {
+                    WidgetLoadResult.Empty(emptyMessage, path)
+                }
                 is ReadResult.Error -> return WidgetLoadResult.Failure("读取失败", path, result.exception)
             }
-            if (content.isBlank()) return WidgetLoadResult.Empty("暂无日记", path)
+            if (content.isBlank()) return WidgetLoadResult.Empty(emptyMessage, path)
 
             val parsedContent = ContentUtil.parseFrontmatter(content)
             val normalizedContent = content.replace("\r\n", "\n")
@@ -70,7 +90,7 @@ object WidgetContentLoader {
             } else {
                 normalizedContent
             }
-            if (displayContent.isBlank()) return WidgetLoadResult.Empty("暂无日记", path)
+            if (displayContent.isBlank()) return WidgetLoadResult.Empty(emptyMessage, path)
 
             val renderMarkdown = prefs.getBoolean("render_markdown", true)
             val items = if (!renderMarkdown) {
@@ -91,16 +111,16 @@ object WidgetContentLoader {
             val taskCount = items.count { it.type == "task" }
             BetaLogger.log(
                 "ReadWidget/Parse",
-                "path=$path renderMarkdown=$renderMarkdown filterFrontmatter=$filterFrontmatter " +
-                    "displayLines=${displayContent.lines().size} visibleTasks=$taskCount",
+                "path=$path target=${widgetConfig.target.key} renderMarkdown=$renderMarkdown " +
+                    "filterFrontmatter=$filterFrontmatter displayLines=${displayContent.lines().size} " +
+                    "visibleTasks=$taskCount",
             )
-            if (items.isEmpty()) WidgetLoadResult.Empty("暂无日记", path)
+            if (items.isEmpty()) WidgetLoadResult.Empty(emptyMessage, path)
             else WidgetLoadResult.Success(items, path)
         } catch (e: Exception) {
             WidgetLoadResult.Failure("读取失败", exception = e)
         }
     }
-
     internal fun parseReadLines(
         displayContent: String,
         taskBody: String,

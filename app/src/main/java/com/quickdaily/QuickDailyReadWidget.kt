@@ -11,7 +11,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.widget.RemoteViews
-import com.quickdaily.util.DateUtil
+
 
 class QuickDailyReadWidget : AppWidgetProvider() {
 
@@ -37,11 +37,26 @@ class QuickDailyReadWidget : AppWidgetProvider() {
         WidgetRefreshCoordinator.refreshRead(context, immediate = true)
     }
 
+    override fun onDeleted(context: Context, appWidgetIds: IntArray) {
+        BetaLogger.init(context)
+        BetaLogger.log("ReadWidget", "onDeleted widgetIds=" + appWidgetIds.joinToString())
+        appWidgetIds.forEach { ReadWidgetConfigStore.clear(context, it) }
+        super.onDeleted(context, appWidgetIds)
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
         BetaLogger.init(context)
         BetaLogger.log("ReadWidget", "onReceive action=${intent.action} widgetId=${intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1)}")
         try { super.onReceive(context, intent) } catch (_: Exception) { }
-        if (ACTION_TOGGLE_MARKDOWN == intent.action) {
+        if (ACTION_SCOPE == intent.action) {
+            val widgetId = intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, INVALID_WIDGET_ID)
+            if (widgetId >= 0) {
+                context.startActivity(Intent(context, ReadWidgetConfigActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+                })
+            }
+        } else if (ACTION_TOGGLE_MARKDOWN == intent.action) {
             val prefs = context.getSharedPreferences("QuickDaily", 0)
             val current = prefs.getBoolean("render_markdown", true)
             prefs.edit().putBoolean("render_markdown", !current).apply()
@@ -68,6 +83,7 @@ class QuickDailyReadWidget : AppWidgetProvider() {
 
     companion object {
         const val ACTION_TOGGLE_MARKDOWN = "com.quickdaily.READ_TOGGLE_MARKDOWN"
+        private const val ACTION_SCOPE = "com.quickdaily.READ_SELECT_PAGE"
         const val ACTION_MIDNIGHT_REFRESH = "com.quickdaily.READ_MIDNIGHT_REFRESH"
 
         fun scheduleMidnightRefresh(context: Context) {
@@ -95,9 +111,12 @@ class QuickDailyReadWidget : AppWidgetProvider() {
                 val component = ComponentName(context, QuickDailyReadWidget::class.java)
                 val ids = manager.getAppWidgetIds(component)
                 BetaLogger.log("ReadWidget", "refreshNow widgetCount=${ids.size} widgetIds=${ids.joinToString()}")
-                val result = WidgetContentLoader.loadRead(context)
-                logWidgetResult("ReadWidget", result)
-                for (id in ids) updateWidget(context, manager, id, result)
+                for (id in ids) {
+                    val config = ReadWidgetConfigStore.load(context, id)
+                    val result = WidgetContentLoader.loadRead(context, config)
+                    logWidgetResult("ReadWidget[$id]", result)
+                    updateWidget(context, manager, id, result)
+                }
                 if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) {
                     manager.notifyAppWidgetViewDataChanged(ids, R.id.content_list)
                     BetaLogger.log("ReadWidget", "notifyDataChanged sent widgetCount=${ids.size}")
@@ -133,20 +152,22 @@ class QuickDailyReadWidget : AppWidgetProvider() {
             widgetId: Int,
             result: WidgetLoadResult<List<ReadWidgetItem>>?
         ) {
+            val config = ReadWidgetConfigStore.load(ctx, widgetId)
             val views = RemoteViews(ctx.packageName, R.layout.widget_diary_read)
             val appearance = WidgetAppearance.colors(ctx)
             val size = WidgetSizePolicy.forWidget(manager, widgetId)
             BetaLogger.log(
                 "ReadWidget/Render",
-                "widgetId=$widgetId size=$size result=${result?.javaClass?.simpleName ?: "loading"}",
+                "widgetId=" + widgetId + " target=" + config.target.key + " pathConfigured=" + config.customRelativePath.isNotBlank() + " size=" + size + " result=" + (result?.javaClass?.simpleName ?: "loading"),
             )
             WidgetAppearance.applyRoot(views, R.id.widget_root, appearance)
             WidgetSizePolicy.applyReadChrome(views, size)
 
             // Editor page button
-            val homeIntent = Intent(ctx, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            val editorTarget = config.customRelativePath.takeIf {
+                config.target == ReadWidgetTarget.CUSTOM && it.isNotBlank()
             }
+            val homeIntent = MainActivity.editorIntent(ctx, editorTarget)
             val homePi = PendingIntent.getActivity(ctx, widgetId + 100, homeIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             views.setOnClickPendingIntent(R.id.btn_home, homePi)
@@ -155,11 +176,25 @@ class QuickDailyReadWidget : AppWidgetProvider() {
             val addIntent = Intent(ctx, NoteEditActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
                 putExtra("floating_source", FloatingNoteSource.WIDGET.name)
+                putExtra(NoteEditActivity.EXTRA_TARGET_RELATIVE_PATH, editorTarget.orEmpty())
+                putExtra(NoteEditActivity.EXTRA_DIALOG_TITLE, "${ReadWidgetConfigStore.displayName(config)} 速录")
                 putExtra(NoteEditActivity.EXTRA_REMEMBER_TARGET, false)
             }
             val addPi = PendingIntent.getActivity(ctx, widgetId + 200, addIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             views.setOnClickPendingIntent(R.id.btn_add, addPi)
+
+            val scopeIntent = Intent(ctx, QuickDailyReadWidget::class.java).apply {
+                action = ACTION_SCOPE
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+            }
+            val scopePi = PendingIntent.getBroadcast(
+                ctx,
+                widgetId + 400,
+                scopeIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            views.setOnClickPendingIntent(R.id.btn_scope, scopePi)
 
             // Eye button - toggle via broadcast (no ToggleMarkdownActivity needed)
             val toggleIntent = Intent(ctx, QuickDailyReadWidget::class.java).apply { action = ACTION_TOGGLE_MARKDOWN }
@@ -171,9 +206,7 @@ class QuickDailyReadWidget : AppWidgetProvider() {
                 if (renderMd) R.drawable.ic_eye_on_white else R.drawable.ic_eye_off_white)
 
             // Title
-            val prefs = ctx.getSharedPreferences("QuickDaily", 0)
-            val dateFormat = prefs.getString("date_format", "YYYY-MM-DD") ?: "YYYY-MM-DD"
-            views.setTextViewText(R.id.widget_title, DateUtil.todayStr(dateFormat))
+            views.setTextViewText(R.id.widget_title, ReadWidgetConfigStore.displayName(config))
             views.setTextColor(R.id.widget_title, appearance.foreground)
             views.setTextColor(R.id.empty_view, appearance.muted)
             val effectiveResult = result ?: WidgetLoadResult.Empty("正在加载…")
@@ -208,6 +241,7 @@ class QuickDailyReadWidget : AppWidgetProvider() {
             manager.updateAppWidget(widgetId, views)
         }
 
+        private const val INVALID_WIDGET_ID = -1
         private const val ACTION_TOGGLE_TASK = "com.quickdaily.READ_TOGGLE_TASK"
     }
 }

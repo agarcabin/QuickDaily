@@ -86,6 +86,17 @@ object TaskWidgetConfigStore {
         BetaLogger.log("TaskWidgetConfig", "clear widgetId=$widgetId")
     }
 
+    /** Read an existing instance without creating a default/migration entry. */
+    internal fun peek(context: Context, widgetId: Int): TaskWidgetConfig {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val storedScope = prefs.getString(scopeKey(widgetId), null)
+        val scope = TaskWidgetScope.fromKey(storedScope ?: prefs.getString("task_period", "today"))
+        return TaskWidgetConfig(
+            scope = scope,
+            customRelativePath = prefs.getString(pathKey(widgetId), "").orEmpty().trim(),
+        )
+    }
+
     fun customFilePath(context: Context, config: TaskWidgetConfig): String? {
         if (config.scope != TaskWidgetScope.CUSTOM || config.customRelativePath.isBlank()) return null
         if (!isMarkdownPath(config.customRelativePath)) return null

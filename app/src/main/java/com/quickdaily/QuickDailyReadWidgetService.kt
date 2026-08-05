@@ -58,7 +58,8 @@ class ReadViewsFactory(private val context: Context, private val widgetId: Int) 
 
     private fun loadContent() {
         lines.clear()
-        val result = WidgetContentLoader.loadRead(context)
+        val config = ReadWidgetConfigStore.load(context, widgetId)
+        val result = WidgetContentLoader.loadRead(context, config)
         if (result is WidgetLoadResult.Success) {
             lines.addAll(result.value)
         } else {

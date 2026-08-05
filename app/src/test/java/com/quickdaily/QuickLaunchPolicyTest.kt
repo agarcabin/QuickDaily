@@ -15,12 +15,11 @@ class QuickLaunchPolicyTest {
                 action = launcherAction,
                 categories = setOf(launcherCategory),
                 vaultPath = "C:/Vault",
-                hasStorageAccess = true
+                hasStorageAccess = true,
+                homeEntryMode = HomeEntryMode.OVERLAY.key,
             )
         )
-    }
-
-    @Test
+    }    @Test
     fun nonLauncherIntentKeepsExistingDestination() {
         assertFalse(
             QuickLaunchPolicy.shouldOpenQuickNote(
@@ -65,6 +64,40 @@ class QuickLaunchPolicyTest {
                 vaultPath = "C:/Vault",
                 hasStorageAccess = true,
                 homeEntryMode = HomeEntryMode.EDITOR.key,
+            )
+        )
+    }
+
+    @Test
+    fun configuredLauncherWithFullscreenModeOpensFullscreenEditor() {
+        assertTrue(
+            QuickLaunchPolicy.shouldOpenFullScreen(
+                action = launcherAction,
+                categories = setOf(launcherCategory),
+                vaultPath = "C:/Vault",
+                hasStorageAccess = true,
+                homeEntryMode = HomeEntryMode.FULLSCREEN.key,
+            )
+        )
+        assertFalse(
+            QuickLaunchPolicy.shouldOpenFullScreen(
+                action = launcherAction,
+                categories = setOf(launcherCategory),
+                vaultPath = "C:/Vault",
+                hasStorageAccess = true,
+                homeEntryMode = HomeEntryMode.EDITOR.key,
+            )
+        )
+    }
+
+    @Test
+    fun defaultLauncherModeIsEditor() {
+        assertFalse(
+            QuickLaunchPolicy.shouldOpenQuickNote(
+                action = launcherAction,
+                categories = setOf(launcherCategory),
+                vaultPath = "C:/Vault",
+                hasStorageAccess = true,
             )
         )
     }

@@ -14,6 +14,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -27,6 +31,9 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FormatBold
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material.icons.filled.FormatListBulleted
@@ -46,6 +53,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.TextFieldValue
@@ -174,6 +182,21 @@ class NoteEditActivity : ComponentActivity() {
         const val EXTRA_TARGET_RELATIVE_PATH = "target_relative_path"
         const val EXTRA_DIALOG_TITLE = "dialog_title"
         const val EXTRA_REMEMBER_TARGET = "floating_remember_target"
+        const val EXTRA_FULLSCREEN = "fullscreen_quick_note"
+
+        fun fullScreenIntent(
+            context: android.content.Context,
+            source: FloatingNoteSource,
+            targetRelativePath: String?,
+            title: String?,
+        ): Intent = Intent(context, NoteEditActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            putExtra(EXTRA_FULLSCREEN, true)
+            putExtra("floating_source", source.name)
+            putExtra(EXTRA_TARGET_RELATIVE_PATH, targetRelativePath.orEmpty())
+            putExtra(EXTRA_DIALOG_TITLE, title.orEmpty())
+            putExtra(EXTRA_REMEMBER_TARGET, false)
+        }
     }
 
     private var noteText by mutableStateOf("")
@@ -188,6 +211,7 @@ class NoteEditActivity : ComponentActivity() {
     private lateinit var floatingDraft: FloatingNoteEditorState
     private var floatingSource = FloatingNoteSource.WIDGET
     private var rememberTarget = true
+    private var fullScreen by mutableStateOf(false)
 
     private var toolbarOrder by mutableStateOf(EditorToolbarPolicy.defaultOrder.map { it.id })
     private var toolbarVisible by mutableStateOf(EditorToolbarPolicy.defaultVisible)
@@ -237,6 +261,7 @@ class NoteEditActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        fullScreen = intent.getBooleanExtra(EXTRA_FULLSCREEN, false)
         BetaLogger.init(this, "NoteEditActivity")
         floatingSource = intent.getStringExtra("floating_source")
             ?.let { runCatching { FloatingNoteSource.valueOf(it) }.getOrNull() }
@@ -251,14 +276,15 @@ class NoteEditActivity : ComponentActivity() {
         val requestedTarget = intent.getStringExtra(EXTRA_TARGET_RELATIVE_PATH)
             ?.trim()
             ?.takeIf { it.isNotBlank() }
+        val requestedDialogTitle = intent.getStringExtra(EXTRA_DIALOG_TITLE)
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
         val request = FloatingNoteRequest(
             source = floatingSource,
             prefillText = intent.getStringExtra("prefill_text").orEmpty(),
             returnToHomeAfterClose = returnToHomeAfterClose,
             targetRelativePath = requestedTarget,
-            displayTitle = intent.getStringExtra(EXTRA_DIALOG_TITLE)
-                ?.trim()
-                ?.takeIf { it.isNotBlank() },
+            displayTitle = requestedDialogTitle,
             requestId = requestId,
             rememberTarget = rememberTarget,
         )
@@ -269,8 +295,12 @@ class NoteEditActivity : ComponentActivity() {
         pendingAttachments.addAll(floatingDraft.pendingAttachments)
         selectionRange = TextRange(floatingDraft.selectionStart, floatingDraft.selectionEnd)
         targetRelativePath = floatingDraft.targetRelativePath
-        dialogTitle = floatingDraft.displayTitle
-            ?: FloatingNoteTargetStore.titleFor(this, targetRelativePath)
+        dialogTitle = if (fullScreen) {
+            requestedDialogTitle ?: floatingDraft.displayTitle
+        } else {
+            floatingDraft.displayTitle
+        } ?: FloatingNoteTargetStore.titleFor(this, targetRelativePath)
+        dialogTitle = titleForCurrentMode(dialogTitle)
         targetOptions = FloatingNoteTargetStore.options(this, targetRelativePath)
         BetaLogger.log(
             "FloatingNote/Selection",
@@ -297,7 +327,7 @@ class NoteEditActivity : ComponentActivity() {
         }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                closeFloatingEditor()
+                closeFloatingEditor(fromBack = true)
             }
         })
         lifecycleScope.launch {
@@ -308,35 +338,54 @@ class NoteEditActivity : ComponentActivity() {
             }
         }
         val dm = resources.displayMetrics
-        val w = (dm.widthPixels * 0.88f).toInt()
-        val h = (dm.heightPixels * 0.35f).toInt()
-        val fallbackPosition = FloatingNotePositionPolicy.defaultPosition(
-            dm.widthPixels,
-            dm.heightPixels,
-            w,
-            h,
-        )
-        val position = FloatingNotePositionPolicy.clamp(
-            FloatingNotePositionPolicy.load(this, fallbackPosition),
-            dm.widthPixels,
-            dm.heightPixels,
-            w,
-            h,
-        )
-
-        window?.apply {
-            addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
-            addFlags(WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH)
-            val lp = attributes
-            lp.gravity = Gravity.TOP or Gravity.START
-            lp.x = position.x; lp.y = position.y; lp.width = w; lp.height = h
-            lp.dimAmount = 0.0f
-            lp.format = android.graphics.PixelFormat.TRANSLUCENT
-            lp.alpha = FloatingNoteAppearance.alpha(this@NoteEditActivity)
-            lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_DIM_BEHIND.inv()
-            attributes = lp
+        val w = if (fullScreen) dm.widthPixels else (dm.widthPixels * 0.88f).toInt()
+        val h = if (fullScreen) dm.heightPixels else (dm.heightPixels * 0.35f).toInt()
+        if (fullScreen) {
+            window?.apply {
+                clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
+                clearFlags(WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH)
+                val lp = attributes
+                lp.gravity = Gravity.TOP or Gravity.START
+                lp.x = 0
+                lp.y = 0
+                lp.width = WindowManager.LayoutParams.MATCH_PARENT
+                lp.height = WindowManager.LayoutParams.MATCH_PARENT
+                lp.dimAmount = 0.0f
+                lp.format = android.graphics.PixelFormat.OPAQUE
+                lp.alpha = 1.0f
+                lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_DIM_BEHIND.inv()
+                attributes = lp
+            }
+        } else {
+            val fallbackPosition = FloatingNotePositionPolicy.defaultPosition(
+                dm.widthPixels,
+                dm.heightPixels,
+                w,
+                h,
+            )
+            val position = FloatingNotePositionPolicy.clamp(
+                FloatingNotePositionPolicy.load(this, fallbackPosition),
+                dm.widthPixels,
+                dm.heightPixels,
+                w,
+                h,
+            )
+            window?.apply {
+                addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
+                addFlags(WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH)
+                val lp = attributes
+                lp.gravity = Gravity.TOP or Gravity.START
+                lp.x = position.x
+                lp.y = position.y
+                lp.width = w
+                lp.height = h
+                lp.dimAmount = 0.0f
+                lp.format = android.graphics.PixelFormat.TRANSLUCENT
+                lp.alpha = FloatingNoteAppearance.alpha(this@NoteEditActivity)
+                lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_DIM_BEHIND.inv()
+                attributes = lp
+            }
         }
-
         FloatingNoteTiming.mark("activity_content_set_start", "host=activity width=$w height=$h alpha=${FloatingNoteAppearance.alpha(this)}")
         setContent {
             QuickDailyTheme {
@@ -356,7 +405,7 @@ class NoteEditActivity : ComponentActivity() {
                         targetOptions = targetOptions,
                         onTargetChange = { option ->
                             targetRelativePath = option.path
-                            dialogTitle = option.title
+                            dialogTitle = titleForCurrentMode(option.title)
                             if (rememberTarget) {
                                 FloatingNoteTargetMemory.remember(this@NoteEditActivity, floatingSource, option.path)
                             }
@@ -372,7 +421,7 @@ class NoteEditActivity : ComponentActivity() {
                             BetaLogger.log("FloatingNote/Selection", "remove path=$path")
                             if (targetRelativePath == path) {
                                 targetRelativePath = null
-                                dialogTitle = FloatingNoteTargetStore.titleFor(this@NoteEditActivity, null)
+                                dialogTitle = titleForCurrentMode(FloatingNoteTargetStore.titleFor(this@NoteEditActivity, null))
                                 if (rememberTarget) {
                                     FloatingNoteTargetMemory.remember(this@NoteEditActivity, floatingSource, null)
                                 }
@@ -380,16 +429,13 @@ class NoteEditActivity : ComponentActivity() {
                             TaskWidgetConfigStore.removeCustomPage(this@NoteEditActivity, path)
                             targetOptions = FloatingNoteTargetStore.options(this@NoteEditActivity, targetRelativePath)
                         },
-                        onSave = {
-                            if (hasRealContent(noteText) || selectedImages.isNotEmpty() || pendingAttachments.isNotEmpty()) {
-                                appendToDiary(noteText.trim())
-                            } else {
-                                FloatingNoteDraftStore.clear(this@NoteEditActivity, targetRelativePath)
-                                finishEditor()
-                            }
-                        },
-                        onClose = { closeFloatingEditor() },
+                        onSave = ::saveEditor,
+                        onClose = { closeFloatingEditor(discard = true) },
+                        onTopAction = { if (fullScreen) saveEditor() else closeFloatingEditor(discard = true) },
+                        topActionText = if (fullScreen) "保存" else "关闭",
+                        fullScreen = fullScreen,
                         onHome = { closeFloatingEditor(openHomeAfterClose = true) },
+                        onReturnToFloating = ::shrinkToFloating,
                         imageUris = selectedImages,
                         hasAttachments = pendingAttachments.isNotEmpty(),
                         attachmentUris = pendingAttachments,
@@ -410,6 +456,7 @@ class NoteEditActivity : ComponentActivity() {
                          onMoveWindowStart = ::beginWindowMove,
                          onMoveWindow = ::moveWindow,
                          onMoveWindowEnd = ::endWindowMove,
+                         onFullScreen = ::openFullScreen,
                          onTiming = { stage, detail ->
                              FloatingNoteTiming.mark(
                                  stage,
@@ -602,7 +649,7 @@ class NoteEditActivity : ComponentActivity() {
             BetaLogger.log("FloatingNote/Picker", "custom page selected uri=$uri path=$path")
             TaskWidgetConfigStore.recordCustomPage(this, path)
             targetRelativePath = path
-            dialogTitle = FloatingNoteTargetStore.titleFor(this, path)
+            dialogTitle = titleForCurrentMode(FloatingNoteTargetStore.titleFor(this, path))
             if (rememberTarget) {
                 FloatingNoteTargetMemory.remember(this, floatingSource, path)
             }
@@ -615,6 +662,20 @@ class NoteEditActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (intent.getBooleanExtra(EXTRA_FULLSCREEN, false)) {
+            BetaLogger.log("FloatingNote/Fullscreen", "activity reused fullscreen request")
+            fullScreen = true
+            intent.getStringExtra(EXTRA_DIALOG_TITLE)
+                ?.takeIf { it.isNotBlank() }
+                ?.let { dialogTitle = titleForCurrentMode(it) }
+            if (intent.hasExtra(EXTRA_TARGET_RELATIVE_PATH)) {
+                targetRelativePath = intent.getStringExtra(EXTRA_TARGET_RELATIVE_PATH)
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                targetOptions = FloatingNoteTargetStore.options(this, targetRelativePath)
+            }
+            applyFullScreenWindow()
+        }
         // singleInstance 会复用当前编辑器。不要重新初始化 noteText，避免重复点击入口时丢草稿。
         if (intent.hasExtra(EXTRA_RETURN_TO_HOME)) {
             returnToHomeAfterClose = intent.getBooleanExtra(EXTRA_RETURN_TO_HOME, false)
@@ -640,6 +701,109 @@ class NoteEditActivity : ComponentActivity() {
         syncFloatingDraft()
         FloatingNoteDraftStore.persistOrClear(this, floatingDraft)
         finishEditor(openHomeAfterClose)
+    }
+
+    private fun titleForCurrentMode(baseTitle: String): String {
+        val normalized = withoutQuickRecordSuffix(baseTitle)
+        return if (fullScreen) "$normalized \u901f\u5F55" else normalized
+    }
+
+    private fun withoutQuickRecordSuffix(title: String): String {
+        var normalized = title.trim()
+        while (normalized.endsWith("\u901f\u5F55")) {
+            normalized = normalized.removeSuffix("\u901f\u5F55").trimEnd()
+        }
+        return normalized.ifBlank { "\u901f\u8bb0" }
+    }
+
+    private fun openFullScreen() {
+        if (fullScreen || noteSaveInProgress) return
+        BetaLogger.log(
+            "FloatingNote/Fullscreen",
+            "activity expand source=" + floatingSource + " target=" + targetRelativePath.orEmpty(),
+        )
+        syncFloatingDraft()
+        FloatingNoteDraftStore.persist(this, floatingDraft)
+        val title = dialogTitle
+            .takeIf { it.isNotBlank() }
+            ?.let { "${withoutQuickRecordSuffix(it)} \u901f\u5F55" }
+        title?.let { dialogTitle = it }
+        fullScreen = true
+        setIntent(
+            fullScreenIntent(
+                context = this,
+                source = floatingSource,
+                targetRelativePath = targetRelativePath,
+                title = title,
+            )
+        )
+        applyFullScreenWindow()
+    }
+
+    private fun shrinkToFloating() {
+        if (!fullScreen || noteSaveInProgress) return
+        BetaLogger.log(
+            "FloatingNote/Fullscreen",
+            "activity shrink source=" + floatingSource + " target=" + targetRelativePath.orEmpty(),
+        )
+        syncFloatingDraft()
+        dialogTitle = withoutQuickRecordSuffix(dialogTitle)
+        fullScreen = false
+        floatingDraft.displayTitle = dialogTitle
+        FloatingNoteDraftStore.persist(this, floatingDraft)
+        applyFloatingWindow()
+    }
+
+    private fun applyFullScreenWindow() {
+        window?.apply {
+            clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
+            clearFlags(WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH)
+            val lp = attributes
+            lp.gravity = Gravity.TOP or Gravity.START
+            lp.x = 0
+            lp.y = 0
+            lp.width = WindowManager.LayoutParams.MATCH_PARENT
+            lp.height = WindowManager.LayoutParams.MATCH_PARENT
+            lp.dimAmount = 0.0f
+            lp.format = android.graphics.PixelFormat.OPAQUE
+            lp.alpha = 1.0f
+            lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_DIM_BEHIND.inv()
+            attributes = lp
+        }
+    }
+
+    private fun applyFloatingWindow() {
+        val dm = resources.displayMetrics
+        val w = (dm.widthPixels * 0.88f).toInt()
+        val h = (dm.heightPixels * 0.35f).toInt()
+        val fallbackPosition = FloatingNotePositionPolicy.defaultPosition(
+            dm.widthPixels,
+            dm.heightPixels,
+            w,
+            h,
+        )
+        val position = FloatingNotePositionPolicy.clamp(
+            FloatingNotePositionPolicy.load(this, fallbackPosition),
+            dm.widthPixels,
+            dm.heightPixels,
+            w,
+            h,
+        )
+        window?.apply {
+            addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
+            addFlags(WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH)
+            val lp = attributes
+            lp.gravity = Gravity.TOP or Gravity.START
+            lp.x = position.x
+            lp.y = position.y
+            lp.width = w
+            lp.height = h
+            lp.dimAmount = 0.0f
+            lp.format = android.graphics.PixelFormat.TRANSLUCENT
+            lp.alpha = FloatingNoteAppearance.alpha(this@NoteEditActivity)
+            lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_DIM_BEHIND.inv()
+            attributes = lp
+        }
     }
 
     private fun requestActivityImeHide() {
@@ -677,16 +841,34 @@ class NoteEditActivity : ComponentActivity() {
         FloatingNoteTiming.mark("hide_end", "host=activity")
     }
 
-    private fun closeFloatingEditor(openHomeAfterClose: Boolean = false) {
+    private fun saveEditor() {
+        if (hasRealContent(noteText) || selectedImages.isNotEmpty() || pendingAttachments.isNotEmpty()) {
+            appendToDiary(noteText.trim())
+        } else {
+            FloatingNoteDraftStore.clear(this, targetRelativePath)
+            finishEditor()
+        }
+    }
+
+    private fun closeFloatingEditor(
+        openHomeAfterClose: Boolean = false,
+        discard: Boolean = false,
+        fromBack: Boolean = false,
+    ) {
         if (noteSaveInProgress) return
+        if (discard) {
+            FloatingNoteDraftStore.clear(this, targetRelativePath)
+            finishEditor(openHomeAfterClose)
+            return
+        }
         val hasContent = hasRealContent(noteText) || selectedImages.isNotEmpty() || pendingAttachments.isNotEmpty()
+        BetaLogger.log("FloatingNote/Exit", "activity exit fromBack=$fromBack saveOnClose=${FloatingNoteEntryPolicy.shouldSaveOnClose(this)} hasContent=$hasContent")
         if (FloatingNoteEntryPolicy.shouldSaveOnClose(this) && hasContent) {
             appendToDiary(noteText.trim(), openHomeAfterClose)
         } else {
             persistDraftAndFinish(openHomeAfterClose)
         }
     }
-
     private fun appendToDiary(text: String, openHomeAfterClose: Boolean = false) {
         stopRecording()
         if (noteSaveInProgress) return
@@ -727,7 +909,7 @@ class NoteEditActivity : ComponentActivity() {
 
     override fun onTouchEvent(event: MotionEvent?): Boolean {
         if (event?.action == MotionEvent.ACTION_OUTSIDE) {
-            closeFloatingEditor()
+            closeFloatingEditor(fromBack = true)
             return true
         }
         return super.onTouchEvent(event)
@@ -768,7 +950,11 @@ fun NoteEditDialog(
     useInlineTargetMenu: Boolean = false,
     onSave: () -> Unit,
     onClose: () -> Unit,
+    onTopAction: () -> Unit = onClose,
+    topActionText: String = "关闭",
+    fullScreen: Boolean = false,
     onHome: () -> Unit,
+    onReturnToFloating: () -> Unit = {},
     imageUris: List<Uri>,
     hasAttachments: Boolean,
     attachmentUris: List<Uri>,
@@ -789,7 +975,8 @@ fun NoteEditDialog(
     onMoveWindowEnd: () -> Unit = {},
     onRemoveImage: (Int) -> Unit,
     onRemoveAttachment: (Int) -> Unit = {},
-    onTiming: (stage: String, detail: String?) -> Unit = { _, _ -> }
+    onTiming: (stage: String, detail: String?) -> Unit = { _, _ -> },
+    onFullScreen: () -> Unit = {},
 ) {
     val floater = LocalFloaterColors.current
     val dim = LocalAppDimensions.current
@@ -1080,20 +1267,67 @@ fun NoteEditDialog(
         }
     }
 
+    if (fullScreen) {
+        FullScreenNoteEditSurface(
+            title = title,
+            targetPath = targetPath,
+            targetOptions = targetOptions,
+            targetMenuExpanded = targetMenuExpanded,
+            onTargetMenuExpandedChange = { targetMenuExpanded = it },
+            textFieldValue = tfv,
+            onTextChange = ::applyTextChange,
+            onSave = onSave,
+            onSaveOrClose = ::saveOrClose,
+            onHome = onHome,
+            onReturnToFloating = onReturnToFloating,
+            onTargetChange = onTargetChange,
+            onAddCustomPage = onAddCustomPage,
+            onRemoveTarget = onRemoveTarget,
+            imageUris = imageUris,
+            attachmentUris = attachmentUris,
+            invalidAttachmentUris = invalidAttachmentUris,
+            onRemoveImage = onRemoveImage,
+            onRemoveAttachment = onRemoveAttachment,
+            onPickImages = onPickImages,
+            onPickAttachment = onPickAttachment,
+            onTakePhoto = onTakePhoto,
+            onToggleRecording = onToggleRecording,
+            toolbarOrder = toolbarOrder,
+            toolbarVisible = toolbarVisible,
+            recording = recording,
+            recordingDurationMs = recordingDurationMs,
+            canUndo = localUndoStack.isNotEmpty(),
+            canRedo = localRedoStack.isNotEmpty(),
+            onToolbarAction = ::handleToolbarAction,
+            enterToSave = enterToSave,
+            tagActive = tagActive2,
+            matchingTags = noteMatchingTags,
+            onTagSelected = noteSelectTag,
+            wikilinkTriggerKey = wikilinkTriggerKey,
+            wikilinkLoading = wikilinkIndex.loading,
+            matchingWikilinks = noteMatchingWikilinks,
+            aliasCounts = aliasCounts,
+            wikilinkPopupDismissKey = wikilinkPopupDismissKey,
+            onDismissWikilinkPopup = { wikilinkPopupDismissKey = wikilinkTriggerKey },
+            onWikilinkSelected = ::selectWikilink,
+        )
+        return
+    }
+
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = floater.background,
-        shape = RoundedCornerShape(dim.radiusXl),
+        shape = if (fullScreen) RoundedCornerShape(0.dp) else RoundedCornerShape(dim.radiusXl),
         shadowElevation = 0.dp
     ) {
         Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().padding(10.dp)) {
+        Column(Modifier.fillMaxSize().padding(if (fullScreen) 16.dp else 10.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Box(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.wrapContentWidth(),
                             contentAlignment = Alignment.CenterStart,
                         ) {
                             TextButton(onClick = onHome) {
@@ -1101,7 +1335,7 @@ fun NoteEditDialog(
                             }
                         }
                         Row(
-                            modifier = Modifier.weight(2f),
+                            modifier = Modifier.weight(1f),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.Center,
                         ) {
@@ -1110,8 +1344,7 @@ fun NoteEditDialog(
                                     // The overlay is intentionally narrow on phones. Let the
                                     // title yield space to the selector instead of pushing the
                                     // selector outside the centered header row.
-                                    .weight(1f, fill = false)
-                                    .widthIn(min = 48.dp, max = 180.dp)
+                                    .weight(1f)
                                     .heightIn(min = 48.dp)
                                     .pointerInput(Unit) {
                                         detectDragGesturesAfterLongPress(
@@ -1141,7 +1374,7 @@ fun NoteEditDialog(
                             }
                             Box(
                                 modifier = Modifier
-                                    .size(48.dp)
+                                    .size(40.dp)
                                     .clickable { targetMenuExpanded = true },
                                 contentAlignment = Alignment.Center,
                             ) {
@@ -1152,13 +1385,28 @@ fun NoteEditDialog(
                                     modifier = Modifier.size(28.dp),
                                 )
                             }
+                            if (!fullScreen) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .clickable(onClick = onFullScreen),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        Icons.Default.Fullscreen,
+                                        contentDescription = "全屏",
+                                        tint = floater.primary,
+                                        modifier = Modifier.size(24.dp),
+                                    )
+                                }
+                            }
                         }
                         Box(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.wrapContentWidth(),
                             contentAlignment = Alignment.CenterEnd,
                         ) {
-                            TextButton(onClick = onClose) {
-                                Text("关闭", color = floater.onBackgroundVariant, style = MaterialTheme.typography.labelSmall)
+                            TextButton(onClick = onTopAction) {
+                                Text(topActionText, color = floater.onBackgroundVariant, style = MaterialTheme.typography.labelSmall)
                             }
                         }
                     }
@@ -1474,6 +1722,455 @@ fun NoteEditDialog(
                 onDismiss = { targetMenuExpanded = false },
             )
         }
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+private fun FullScreenNoteEditSurface(
+    title: String,
+    targetPath: String?,
+    targetOptions: List<FloatingNoteTargetOption>,
+    targetMenuExpanded: Boolean,
+    onTargetMenuExpandedChange: (Boolean) -> Unit,
+    textFieldValue: TextFieldValue,
+    onTextChange: (TextFieldValue) -> Unit,
+    onSave: () -> Unit,
+    onSaveOrClose: () -> Unit,
+    onTargetChange: (FloatingNoteTargetOption) -> Unit,
+    onAddCustomPage: () -> Unit,
+    onRemoveTarget: (String) -> Unit,
+    imageUris: List<Uri>,
+    attachmentUris: List<Uri>,
+    invalidAttachmentUris: List<Uri>,
+    onRemoveImage: (Int) -> Unit,
+    onRemoveAttachment: (Int) -> Unit,
+    onPickImages: () -> Unit,
+    onPickAttachment: () -> Unit,
+    onTakePhoto: () -> Unit,
+    onToggleRecording: () -> Unit,
+    toolbarOrder: List<String>,
+    toolbarVisible: Set<String>,
+    recording: Boolean,
+    recordingDurationMs: Long,
+    canUndo: Boolean,
+    canRedo: Boolean,
+    onToolbarAction: (EditorToolbarAction) -> Unit,
+    enterToSave: Boolean,
+    tagActive: Boolean,
+    matchingTags: List<String>,
+    onTagSelected: (String) -> Unit,
+    wikilinkTriggerKey: String?,
+    wikilinkLoading: Boolean,
+    matchingWikilinks: List<WikilinkCandidate>,
+    aliasCounts: Map<String, Int>,
+    wikilinkPopupDismissKey: String?,
+    onDismissWikilinkPopup: () -> Unit,
+    onWikilinkSelected: (WikilinkCandidate) -> Unit,
+    onHome: () -> Unit,
+    onReturnToFloating: () -> Unit,
+) {
+    val focusRequester = remember { FocusRequester() }
+    val context = LocalContext.current
+    val view = LocalView.current
+    val keyboardVisible = WindowInsets.isImeVisible
+    val scrollState = rememberScrollState()
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        runCatching { focusRequester.requestFocus() }
+    }
+
+    var toolbarPage by remember { mutableIntStateOf(0) }
+    var toolbarPageCount by remember { mutableIntStateOf(1) }
+    val motionPolicy = LocalQuickDailyMotion.current
+
+    LaunchedEffect(keyboardVisible) {
+        if (keyboardVisible) toolbarPage = 0
+    }
+
+    val toolbarArrowRotation by animateFloatAsState(
+        targetValue = when {
+            keyboardVisible -> 0f
+            toolbarPage > 0 -> 90f
+            else -> 270f
+        },
+        animationSpec = if (motionPolicy.reducedMotion) snap() else spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMedium,
+        ),
+        label = "fullscreenToolbarKeyboardPageArrow",
+    )
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        topBar = {
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 0.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .windowInsetsPadding(TopAppBarDefaults.windowInsets),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(64.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(64.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton(
+                            onClick = onHome,
+                            modifier = Modifier.widthIn(min = 64.dp),
+                        ) {
+                            Text("\u7f16\u8f91\u9875", maxLines = 1)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .padding(horizontal = 4.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = title.ifBlank { "\u901f\u8bb0" },
+                                modifier = Modifier.fillMaxWidth(),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                        }
+                        IconButton(
+                            onClick = { onTargetMenuExpandedChange(true) },
+                            modifier = Modifier.size(48.dp),
+                        ) {
+                            Icon(
+                                Icons.Default.ExpandMore,
+                                contentDescription = "\u9009\u62e9\u8bb0\u5f55\u9875\u9762",
+                            )
+                        }
+                        IconButton(
+                            onClick = onReturnToFloating,
+                            modifier = Modifier.size(48.dp),
+                        ) {
+                            Icon(
+                                Icons.Default.FullscreenExit,
+                                contentDescription = "\u7f29\u56de\u60ac\u6d6e\u7a97",
+                            )
+                        }
+                        TextButton(
+                            onClick = onSave,
+                            modifier = Modifier.widthIn(min = 56.dp),
+                        ) {
+                            Text("\u4fdd\u5b58", maxLines = 1)
+                        }
+                    }
+                }
+            }
+        },
+        bottomBar = {
+            Surface(
+                tonalElevation = 2.dp,
+                shadowElevation = 0.dp,
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .imePadding(),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(horizontal = 4.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.weight(1f)) {
+                        EditorToolbarActions(
+                            order = toolbarOrder,
+                            visible = toolbarVisible,
+                            tint = MaterialTheme.colorScheme.primary,
+                            enabled = { action ->
+                                when (action) {
+                                    EditorToolbarAction.UNDO -> canUndo
+                                    EditorToolbarAction.REDO -> canRedo
+                                    else -> true
+                                }
+                            },
+                            recording = recording,
+                            recordingDurationMs = recordingDurationMs,
+                            buttonSize = 48.dp,
+                            page = toolbarPage,
+                            onPageChanged = { toolbarPage = it },
+                            onPageCountChanged = { toolbarPageCount = it },
+                            onAction = onToolbarAction,
+                        )
+                    }
+                    IconButton(
+                        onClick = {
+                            if (keyboardVisible) {
+                                val imm = context.getSystemService(Activity.INPUT_METHOD_SERVICE) as InputMethodManager
+                                imm.hideSoftInputFromWindow(view.windowToken, 0)
+                            } else if (toolbarPageCount > 1) {
+                                toolbarPage = if (toolbarPage == 0) 1 else 0
+                            }
+                        },
+                        modifier = Modifier.size(48.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.KeyboardArrowDown,
+                            contentDescription = if (keyboardVisible) "\u5173\u95ed\u952e\u76d8" else if (toolbarPage > 0) "\u8fd4\u56de\u7b2c\u4e00\u9875\u5de5\u5177" else "\u6253\u5f00\u7b2c\u4e8c\u9875\u5de5\u5177",
+                            modifier = Modifier
+                                .size(22.dp)
+                                .graphicsLayer { rotationZ = toolbarArrowRotation },
+                        )
+                    }
+                }
+            }
+        },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+        ) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(scrollState)
+                        .padding(16.dp),
+                ) {
+                    if (imageUris.isNotEmpty()) {
+                        LazyRow(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(70.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            itemsIndexed(imageUris) { index, uri ->
+                                Box(modifier = Modifier.size(60.dp)) {
+                                    val bitmap by produceState<Bitmap?>(
+                                        initialValue = null,
+                                        key1 = uri,
+                                    ) {
+                                        value = withContext(Dispatchers.IO) {
+                                            EditorThumbnailLoader.load(context.contentResolver, uri)
+                                        }
+                                    }
+                                    bitmap?.let {
+                                        Image(
+                                            bitmap = it.asImageBitmap(),
+                                            contentDescription = null,
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentScale = ContentScale.Crop,
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = { onRemoveImage(index) },
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .size(24.dp),
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            contentDescription = "\u79fb\u9664\u56fe\u7247",
+                                            tint = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (attachmentUris.isNotEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            attachmentUris.forEachIndexed { index, uri ->
+                                val invalid = uri in invalidAttachmentUris
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 40.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        text = if (invalid) "\u9644\u4ef6\u4e0d\u53ef\u7528\uff1a${uri.lastPathSegment ?: uri}" else "\u9644\u4ef6\uff1a${uri.lastPathSegment ?: uri}",
+                                        modifier = Modifier.weight(1f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (invalid) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                    )
+                                    IconButton(onClick = { onRemoveAttachment(index) }) {
+                                        Icon(Icons.Default.Close, contentDescription = "\u79fb\u9664\u9644\u4ef6")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    BasicTextField(
+                        value = textFieldValue,
+                        onValueChange = { newValue ->
+                            val insertedNewlines = newValue.text.count { it == '\n' } - textFieldValue.text.count { it == '\n' }
+                            if (enterToSave && insertedNewlines > 0 && newValue.text.length == textFieldValue.text.length + 1) {
+                                onSaveOrClose()
+                            } else {
+                                onTextChange(newValue)
+                            }
+                        },
+                        keyboardOptions = KeyboardOptions(
+                            imeAction = if (enterToSave) androidx.compose.ui.text.input.ImeAction.Done else androidx.compose.ui.text.input.ImeAction.Default,
+                        ),
+                        keyboardActions = KeyboardActions(onDone = { onSaveOrClose() }),
+                        textStyle = TextStyle(
+                            fontSize = 16.sp,
+                            lineHeight = 24.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        ),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(focusRequester)
+                            .defaultMinSize(minHeight = 400.dp)
+                            .onPreviewKeyEvent { event ->
+                                if (event.type != KeyEventType.KeyDown) {
+                                    false
+                                } else if (event.key == Key.Escape && wikilinkTriggerKey != null) {
+                                    onDismissWikilinkPopup()
+                                    true
+                                } else if (event.key == Key.Enter && matchingTags.isNotEmpty()) {
+                                    onTagSelected(matchingTags.first())
+                                    true
+                                } else if (event.key == Key.Enter && matchingWikilinks.isNotEmpty()) {
+                                    onWikilinkSelected(matchingWikilinks.first())
+                                    true
+                                } else if (enterToSave && (event.key == Key.Enter || event.key == Key.NumPadEnter)) {
+                                    onSaveOrClose()
+                                    true
+                                } else {
+                                    false
+                                }
+                            },
+                        decorationBox = { inner ->
+                            if (textFieldValue.text.isEmpty()) {
+                                Text(
+                                    "\u5199\u70b9\u4ec0\u4e48...",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            inner()
+                        },
+                    )
+                }
+            }
+            if (tagActive && matchingTags.isNotEmpty()) {
+                QuickDailyAutocompleteSurface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp, max = 56.dp),
+                ) {
+                    LazyRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        itemsIndexed(matchingTags, key = { _, tag -> tag }) { _, tag ->
+                            TextButton(
+                                onClick = { onTagSelected(tag) },
+                                modifier = Modifier.heightIn(min = 48.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                            ) {
+                                Text("#$tag", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+            }
+            if (wikilinkTriggerKey != null &&
+                (wikilinkLoading || matchingWikilinks.isNotEmpty()) &&
+                wikilinkTriggerKey != wikilinkPopupDismissKey
+            ) {
+                QuickDailyAutocompleteSurface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 160.dp),
+                ) {
+                    if (wikilinkLoading) {
+                        Text(
+                            "\u6b63\u5728\u52a0\u8f7d\u9875\u9762...",
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 160.dp),
+                        ) {
+                            items(matchingWikilinks, key = { it.stableKey }) { candidate ->
+                                TextButton(
+                                    onClick = { onWikilinkSelected(candidate) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 48.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                ) {
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalAlignment = Alignment.Start,
+                                    ) {
+                                        Text(
+                                            candidate.displayText,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        if (candidate.alias != null && (aliasCounts[candidate.alias] ?: 0) > 1) {
+                                            Text(
+                                                candidate.targetPath,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (targetMenuExpanded) {
+        Dialog(onDismissRequest = { onTargetMenuExpandedChange(false) }) {
+            TargetSelectionSurface(
+                modifier = Modifier.fillMaxWidth(0.86f),
+                targetPath = targetPath,
+                targetOptions = targetOptions,
+                onTargetChange = onTargetChange,
+                onAddCustomPage = onAddCustomPage,
+                onRemoveTarget = onRemoveTarget,
+                onDismiss = { onTargetMenuExpandedChange(false) },
+            )
         }
     }
 }
