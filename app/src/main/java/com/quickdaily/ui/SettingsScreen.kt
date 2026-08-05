@@ -86,6 +86,7 @@ import com.quickdaily.ObsidianConfigReadStatus
 import com.quickdaily.QuickNoteWidget
 import com.quickdaily.WidgetImageFileResolver
 import com.quickdaily.QuickDailyReadWidget
+import com.quickdaily.TaskCompletionTimestampPolicy
 import com.quickdaily.TaskWidget
 import com.quickdaily.ShortcutPinResultReceiver
 import com.quickdaily.WidgetImageCropActivity
@@ -1962,7 +1963,7 @@ private fun WidgetsTab(
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                     headlineContent = { Text("完成时间戳") },
                     supportingContent = {
-                        Text("从任务小部件完成任务时，在任务末尾添加 ✅️ yyyy-MM-dd")
+                        Text(TaskCompletionTimestampPolicy.SETTING_DESCRIPTION)
                     },
                     trailingContent = {
                         Switch(

@@ -5,6 +5,15 @@ import org.junit.Test
 
 class TaskCompletionTimestampPolicyTest {
     @Test
+    fun completionTimestampUsesUppercaseObsidianDateFormat() {
+        assertEquals("YYYY-MM-DD", TaskCompletionTimestampPolicy.DATE_FORMAT)
+        assertEquals(
+            "从任务小部件完成任务时，在任务末尾添加 ✅️ YYYY-MM-DD",
+            TaskCompletionTimestampPolicy.SETTING_DESCRIPTION,
+        )
+    }
+
+    @Test
     fun disabledLeavesTaskUnchanged() {
         val line = "- [X] Buy milk"
 

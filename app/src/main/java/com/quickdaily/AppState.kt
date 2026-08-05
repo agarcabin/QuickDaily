@@ -522,12 +522,13 @@ class AppState(application: Application) : AndroidViewModel(application) {
             } else {
                 VaultPathUtil.resolveTarget(_config.value.vaultPath, normalized).orEmpty()
             }
-            val loadedMtime = FileUtil.lastModified(path)
+            val loadedSnapshot = FileUtil.readStableSnapshot(path)
+            val loadedMtime = loadedSnapshot.fingerprint?.lastModified ?: FileUtil.lastModified(path)
             val isToday = normalized.isBlank()
             val logTag = if (isToday) "LoadToday" else "LoadEditorTarget"
             BetaLogger.log(logTag, "path=$path | mtime=$loadedMtime")
 
-            val content = when (val result = FileUtil.readResult(path)) {
+            val content = when (val result = loadedSnapshot.result) {
                 is ReadResult.Success -> result.content
                 is ReadResult.NotFound -> null
                 is ReadResult.Error -> {
@@ -555,8 +556,8 @@ class AppState(application: Application) : AndroidViewModel(application) {
                 rawContent = ""
             }
             BetaLogger.log(logTag, "rawContent from=$contentSource raw_len=${rawContent.length}")
-            val loadedMtimeAfterRead = FileUtil.lastModified(path)
-            val loadedFingerprint = FileUtil.fingerprint(path)
+            val loadedMtimeAfterRead = loadedSnapshot.fingerprint?.lastModified ?: loadedMtime
+            val loadedFingerprint = loadedSnapshot.fingerprint
 
             val parsed = ContentUtil.parseFrontmatter(rawContent)
             val applied = synchronized(loadLock) {
@@ -620,10 +621,19 @@ class AppState(application: Application) : AndroidViewModel(application) {
                 if (targetToReload.isBlank()) loadToday() else loadEditorTarget(targetToReload)
                 return@launch
             }
-            val mtime = FileUtil.lastModified(request.absolutePath)
-            val observedFingerprint = FileUtil.fingerprint(request.absolutePath)
+            val observedSnapshot = FileUtil.readStableSnapshot(request.absolutePath)
+            val observedFingerprint = observedSnapshot.fingerprint
+            val mtime = observedFingerprint?.lastModified ?: FileUtil.lastModified(request.absolutePath)
             BetaLogger.log("ReloadIfNewer", "old_mtime=${request.lastLoadedMtime} new_mtime=$mtime")
             if (!EditorReloadPolicy.shouldStart(request, mtime, observedFingerprint)) return@launch
+
+            val observedContent = when (val result = observedSnapshot.result) {
+                is ReadResult.Success -> result.content
+                else -> {
+                    BetaLogger.log("ReloadIfNewer", "read_failed path=${request.absolutePath}")
+                    return@launch
+                }
+            }
 
             val existingConflict = synchronized(loadLock) { _editorConflict.value }
             if (existingConflict?.absolutePath == request.absolutePath &&
@@ -649,8 +659,12 @@ class AppState(application: Application) : AndroidViewModel(application) {
                     ignoredExternalFingerprint = ignoredFingerprint,
                 )
             ) {
-                val conflict = readEditorConflict(request.absolutePath, mtime, observedFingerprint)
-                if (conflict == null) return@launch
+                val conflict = EditorConflict(
+                    absolutePath = request.absolutePath,
+                    externalContent = observedContent,
+                    externalMtime = mtime,
+                    externalFingerprint = observedFingerprint,
+                )
                 val shown = synchronized(loadLock) {
                     val current = EditorReloadSnapshot(
                         generation = loadGeneration,
@@ -689,16 +703,8 @@ class AppState(application: Application) : AndroidViewModel(application) {
                 BetaLogger.log("ReloadIfNewer", "skip_acknowledged_external path=${request.absolutePath}")
                 return@launch
             }
-
-
-            val content = when (val result = FileUtil.readResult(request.absolutePath)) {
-                is ReadResult.Success -> result.content
-                else -> {
-                    BetaLogger.log("ReloadIfNewer", "read_failed path=${request.absolutePath}")
-                    return@launch
-                }
-            }
-            val reloadedFingerprint = FileUtil.fingerprint(request.absolutePath)
+            val content = observedContent
+            val reloadedFingerprint = observedFingerprint
             val parsed = ContentUtil.parseFrontmatter(content)
             // If file has only frontmatter (empty body), try loading template.
             val effectiveContent = if (parsed.hasFrontmatter && parsed.body.isBlank()) {
@@ -814,14 +820,21 @@ class AppState(application: Application) : AndroidViewModel(application) {
         saveNow()
     }
 
-    private fun readEditorConflict(path: String, mtime: Long, fingerprint: FileFingerprint?): EditorConflict? =
-        when (val result = FileUtil.readResult(path)) {
-            is ReadResult.Success -> EditorConflict(path, result.content, mtime, fingerprint)
+    private fun readEditorConflict(path: String, mtime: Long, fingerprint: FileFingerprint?): EditorConflict? {
+        val snapshot = FileUtil.readStableSnapshot(path)
+        return when (val result = snapshot.result) {
+            is ReadResult.Success -> EditorConflict(
+                path,
+                result.content,
+                snapshot.fingerprint?.lastModified ?: mtime,
+                snapshot.fingerprint ?: fingerprint,
+            )
             else -> {
                 BetaLogger.log("ReloadIfNewer", "conflict_read_failed path=$path")
                 null
             }
         }
+    }
 
     // ── Undo/Redo helpers ──────────────────────────────────
 

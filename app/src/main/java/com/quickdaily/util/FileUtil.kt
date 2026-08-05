@@ -5,6 +5,7 @@ import java.security.MessageDigest
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.io.IOException
 import java.util.concurrent.locks.ReentrantLock
 import java.util.concurrent.ConcurrentHashMap
 
@@ -17,6 +18,11 @@ data class FileFingerprint(
     fun hasSameContentAs(other: FileFingerprint?): Boolean =
         other != null && exists == other.exists && length == other.length && sha256 == other.sha256
 }
+
+data class FileReadSnapshot(
+    val result: ReadResult,
+    val fingerprint: FileFingerprint?,
+)
 
 object FileUtil {
 
@@ -96,6 +102,28 @@ object FileUtil {
             ReadResult.Error(e)
         }
     }
+
+    /**
+     * Reads content and its fingerprint while sharing the same path lock as widget mutations.
+     * The before/after check also rejects a torn snapshot if another process replaces the file.
+     */
+    fun readStableSnapshot(path: String, maxAttempts: Int = 3): FileReadSnapshot =
+        withPathMutation(path) {
+            var lastFingerprint: FileFingerprint? = null
+            repeat(maxAttempts.coerceAtLeast(1)) {
+                val before = fingerprint(path)
+                val result = readResult(path)
+                val after = fingerprint(path)
+                lastFingerprint = after
+                if (before != null && after != null && before.hasSameContentAs(after)) {
+                    return@withPathMutation FileReadSnapshot(result, after)
+                }
+            }
+            FileReadSnapshot(
+                result = ReadResult.Error(IOException("File changed while reading: $path")),
+                fingerprint = lastFingerprint,
+            )
+        }
 
     /** Reads a stable content fingerprint for external-edit detection. */
     fun fingerprint(path: String): FileFingerprint? {

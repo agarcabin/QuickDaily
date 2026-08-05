@@ -121,7 +121,7 @@ internal object TaskToggleUseCase {
             savedLine = TaskCompletionTimestampPolicy.appendIfEnabled(
                 line = toggledLine,
                 enabled = timestampEnabled,
-                date = com.quickdaily.util.DateUtil.todayStr("yyyy-MM-dd"),
+                date = com.quickdaily.util.DateUtil.todayStr(TaskCompletionTimestampPolicy.DATE_FORMAT),
             )
             timestampAction = when {
                 savedLine != toggledLine -> "appended"
