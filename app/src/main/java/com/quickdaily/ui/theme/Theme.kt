@@ -4,6 +4,7 @@ import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.Context
 import android.content.SharedPreferences
+import android.content.res.Configuration
 import android.os.Build
 import androidx.compose.ui.unit.Dp
 import androidx.compose.material3.*
@@ -340,6 +341,53 @@ private fun ColorScheme.withDarkBackgroundBrightness(level: Int): ColorScheme = 
     surfaceContainerHighest = surfaceContainerHighest.adjustDarkBackgroundBrightness(level),
 )
 
+private fun resolveQuickDailyColorScheme(
+    context: Context,
+    useMonet: Boolean,
+    accentPreset: QuickDailyAccentPreset,
+    darkTheme: Boolean,
+    darkBackgroundBrightness: Int,
+): ColorScheme {
+    val base = if (useMonet && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        runCatching {
+            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        }.getOrElse { error ->
+            BetaLogger.logException(
+                "Theme/Monet",
+                "dynamic_color_failed context=${context.javaClass.simpleName}",
+                error,
+            )
+            accentPreset.colorScheme(darkTheme)
+        }
+    } else {
+        accentPreset.colorScheme(darkTheme)
+    }
+    return if (darkTheme) {
+        base.withDarkBackgroundBrightness(darkBackgroundBrightness)
+    } else {
+        base
+    }
+}
+
+/** Resolves the same persisted app theme for non-Compose surfaces such as RemoteViews. */
+internal fun quickDailyColorScheme(context: Context): ColorScheme {
+    val colorContext = context.applicationContext
+    val darkTheme = when (QuickDailyThemePreferences.nightMode(colorContext)) {
+        QuickDailyNightMode.SYSTEM ->
+            (colorContext.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+                Configuration.UI_MODE_NIGHT_YES
+        QuickDailyNightMode.LIGHT -> false
+        QuickDailyNightMode.DARK -> true
+    }
+    return resolveQuickDailyColorScheme(
+        context = colorContext,
+        useMonet = QuickDailyThemePreferences.isMonetEnabled(colorContext),
+        accentPreset = QuickDailyThemePreferences.selectedPreset(colorContext),
+        darkTheme = darkTheme,
+        darkBackgroundBrightness = QuickDailyThemePreferences.darkBackgroundBrightness(colorContext),
+    )
+}
+
 // Floater overlay colors for NoteEditActivity floating window
 
 data class FloaterColors(
@@ -449,22 +497,13 @@ fun QuickDailyTheme(
         QuickDailyNightMode.LIGHT -> false
         QuickDailyNightMode.DARK -> true
     }
-    val baseColorScheme = when {
-        themeSnapshot.useMonet && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            runCatching {
-                if (resolvedDarkTheme) dynamicDarkColorScheme(colorContext) else dynamicLightColorScheme(colorContext)
-            }.getOrElse { error ->
-                BetaLogger.logException("Theme/Monet", "dynamic_color_failed context=${colorContext.javaClass.simpleName}", error)
-                themeSnapshot.accentPreset.colorScheme(resolvedDarkTheme)
-            }
-        }
-        else -> themeSnapshot.accentPreset.colorScheme(resolvedDarkTheme)
-    }
-    val colorScheme = if (resolvedDarkTheme) {
-        baseColorScheme.withDarkBackgroundBrightness(themeSnapshot.darkBackgroundBrightness)
-    } else {
-        baseColorScheme
-    }
+    val colorScheme = resolveQuickDailyColorScheme(
+        context = colorContext,
+        useMonet = themeSnapshot.useMonet,
+        accentPreset = themeSnapshot.accentPreset,
+        darkTheme = resolvedDarkTheme,
+        darkBackgroundBrightness = themeSnapshot.darkBackgroundBrightness,
+    )
     if (!view.isInEditMode) {
         DisposableEffect(view, resolvedDarkTheme) {
             val activity = view.context as? Activity

@@ -125,6 +125,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 
+private const val CHANGELOG_1_9_1_BETA = """QuickDaily 1.9.1-beta
+• 新增 换行使用 4 空格继承缩进并续接无序列表、有序列表和任务，退格可整段回退
+• 调整 便签小部件悬浮窗标题为“日期/页面名 + 速记”
+• 新增 #标签仅在渲染模式和小部件中使用当前主题色文字"""
+
 private const val CHANGELOG_1_9 = """1.9:
 • 新增 悬浮窗透明度设置
 • 新增 悬浮窗全屏/悬浮窗模式切换
@@ -2217,7 +2222,7 @@ private fun OtherTab(
 
                 Text("更新内容：", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
                 if (showAllChangelog) {
-                Text(CHANGELOG_1_9 + "\n\n" +
+                Text(CHANGELOG_1_9_1_BETA + "\n\n" + CHANGELOG_1_9 + "\n\n" +
                     "1.8:\n" +
                     "• 新增 小部件大小调整支持自适应\n" +
                     "• 新增 任务小部件滴声开关\n" +
@@ -2300,7 +2305,7 @@ private fun OtherTab(
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                 } else {
                 Text(
-                        CHANGELOG_1_9,
+                        CHANGELOG_1_9_1_BETA,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     )

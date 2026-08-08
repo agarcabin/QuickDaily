@@ -11,8 +11,7 @@ import androidx.compose.material.icons.outlined.CheckBoxOutlineBlank
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -23,6 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.quickdaily.WidgetContentLoader
+import com.quickdaily.TagHighlightPolicy
 
 // ── Renderer ────────────────────────────────────────────
 
@@ -45,8 +45,8 @@ fun MdRenderer(
                         1 -> 1.5f; 2 -> 1.3f; 3 -> 1.15f
                         4 -> 1.1f; else -> 1.0f
                     }
-                    BasicText(
-                        text = buildAnnotated(line.text),
+                    TagHighlightedBasicText(
+                        raw = line.text,
                         style = LocalTextStyle.current.copy(
                             fontSize = (MaterialTheme.typography.bodyLarge.fontSize * scale),
                             fontWeight = FontWeight.Bold,
@@ -79,8 +79,8 @@ fun MdRenderer(
                             modifier = Modifier.size(20.dp)
                         )
                         Spacer(Modifier.width(6.dp))
-                        BasicText(
-                            text = buildAnnotated(line.text),
+                        TagHighlightedBasicText(
+                            raw = line.text,
                             style = LocalTextStyle.current.copy(
                                 color = if (line.checked)
                                     MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
@@ -99,8 +99,8 @@ fun MdRenderer(
                             )
                         )
                         Spacer(Modifier.width(8.dp))
-                        BasicText(
-                            text = buildAnnotated(line.text),
+                        TagHighlightedBasicText(
+                            raw = line.text,
                             style = LocalTextStyle.current.copy(color = colors.onSurface)
                         )
                     }
@@ -135,8 +135,8 @@ fun MdRenderer(
                     }
                 }
                 is MdLine.Plain -> {
-                    BasicText(
-                        text = buildAnnotated(line.text),
+                    TagHighlightedBasicText(
+                        raw = line.text,
                         style = LocalTextStyle.current.copy(color = colors.onSurface),
                         modifier = Modifier.padding(vertical = 1.dp)
                     )
@@ -151,21 +151,10 @@ fun MdRenderer(
 @Composable
 private fun buildAnnotated(raw: String): AnnotatedString {
     val colors = MaterialTheme.colorScheme
-    return buildAnnotatedString {
+    val annotated = buildAnnotatedString {
         var i = 0
         while (i < raw.length) {
             when {
-                // #tag / #tag/subtag
-                raw[i] == '#' && (i == 0 || (!raw[i - 1].isLetterOrDigit() && raw[i - 1] != '_')) -> {
-                    var end = i + 1
-                    while (end < raw.length && (raw[end].isLetterOrDigit() || raw[end] == '_' || raw[end] == '/' || raw[end] == '-')) end++
-                    if (end > i + 1) {
-                        withStyle(SpanStyle(color = colors.tertiary)) { append(raw.substring(i, end)) }
-                        i = end
-                    } else {
-                        append(raw[i]); i++
-                    }
-                }
                 // **粗体**
                 raw.startsWith("**", i) -> {
                     val end = raw.indexOf("**", i + 2)
@@ -226,6 +215,29 @@ private fun buildAnnotated(raw: String): AnnotatedString {
             }
         }
     }
+    return AnnotatedString.Builder(annotated).apply {
+        TagHighlightPolicy.ranges(annotated.text).forEach { range ->
+            addStyle(
+                SpanStyle(color = colors.primary),
+                range.start,
+                range.end,
+            )
+        }
+    }.toAnnotatedString()
+}
+
+@Composable
+private fun TagHighlightedBasicText(
+    raw: String,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+) {
+    val annotated = buildAnnotated(raw)
+    BasicText(
+        text = annotated,
+        style = style,
+        modifier = modifier,
+    )
 }
 
 // ── Line Model ───────────────────────────────────────────

@@ -6,6 +6,8 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Build
 import android.widget.RemoteViews
+import androidx.compose.ui.graphics.toArgb
+import com.quickdaily.ui.theme.quickDailyColorScheme
 
 /** Shared, persisted appearance for all desktop widgets. */
 object WidgetAppearance {
@@ -16,6 +18,7 @@ object WidgetAppearance {
         val background: Int,
         val foreground: Int,
         val muted: Int,
+        val tagForeground: Int,
     )
 
     fun colors(context: Context): Colors {
@@ -34,10 +37,12 @@ object WidgetAppearance {
         val luminance = (0.2126 * Color.red(base) + 0.7152 * Color.green(base) + 0.0722 * Color.blue(base)) / 255.0
         val foreground = if (luminance > 0.52) Color.BLACK else Color.WHITE
         val muted = Color.argb(if (foreground == Color.BLACK) 145 else 185, Color.red(foreground), Color.green(foreground), Color.blue(foreground))
+        val appTheme = quickDailyColorScheme(context)
         return Colors(
             background = background,
             foreground = foreground,
             muted = muted,
+            tagForeground = appTheme.primary.toArgb(),
         )
     }
 

@@ -87,6 +87,17 @@ object FloatingNoteTargetStore {
 }
 
 internal object FloatingNotePolicy {
+    fun displayTitleForRequest(
+        hasPersistedDraft: Boolean,
+        persistedTitle: String?,
+        requestedTitle: String?,
+        fallbackTitle: String,
+    ): String = requestedTitle
+        ?.takeIf { it.isNotBlank() }
+        ?: persistedTitle
+            ?.takeIf { hasPersistedDraft && it.isNotBlank() }
+        ?: fallbackTitle
+
     fun shouldApplyPrefill(
         text: String,
         imageCount: Int,
@@ -267,11 +278,12 @@ object FloatingNoteDraftStore {
             },
             rememberTarget = request.rememberTarget,
         )
-        state.displayTitle = if (hasPersistedDraft) {
-            stored?.displayTitle
-        } else {
-            request.displayTitle ?: FloatingNoteTargetStore.titleFor(context, state.targetRelativePath)
-        }
+        state.displayTitle = FloatingNotePolicy.displayTitleForRequest(
+            hasPersistedDraft = hasPersistedDraft,
+            persistedTitle = stored?.displayTitle,
+            requestedTitle = request.displayTitle,
+            fallbackTitle = FloatingNoteTargetStore.titleFor(context, state.targetRelativePath),
+        )
         state.enterToSave = prefs.getBoolean("enter_to_save", true)
         val selection = TextRange(
             stored?.selectionStart?.coerceIn(0, state.text.length) ?: state.text.length,

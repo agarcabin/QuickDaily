@@ -43,6 +43,41 @@ class FloatingNotePolicyTest {
     }
 
     @Test
+    fun explicitEntryTitleWinsOverPersistedDraftTitle() {
+        assertEquals(
+            "2026-08-08 速记",
+            FloatingNotePolicy.displayTitleForRequest(
+                hasPersistedDraft = true,
+                persistedTitle = "今日日记",
+                requestedTitle = "2026-08-08 速记",
+                fallbackTitle = "fallback",
+            ),
+        )
+    }
+
+    @Test
+    fun missingEntryTitleFallsBackToDraftThenTargetTitle() {
+        assertEquals(
+            "项目 速记",
+            FloatingNotePolicy.displayTitleForRequest(
+                hasPersistedDraft = true,
+                persistedTitle = "项目 速记",
+                requestedTitle = "  ",
+                fallbackTitle = "fallback",
+            ),
+        )
+        assertEquals(
+            "2026-08-08 速记",
+            FloatingNotePolicy.displayTitleForRequest(
+                hasPersistedDraft = false,
+                persistedTitle = null,
+                requestedTitle = null,
+                fallbackTitle = "2026-08-08 速记",
+            ),
+        )
+    }
+
+    @Test
     fun launchGateAllowsOnlyOnePendingOverlayStart() {
         FloatingNoteLaunchGate.release()
         assertTrue(FloatingNoteLaunchGate.acquire())

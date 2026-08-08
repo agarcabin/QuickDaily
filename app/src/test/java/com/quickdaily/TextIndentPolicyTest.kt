@@ -6,17 +6,17 @@ import org.junit.Test
 
 class TextIndentPolicyTest {
     @Test
-    fun indentAddsTabToCurrentLineAndKeepsCursorRelative() {
+    fun indentAddsFourSpacesToCurrentLineAndKeepsCursorRelative() {
         val result = TextIndentPolicy.indent("one", TextRange(1))
-        assertEquals("\tone", result.text)
-        assertEquals(TextRange(2), result.selection)
+        assertEquals("    one", result.text)
+        assertEquals(TextRange(5), result.selection)
     }
 
     @Test
-    fun indentAddsTabToEverySelectedLine() {
+    fun indentAddsFourSpacesToEverySelectedLine() {
         val result = TextIndentPolicy.indent("one\ntwo\nthree", TextRange(1, 9))
-        assertEquals("\tone\n\ttwo\n\tthree", result.text)
-        assertEquals(TextRange(2, 12), result.selection)
+        assertEquals("    one\n    two\n    three", result.text)
+        assertEquals(TextRange(5, 21), result.selection)
     }
 
     @Test

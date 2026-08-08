@@ -177,7 +177,10 @@ class QuickDailyReadWidget : AppWidgetProvider() {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
                 putExtra("floating_source", FloatingNoteSource.WIDGET.name)
                 putExtra(NoteEditActivity.EXTRA_TARGET_RELATIVE_PATH, editorTarget.orEmpty())
-                putExtra(NoteEditActivity.EXTRA_DIALOG_TITLE, "${ReadWidgetConfigStore.displayName(config)} 速录")
+                putExtra(
+                    NoteEditActivity.EXTRA_DIALOG_TITLE,
+                    FloatingNoteTargetStore.titleFor(ctx, editorTarget),
+                )
                 putExtra(NoteEditActivity.EXTRA_REMEMBER_TARGET, false)
             }
             val addPi = PendingIntent.getActivity(ctx, widgetId + 200, addIntent,

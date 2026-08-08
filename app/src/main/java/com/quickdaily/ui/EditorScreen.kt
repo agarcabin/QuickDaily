@@ -81,6 +81,8 @@ import com.quickdaily.EditorStampToggleState
 import com.quickdaily.TextIndentPolicy
 import com.quickdaily.EditorTextActionPolicy
 import com.quickdaily.EditorLinePrefixPolicy
+import com.quickdaily.EditorAutoIndentPolicy
+import com.quickdaily.EditorAutoIndentState
 import com.quickdaily.FloatingCursorPolicy
 import com.quickdaily.EditorStampPolicy
 import com.quickdaily.ui.theme.LocalQuickDailyMotion
@@ -149,6 +151,7 @@ fun EditorScreen(
     val keyboardVisible = WindowInsets.isImeVisible
     val motionPolicy = LocalQuickDailyMotion.current
     var textFieldValue by remember { mutableStateOf(TextFieldValue("")) }
+    var autoIndentState by remember { mutableStateOf<EditorAutoIndentState?>(null) }
     var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
     var pendingCameraFile by remember { mutableStateOf<java.io.File?>(null) }
     var recorder by remember { mutableStateOf<MediaRecorder?>(null) }
@@ -477,6 +480,7 @@ fun EditorScreen(
     LaunchedEffect(diaryContent) {
         if (diaryContent != textFieldValue.text) {
             stampToggleState = stampToggleState.clear()
+            autoIndentState = null
             textFieldValue = TextFieldValue(diaryContent)
         }
     }
@@ -821,11 +825,17 @@ fun EditorScreen(
                         BasicTextField(
                         value = textFieldValue,
                         onValueChange = { newValue ->
-                            if (newValue.text != textFieldValue.text) {
+                            val result = EditorAutoIndentPolicy.apply(
+                                previous = textFieldValue,
+                                proposed = newValue,
+                                state = autoIndentState,
+                            )
+                            autoIndentState = result.state
+                            if (result.value.text != textFieldValue.text) {
                                 stampToggleState = stampToggleState.clear()
                             }
-                            textFieldValue = newValue
-                            appState.onContentChanged(newValue.text)
+                            textFieldValue = result.value
+                            appState.onContentChanged(result.value.text)
                         },
                         onTextLayout = { textLayoutResult = it },
                         textStyle = TextStyle(fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface, lineHeight = 24.sp),

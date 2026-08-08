@@ -2,7 +2,6 @@ package com.quickdaily
 
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Build
 import android.text.Spannable
@@ -271,7 +270,7 @@ object ReadWidgetViews {
         val colors = WidgetAppearance.colors(context)
         return when (item.type) {
             "task" -> RemoteViews(context.packageName, R.layout.widget_diary_read_task).apply {
-                setTextViewText(R.id.task_text, item.text)
+                setTextViewText(R.id.task_text, renderMarkdown(item.text, colors))
                 setFloat(R.id.task_text, "setTextSize", if (size.isTiny) 11f else 12f)
                 setInt(R.id.task_text, "setMaxLines", size.readMaxLines)
                 setTextColor(R.id.task_text, if (item.checked) colors.muted else colors.foreground)
@@ -296,7 +295,7 @@ object ReadWidgetViews {
                 setOnClickFillInIntent(R.id.task_checkbox, fillIntent)
             }
             "heading" -> RemoteViews(context.packageName, R.layout.widget_diary_read_line).apply {
-                setTextViewText(R.id.task_text, item.text)
+                setTextViewText(R.id.task_text, renderMarkdown(item.text, colors))
                 setTextColor(R.id.task_text, colors.foreground)
                 setFloat(R.id.task_text, "setTextSize", when (item.level) {
                     1 -> 18f
@@ -307,13 +306,21 @@ object ReadWidgetViews {
                 setInt(R.id.task_text, "setMaxLines", size.readMaxLines)
             }
             "image" -> simpleLine(context, "[图片]", colors.muted)
-            "quote" -> simpleLine(context, " ▍ " + renderMarkdown(item.text), colors.foreground)
+            "quote" -> simpleLine(
+                context,
+                TextUtils.concat(" ▍ ", renderMarkdown(item.text, colors)),
+                colors.foreground,
+            )
             "hr" -> simpleLine(context, " ─────────────────", colors.muted)
-            "bullet" -> simpleLine(context, TextUtils.concat("  •  ", renderMarkdown(item.text)), colors.foreground)
+            "bullet" -> simpleLine(
+                context,
+                TextUtils.concat("  •  ", renderMarkdown(item.text, colors)),
+                colors.foreground,
+            )
             "blank" -> simpleLine(context, " ", colors.foreground)
             else -> simpleLine(
                 context,
-                if (item.renderInlineMarkdown) renderMarkdown(item.text) else item.text,
+                if (item.renderInlineMarkdown) renderMarkdown(item.text, colors) else item.text,
                 colors.foreground
             )
         }.apply {
@@ -350,7 +357,7 @@ object ReadWidgetViews {
             setTextColor(R.id.task_text, color)
         }
 
-    private fun renderMarkdown(text: String): CharSequence {
+    private fun renderMarkdown(text: String, colors: WidgetAppearance.Colors): CharSequence {
         val ssb = SpannableStringBuilder(text)
         for (match in Regex("\\*\\*(.+?)\\*\\*").findAll(ssb.toString()).toList().reversed()) {
             val content = match.groupValues[1]
@@ -382,8 +389,21 @@ object ReadWidgetViews {
             ssb.replace(match.range.first, match.range.last + 1, content)
             ssb.setSpan(StyleSpan(Typeface.ITALIC), match.range.first, match.range.first + content.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
-        for (match in Regex("(?<![\\p{L}\\p{N}_])#[\\p{L}\\p{N}_/-]+").findAll(ssb.toString())) {
-            ssb.setSpan(ForegroundColorSpan(Color.rgb(30, 136, 229)), match.range.first, match.range.last + 1, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        return renderTags(ssb, colors)
+    }
+
+    internal fun renderTags(
+        text: CharSequence,
+        colors: WidgetAppearance.Colors,
+    ): CharSequence {
+        val ssb = if (text is SpannableStringBuilder) text else SpannableStringBuilder(text)
+        TagHighlightPolicy.ranges(ssb.toString()).forEach { range ->
+            ssb.setSpan(
+                ForegroundColorSpan(colors.tagForeground),
+                range.start,
+                range.end,
+                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
         }
         return ssb
     }
@@ -396,7 +416,8 @@ object TaskWidgetViews {
         size: WidgetSize = WidgetSize.DEFAULT
     ): RemoteViews =
         RemoteViews(context.packageName, R.layout.widget_task_item).apply {
-            setTextViewText(R.id.task_text, item.text.trim())
+            val colors = WidgetAppearance.colors(context)
+            setTextViewText(R.id.task_text, ReadWidgetViews.renderTags(item.text.trim(), colors))
             setFloat(R.id.task_text, "setTextSize", if (size.isTiny) 11f else 12f)
             val showFullContent = context
                 .getSharedPreferences("QuickDaily", Context.MODE_PRIVATE)
@@ -409,7 +430,6 @@ object TaskWidgetViews {
                 "setMaxLines",
                 if (showFullContent) Int.MAX_VALUE else size.taskMaxLines,
             )
-            val colors = WidgetAppearance.colors(context)
             setTextColor(R.id.task_text, if (item.checked) colors.muted else colors.foreground)
             setImageViewResource(
                 R.id.task_checkbox,

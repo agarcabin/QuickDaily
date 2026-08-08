@@ -989,6 +989,7 @@ fun NoteEditDialog(
     var targetMenuExpanded by remember { mutableStateOf(false) }
     var wikilinkPopupDismissKey by remember { mutableStateOf<String?>(null) }
     var tfv by remember { mutableStateOf(TextFieldValue(text, initialSelection ?: TextRange(text.length))) }
+    var autoIndentState by remember { mutableStateOf<EditorAutoIndentState?>(null) }
     var stampToggleState by remember { mutableStateOf(EditorStampToggleState()) }
     val localUndoStack = remember { mutableStateListOf<String>() }
     val localRedoStack = remember { mutableStateListOf<String>() }
@@ -1052,6 +1053,7 @@ fun NoteEditDialog(
     LaunchedEffect(text, initialSelection) {
         if (text != tfv.text || (initialSelection != null && tfv.selection != initialSelection)) {
             stampToggleState = stampToggleState.clear()
+            autoIndentState = null
             tfv = TextFieldValue(text, initialSelection ?: TextRange(text.length))
         }
     }
@@ -1500,15 +1502,22 @@ fun NoteEditDialog(
                     val insertedNewlines = newText.count { it == '\n' } - oldText.count { it == '\n' }
                     if (enterToSave && insertedNewlines > 0 && newText.length == oldText.length + 1) {
                         // IMEs that commit Enter as a newline still use the same explicit action.
+                        autoIndentState = null
                         saveOrClose()
                     } else {
-                        if (oldText != newText) {
+                        val result = EditorAutoIndentPolicy.apply(
+                            previous = tfv,
+                            proposed = newTfv,
+                            state = autoIndentState,
+                        )
+                        autoIndentState = result.state
+                        if (oldText != result.value.text) {
                             stampToggleState = stampToggleState.clear()
                             recordUndo(oldText)
                         }
-                        tfv = newTfv
-                        onTextChange(newText)
-                        onSelectionChange(newTfv.selection)
+                        tfv = result.value
+                        onTextChange(result.value.text)
+                        onSelectionChange(result.value.selection)
                     }
             },
                 keyboardOptions = KeyboardOptions(
@@ -1783,6 +1792,7 @@ private fun FullScreenNoteEditSurface(
 
     var toolbarPage by remember { mutableIntStateOf(0) }
     var toolbarPageCount by remember { mutableIntStateOf(1) }
+    var autoIndentState by remember { mutableStateOf<EditorAutoIndentState?>(null) }
     val motionPolicy = LocalQuickDailyMotion.current
 
     LaunchedEffect(keyboardVisible) {
@@ -2027,9 +2037,16 @@ private fun FullScreenNoteEditSurface(
                         onValueChange = { newValue ->
                             val insertedNewlines = newValue.text.count { it == '\n' } - textFieldValue.text.count { it == '\n' }
                             if (enterToSave && insertedNewlines > 0 && newValue.text.length == textFieldValue.text.length + 1) {
+                                autoIndentState = null
                                 onSaveOrClose()
                             } else {
-                                onTextChange(newValue)
+                                val result = EditorAutoIndentPolicy.apply(
+                                    previous = textFieldValue,
+                                    proposed = newValue,
+                                    state = autoIndentState,
+                                )
+                                autoIndentState = result.state
+                                onTextChange(result.value)
                             }
                         },
                         keyboardOptions = KeyboardOptions(
