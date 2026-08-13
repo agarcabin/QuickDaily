@@ -5,8 +5,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/agarcabin/QuickDaily/releases/tag/v1.4">
-    <img src="https://img.shields.io/badge/下载-v1.4-brightgreen?style=for-the-badge&logo=github" alt="Download v1.4" />
+  <a href="https://github.com/agarcabin/QuickDaily/releases/tag/v1.9">
+    <img src="https://img.shields.io/badge/下载-v1.9-brightgreen?style=for-the-badge&logo=github" alt="Download v1.9" />
   </a>
   <a href="https://github.com/agarcabin/QuickDaily/releases">
     <img src="https://img.shields.io/github/v/release/agarcabin/QuickDaily?style=for-the-badge&logo=github" alt="GitHub Release" />
@@ -28,10 +28,16 @@
 ## 使用截图
 
 <p align="lift">
+  <img width="240" alt="QuickDaily v1.9.1 速录案例" src="./quickdaily-speed-note-v1.9.1.gif" />
+</p>
+
+QD v1.9.1 - 2026/08/29
+
+<p align="lift">
   <img width="240" alt="QuickDaily 录屏演示" src="https://github.com/user-attachments/assets/a2718d12-e216-4b45-8f7a-b2b68ce0cefb" />
 </p>
 
-速录案例
+QD v1.0.0 - 2026/05/29
 
 ---
 
