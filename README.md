@@ -28,10 +28,16 @@
 ## 使用截图
 
 <p align="lift">
+  <img width="240" alt="QuickDaily v1.9.1 速录案例" src="./quickdaily-speed-note-v1.9.1.gif" />
+</p>
+
+QD v1.9.1 - 2026/08/29
+
+<p align="lift">
   <img width="240" alt="QuickDaily 录屏演示" src="https://github.com/user-attachments/assets/a2718d12-e216-4b45-8f7a-b2b68ce0cefb" />
 </p>
 
-速录案例
+QD v1.0.0 - 2026/05/29
 
 ---
 
