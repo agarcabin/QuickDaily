@@ -88,8 +88,8 @@ class LauncherActivity : ComponentActivity() {
             categories = intent.categories,
             vaultPath = vaultPath,
             hasStorageAccess = hasStorageAccess(),
-            homeEntryMode = prefs.getString("home_entry_mode", HomeEntryMode.EDITOR.key)
-                ?: HomeEntryMode.EDITOR.key,
+            homeEntryMode = prefs.getString("home_entry_mode", HomeEntryMode.OVERLAY.key)
+                ?: HomeEntryMode.OVERLAY.key,
         )
     }
 
@@ -103,8 +103,8 @@ class LauncherActivity : ComponentActivity() {
             vaultPath = vaultPath,
             hasStorageAccess = hasStorageAccess(),
             homeEntryMode = getSharedPreferences("QuickDaily", 0)
-                .getString("home_entry_mode", HomeEntryMode.EDITOR.key)
-                ?: HomeEntryMode.EDITOR.key,
+                .getString("home_entry_mode", HomeEntryMode.OVERLAY.key)
+                ?: HomeEntryMode.OVERLAY.key,
         )
         BetaLogger.log(
             "FloatingNote/Launch",

@@ -110,10 +110,15 @@ object BetaLogger {
                 "renderMarkdown=${prefs.getBoolean("render_markdown", true)} " +
                 "appVersion=${BuildConfig.VERSION_NAME} appVersionCode=${BuildConfig.VERSION_CODE} " +
                 "taskCompletionTimestamp=${prefs.getBoolean(TaskCompletionTimestampPolicy.PREF_KEY, TaskCompletionTimestampPolicy.DEFAULT_ENABLED)} " +
-                "taskCompletionSound=${prefs.getBoolean(TaskCompletionSoundPolicy.PREF_KEY, TaskCompletionSoundPolicy.DEFAULT_ENABLED)} " +
+                "taskCompletionSoundMode=${TaskCompletionSoundPolicy.migrateMode(
+                    storedMode = prefs.getString(TaskCompletionSoundPolicy.PREF_MODE_KEY, null),
+                    legacyEnabled = if (prefs.contains(TaskCompletionSoundPolicy.LEGACY_PREF_KEY)) {
+                        prefs.getBoolean(TaskCompletionSoundPolicy.LEGACY_PREF_KEY, true)
+                    } else null,
+                ).key} " +
                 "taskShowCompleted=${prefs.getBoolean(TaskWidgetDisplayPolicy.SHOW_COMPLETED_PREF_KEY, TaskWidgetDisplayPolicy.DEFAULT_SHOW_COMPLETED)} " +
                 "systemSidebarSupport=${prefs.getBoolean(FloatingNoteEntryPolicy.PREF_SYSTEM_SIDEBAR_SUPPORT, FloatingNoteEntryPolicy.DEFAULT_SYSTEM_SIDEBAR_SUPPORT)} " +
-                "homeEntryMode=${prefs.getString("home_entry_mode", HomeEntryMode.EDITOR.key).orEmpty()} " +
+                "homeEntryMode=${prefs.getString("home_entry_mode", HomeEntryMode.OVERLAY.key).orEmpty()} " +
                 "themeMonet=${prefs.getBoolean("theme_use_monet", true)} " +
                 "themeAccent=${prefs.getString("theme_accent_preset", "blue").orEmpty()} " +
                 "themeNightMode=${prefs.getString("theme_night_mode", "system").orEmpty()} " +

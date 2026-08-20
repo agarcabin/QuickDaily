@@ -1,5 +1,7 @@
 package com.quickdaily
 
+import java.time.LocalDate
+
 private data class TaskStackEntry(
     val indentColumns: Int,
     val level: Int,
@@ -15,6 +17,8 @@ data class TaskWidgetItem(
     val checked: Boolean,
     val indentLevel: Int,
     val rootLineIndex: Int,
+    val isDateHeader: Boolean = false,
+    val isFirstDateHeader: Boolean = false,
 )
 
 /** Markdown task parser shared by direct RemoteViews and the legacy service. */
@@ -93,4 +97,68 @@ object TaskWidgetTaskParser {
         val marker = if (checked) " " else "x"
         return line.substring(0, openBracket + 1) + marker + "]" + line.substring(closeBracket + 1)
     }
+}
+
+/** Adds date headers without changing the order of tasks already loaded by the widget. */
+internal object TaskWidgetDateGrouping {
+    private val dateParts = Regex("(\\d{1,4})\\D+(\\d{1,2})\\D+(\\d{1,2})")
+
+    fun withHeaders(items: List<TaskWidgetItem>, todayDate: String?): List<TaskWidgetItem> {
+        if (items.isEmpty() || todayDate.isNullOrBlank()) return items
+        val datedItems = items.filter { !it.isDateHeader && !it.date.isNullOrBlank() }
+        if (datedItems.isEmpty() || datedItems.none { it.date != todayDate }) return items
+
+        val groups = linkedMapOf<String, MutableList<TaskWidgetItem>>()
+        items.forEach { item ->
+            val key = item.date.orEmpty()
+            groups.getOrPut(key) { mutableListOf() }.add(item)
+        }
+        var firstDateHeader = true
+        return buildList {
+            groups.forEach { (date, group) ->
+                if (date.isNotBlank()) {
+                    add(dateHeader(date, isFirstDateHeader = firstDateHeader))
+                    firstDateHeader = false
+                }
+                addAll(group)
+            }
+        }
+    }
+
+    fun labelFor(date: String): String {
+        val match = dateParts.find(date) ?: return date
+        val year = match.groupValues[1].toIntOrNull()
+        val month = match.groupValues[2].toIntOrNull()
+        val day = match.groupValues[3].toIntOrNull()
+        if (month == null || day == null) return date
+
+        val weekday = year?.let { parsedYear ->
+            runCatching {
+                val normalizedYear = if (parsedYear < 100) parsedYear + 2000 else parsedYear
+                val dayOfWeek = LocalDate.of(normalizedYear, month, day).dayOfWeek.value
+                listOf("一", "二", "三", "四", "五", "六", "日")[dayOfWeek - 1]
+            }.getOrNull()
+        }
+        return if (weekday == null) {
+            "${month}月${day}日"
+        } else {
+            "${month}月${day}日，周$weekday"
+        }
+    }
+
+    private fun dateHeader(
+        date: String,
+        isFirstDateHeader: Boolean,
+    ): TaskWidgetItem = TaskWidgetItem(
+        text = labelFor(date),
+        sourcePath = "",
+        date = date,
+        lineIndex = -1,
+        rawLine = "",
+        checked = false,
+        indentLevel = 0,
+        rootLineIndex = -1,
+        isDateHeader = true,
+        isFirstDateHeader = isFirstDateHeader,
+    )
 }

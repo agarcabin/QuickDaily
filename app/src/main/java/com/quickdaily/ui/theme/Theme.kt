@@ -257,9 +257,9 @@ internal object QuickDailyThemePreferences {
 }
 
 internal enum class QuickDailyNightMode(val key: String, val label: String) {
-    SYSTEM("system", "跟随系统"),
-    LIGHT("light", "关闭"),
-    DARK("dark", "开启");
+    SYSTEM("system", "\u8ddf\u968f\u7cfb\u7edf"),
+    LIGHT("light", "\u5173\u95ed"),
+    DARK("dark", "\u5f00\u542f");
 
     companion object {
         fun fromKey(key: String?): QuickDailyNightMode =
@@ -281,6 +281,7 @@ private data class QuickDailyThemeSnapshot(
 private fun rememberQuickDailyThemeSnapshot(
     context: Context,
     explicitDynamicColor: Boolean?,
+    refreshKey: Any?,
 ): QuickDailyThemeSnapshot {
     val preferences = remember(context) {
         context.getSharedPreferences("QuickDaily", Context.MODE_PRIVATE)
@@ -299,7 +300,7 @@ private fun rememberQuickDailyThemeSnapshot(
         preferences.registerOnSharedPreferenceChangeListener(listener)
         onDispose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
     }
-    return remember(preferencesRevision, explicitDynamicColor) {
+    return remember(preferencesRevision, explicitDynamicColor, refreshKey) {
         QuickDailyThemeSnapshot(
             useMonet = explicitDynamicColor ?: preferences.getBoolean(
                 QuickDailyThemePreferences.KEY_USE_MONET,
@@ -482,17 +483,20 @@ data class AppDimensions(
 val LocalAppDimensions = staticCompositionLocalOf { AppDimensions() }
 
 @Composable
-fun QuickDailyTheme(
+internal fun QuickDailyTheme(
     darkTheme: Boolean? = null,
     dynamicColor: Boolean? = null,
+    nightModeOverride: QuickDailyNightMode? = null,
+    refreshKey: Any? = null,
     content: @Composable () -> Unit,
 ) {
     val view = LocalView.current
     val context = LocalContext.current
     val colorContext = remember(context) { context.applicationContext }
     val motionPolicy = rememberQuickDailyMotionPolicy()
-    val themeSnapshot = rememberQuickDailyThemeSnapshot(context, dynamicColor)
-    val resolvedDarkTheme = darkTheme ?: when (themeSnapshot.nightMode) {
+    val themeSnapshot = rememberQuickDailyThemeSnapshot(context, dynamicColor, refreshKey)
+    val resolvedNightMode = nightModeOverride ?: themeSnapshot.nightMode
+    val resolvedDarkTheme = darkTheme ?: when (resolvedNightMode) {
         QuickDailyNightMode.SYSTEM -> isSystemInDarkTheme()
         QuickDailyNightMode.LIGHT -> false
         QuickDailyNightMode.DARK -> true

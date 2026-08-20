@@ -154,7 +154,7 @@ object PermissionPolicy {
         PermissionSpec(
             id = ACCESSIBILITY_ID,
             title = "QuickDaily 无障碍服务",
-            description = "用于下拉磁贴成功拉起悬浮窗",
+            description = "用于收起通知面板及保存后拉起 Obsidian 同步，不读取界面内容",
             kind = PermissionKind.ACCESSIBILITY,
         ),
     )

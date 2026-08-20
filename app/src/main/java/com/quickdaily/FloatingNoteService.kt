@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.graphics.Rect
 import android.content.pm.PackageManager
 import android.graphics.PixelFormat
 import android.media.MediaRecorder
@@ -19,6 +20,7 @@ import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.LifecycleService
@@ -83,6 +85,8 @@ class FloatingNoteService : LifecycleService() {
     private var closingOverlay = false
     private var recordingStartedAt by mutableStateOf<Long?>(null)
     private var recordingElapsedMs by mutableStateOf(0L)
+    private var floatingCoachStep by mutableStateOf<Int?>(null)
+    private var appearanceRefreshToken by mutableIntStateOf(0)
     private val recordingScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var recordingJob: Job? = null
     private var closeJob: Job? = null
@@ -93,6 +97,7 @@ class FloatingNoteService : LifecycleService() {
         super.onCreate()
         FloatingNoteTiming.mark("service_create")
         BetaLogger.init(this)
+        OnboardingStore.initialize(this)
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         state = FloatingNoteEditorState(this)
         viewTreeOwner = FloatingNoteViewTreeOwner().also { it.onCreate() }
@@ -112,6 +117,7 @@ class FloatingNoteService : LifecycleService() {
         when (intent?.action) {
             ACTION_HIDE -> requestClose(intent.getStringExtra(EXTRA_REASON) ?: "user")
             ACTION_START_RECORDING -> startRecording()
+            ACTION_REFRESH_APPEARANCE -> refreshAppearance()
             ACTION_REFRESH -> {
                 val previousTarget = intent.getStringExtra(EXTRA_PREVIOUS_TARGET_PATH)
                 val refreshSource = intent.getStringExtra(EXTRA_SOURCE)
@@ -126,6 +132,7 @@ class FloatingNoteService : LifecycleService() {
                         returnToHomeAfterClose = false,
                         targetRelativePath = previousTarget,
                         rememberTarget = refreshRememberTarget,
+                        sourceBounds = state.sourceBounds,
                     ),
                 )
                 intent.getStringExtra(EXTRA_TARGET_PATH)?.let { path ->
@@ -139,6 +146,7 @@ class FloatingNoteService : LifecycleService() {
                 activeRequestId = request.requestId
                 FloatingNoteTiming.begin(request.requestId, request.source)
                 state.source = request.source
+                request.sourceBounds?.let { state.sourceBounds = Rect(it) }
                 state.rememberTarget = request.rememberTarget
                 if (overlayView == null) {
                     FloatingNoteDraftStore.loadInto(this, state, request)
@@ -163,6 +171,11 @@ class FloatingNoteService : LifecycleService() {
     }
 
     private fun ensureOverlay() {
+        floatingCoachStep = if (OnboardingStore.shouldShowFloatingCoach(this)) {
+            OnboardingStore.floatingCoachStep(this)
+        } else {
+            null
+        }
         if (overlayView != null) {
             FloatingNoteLaunchGate.release()
             clampOverlayToScreen()
@@ -197,7 +210,10 @@ class FloatingNoteService : LifecycleService() {
                         "FloatingNote/Theme",
                         "source=${state.source} monetEnabled=$monetEnabled accent=${completionPrefs.getString("theme_accent_preset", "blue")} nightMode=${completionPrefs.getString("theme_night_mode", "system")}",
                     )
-                    QuickDailyTheme {
+                    QuickDailyTheme(
+                        nightModeOverride = FloatingNoteAppearance.nightMode(this@FloatingNoteService),
+                        refreshKey = appearanceRefreshToken,
+                    ) {
                         androidx.compose.runtime.CompositionLocalProvider(LocalFloaterColors provides quickDailyFloaterColors()) {
                             NoteEditDialog(
                                 text = state.text,
@@ -240,6 +256,17 @@ class FloatingNoteService : LifecycleService() {
                                 onSave = { saveDraft() },
                                 onClose = { requestClose("close") },
                                 onFullScreen = ::openFullScreen,
+                                floatingCoachStep = floatingCoachStep,
+                                onFloatingCoachPrevious = {
+                                    floatingCoachStep = OnboardingStore.previousFloatingCoach(this@FloatingNoteService)
+                                },
+                                onFloatingCoachNext = {
+                                    floatingCoachStep = OnboardingStore.advanceFloatingCoach(this@FloatingNoteService)
+                                },
+                                onFloatingCoachSkip = {
+                                    OnboardingStore.skipFloatingCoach(this@FloatingNoteService)
+                                    floatingCoachStep = null
+                                },
                                 onHome = { requestClose("home", openHomeAfterClose = true) },
                                 imageUris = state.selectedImages,
                                 hasAttachments = state.pendingAttachments.isNotEmpty() || state.invalidAttachments.isNotEmpty(),
@@ -427,7 +454,14 @@ class FloatingNoteService : LifecycleService() {
                 closeJob = null
                 state.isSaving = false
                 when (result) {
-                    FloatingNoteSaveResult.Saved,
+                    FloatingNoteSaveResult.Saved -> {
+                        FloatingNoteDraftStore.clear(this@FloatingNoteService, state.targetRelativePath)
+                        val openedObsidian = FloatingNoteObsidianLauncher.openAfterSuccessfulSave(
+                            this@FloatingNoteService,
+                            state.targetRelativePath,
+                        )
+                        completeClose(reason, openHomeAfterClose && !openedObsidian)
+                    }
                     FloatingNoteSaveResult.NoContent -> {
                         FloatingNoteDraftStore.clear(this@FloatingNoteService, state.targetRelativePath)
                         completeClose(reason, openHomeAfterClose)
@@ -477,6 +511,10 @@ class FloatingNoteService : LifecycleService() {
                         if (!FloatingNoteEntryPolicy.isSystemSidebarSupportEnabled(this@FloatingNoteService)) {
                             Toast.makeText(this@FloatingNoteService, "已保存", Toast.LENGTH_SHORT).show()
                         }
+                        FloatingNoteObsidianLauncher.openAfterSuccessfulSave(
+                            this@FloatingNoteService,
+                            state.targetRelativePath,
+                        )
                         hideOverlay("saved", persistDraft = false)
                     }
                     FloatingNoteSaveResult.NoContent -> {
@@ -687,6 +725,9 @@ class FloatingNoteService : LifecycleService() {
     private fun openFullScreen() {
         if (closingOverlay) return
         FloatingNoteDraftStore.persistOrClear(this, state)
+        if (floatingCoachStep == OnboardingPolicy.FLOATING_COACH_STEP_COUNT - 2) {
+            floatingCoachStep = OnboardingStore.advanceFloatingCoach(this)
+        }
         val baseTitle = state.displayTitle.orEmpty().ifBlank {
             FloatingNoteTargetStore.titleFor(this, state.targetRelativePath)
         }
@@ -701,6 +742,7 @@ class FloatingNoteService : LifecycleService() {
                 source = state.source,
                 targetRelativePath = state.targetRelativePath,
                 title = title,
+                sourceBounds = state.sourceBounds,
             )
         )
         hideOverlay("fullscreen", persistDraft = false)
@@ -718,6 +760,15 @@ class FloatingNoteService : LifecycleService() {
         if (persistDraft) {
             FloatingNoteDraftStore.persistOrClear(this, state)
         }
+        val finishHide = {
+            overlayView = null
+            windowParams = null
+            isWindowShowing = false
+            FloatingNoteLaunchGate.release()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            FloatingNoteTiming.mark("hide_end", "reason=$reason")
+        }
         overlayView?.let { view ->
             FloatingNoteTiming.mark(
                 "ime_hide_request",
@@ -732,21 +783,29 @@ class FloatingNoteService : LifecycleService() {
                 )
             }
             view.clearFocus()
-            FloatingNoteTiming.mark("window_remove_start", "reason=$reason")
-            runCatching { windowManager.removeViewImmediate(view) }
-                .onFailure { error ->
-                    BetaLogger.logException("FloatingNote/Window", "remove_immediate_failed", error)
+            val finishRemoval = {
+                FloatingNoteTiming.mark("window_remove_start", "reason=$reason")
+                runCatching { windowManager.removeViewImmediate(view) }
+                    .onFailure { error ->
+                        BetaLogger.logException("FloatingNote/Window", "remove_immediate_failed", error)
                 }
-            FloatingNoteTiming.mark("window_remove_end", "reason=$reason")
-            runCatching { view.disposeComposition() }
+                FloatingNoteTiming.mark("window_remove_end", "reason=$reason")
+                runCatching { view.disposeComposition() }
+                finishHide()
+            }
+            val animated = if (reason == "back") {
+                FloatingNoteExitAnimator.animateToSource(
+                    view = view,
+                    source = state.source,
+                    sourceBounds = state.sourceBounds,
+                    onEnd = finishRemoval,
+                )
+            } else {
+                false
+            }
+            if (!animated) finishRemoval()
         }
-        overlayView = null
-        windowParams = null
-        isWindowShowing = false
-        FloatingNoteLaunchGate.release()
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
-        FloatingNoteTiming.mark("hide_end", "reason=$reason")
+            ?: finishHide()
     }
 
     override fun onDestroy() {
@@ -791,6 +850,7 @@ class FloatingNoteService : LifecycleService() {
                 ?.takeIf { it.isNotBlank() }
                 ?: newFloatingNoteRequestId(),
             rememberTarget = intent?.getBooleanExtra(EXTRA_REMEMBER_TARGET, true) ?: true,
+            sourceBounds = intent?.sourceBounds?.let(::Rect),
         )
     }
 
@@ -825,12 +885,25 @@ class FloatingNoteService : LifecycleService() {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
+    private fun refreshAppearance() {
+        appearanceRefreshToken++
+        val view = overlayView ?: return
+        val params = windowParams ?: return
+        params.alpha = FloatingNoteAppearance.alpha(this)
+        runCatching { windowManager.updateViewLayout(view, params) }
+        BetaLogger.log(
+            "FloatingNote/Appearance",
+            "refreshed nightMode=${FloatingNoteAppearance.nightMode(this).key} opacity=${FloatingNoteAppearance.percent(this)}",
+        )
+    }
+
     companion object {
         private const val CHANNEL_ID = "floating_note"
         private const val NOTIFICATION_ID = 1702
         private const val ACTION_SHOW = "com.quickdaily.action.FLOATING_NOTE_SHOW"
         private const val ACTION_HIDE = "com.quickdaily.action.FLOATING_NOTE_HIDE"
         private const val ACTION_REFRESH = "com.quickdaily.action.FLOATING_NOTE_REFRESH"
+        private const val ACTION_REFRESH_APPEARANCE = "com.quickdaily.action.FLOATING_NOTE_REFRESH_APPEARANCE"
         private const val ACTION_START_RECORDING = "com.quickdaily.action.FLOATING_NOTE_START_RECORDING"
         private const val EXTRA_REMEMBER_TARGET = "floating_remember_target"
         private const val EXTRA_SOURCE = "floating_source"
@@ -855,6 +928,7 @@ class FloatingNoteService : LifecycleService() {
                 putExtra(EXTRA_DISPLAY_TITLE, request.displayTitle)
                 putExtra(EXTRA_REMEMBER_TARGET, request.rememberTarget)
                 putExtra(EXTRA_REQUEST_ID, request.requestId)
+                request.sourceBounds?.let { setSourceBounds(Rect(it)) }
             }
 
         fun hideIntent(context: Context, reason: String): Intent =
@@ -876,6 +950,11 @@ class FloatingNoteService : LifecycleService() {
             putExtra(EXTRA_REMEMBER_TARGET, rememberTarget)
             putExtra(EXTRA_TARGET_PATH, selectedTargetPath)
         }
+
+        fun refreshAppearanceIntent(context: Context): Intent =
+            Intent(context, FloatingNoteService::class.java).apply {
+                action = ACTION_REFRESH_APPEARANCE
+            }
 
         fun startRecordingIntent(context: Context): Intent =
             Intent(context, FloatingNoteService::class.java).apply { action = ACTION_START_RECORDING }

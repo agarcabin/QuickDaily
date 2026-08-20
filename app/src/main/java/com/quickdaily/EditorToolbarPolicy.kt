@@ -35,7 +35,7 @@ enum class EditorToolbarAction(val id: String, val label: String) {
 }
 
 enum class HomeEntryMode(val key: String, val label: String) {
-    OVERLAY("overlay", "悬浮窗速录"),
+    OVERLAY("overlay", "悬浮窗"),
     FULLSCREEN("fullscreen", "全屏速录"),
     EDITOR("editor", "编辑页面");
 

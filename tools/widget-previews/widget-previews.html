@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>QuickDaily 4:3 widget preview source</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+      --canvas: #0b463c;
+      --canvas-deep: #08352f;
+      --glass: rgba(255, 255, 255, 0.105);
+      --glass-strong: rgba(255, 255, 255, 0.17);
+      --text: #f4f8f6;
+      --muted: #b7cbc5;
+      --widget: #202733;
+      --widget-raised: #2d3747;
+      --widget-line: rgba(244, 248, 246, 0.2);
+      --blue: #4f8cff;
+      --blue-soft: #a9c7ff;
+      --mint: #80e1c5;
+    }
+
+    * { box-sizing: border-box; }
+
+    html,
+    body {
+      width: 1200px;
+      margin: 0;
+      background: var(--canvas);
+    }
+
+    html { min-height: 100%; }
+
+    body {
+      min-height: 900px;
+      height: auto;
+      overflow-x: hidden;
+      overflow-y: auto;
+      padding: 48px 0 72px;
+    }
+
+    .preview-page {
+      width: 1080px;
+      margin: 0 auto;
+    }
+
+    /* The preview bitmap is intentionally 4:3; runtime widget sizing is declared in XML. */
+    .widget {
+      width: 1080px;
+      aspect-ratio: 4 / 3;
+      overflow: hidden;
+      padding: 54px 60px;
+      border: 1px solid var(--widget-line);
+      border-radius: 38px;
+      background: var(--widget);
+      box-shadow: 0 24px 60px rgba(0, 0, 0, .32), inset 0 1px rgba(255, 255, 255, .06);
+      color: var(--text);
+    }
+
+    .widget-header {
+      display: flex;
+      min-height: 88px;
+      align-items: center;
+      gap: 20px;
+      border-bottom: 1px solid rgba(244, 248, 246, .12);
+    }
+
+    .header-mark {
+      display: grid;
+      width: 56px;
+      height: 56px;
+      flex: 0 0 56px;
+      place-items: center;
+      color: var(--text);
+    }
+
+    .header-mark svg {
+      width: 56px;
+      height: 56px;
+    }
+
+    .widget-title {
+      font-size: 42px;
+      font-weight: 520;
+      letter-spacing: .02em;
+    }
+
+    .header-date {
+      margin-left: auto;
+      color: var(--muted);
+      font-size: 28px;
+    }
+
+    .task-list,
+    .note-content {
+      display: grid;
+      gap: 28px;
+      margin-top: 50px;
+    }
+
+    .note-content {
+      gap: 32px;
+    }
+
+    .task-row {
+      display: flex;
+      min-height: 70px;
+      align-items: center;
+      gap: 22px;
+      color: rgba(244, 248, 246, .9);
+      font-size: 36px;
+    }
+
+    .task-row span:last-child,
+    .note-item {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .check {
+      display: grid;
+      width: 40px;
+      height: 40px;
+      flex: 0 0 40px;
+      place-items: center;
+      border: 2px solid rgba(244, 248, 246, .55);
+      border-radius: 9px;
+    }
+
+    .check.checked {
+      border-color: var(--mint);
+      background: var(--mint);
+      color: var(--widget);
+      font-size: 29px;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .task-row.is-done {
+      color: rgba(244, 248, 246, .5);
+      text-decoration: line-through;
+      text-decoration-color: rgba(244, 248, 246, .38);
+    }
+
+    .note-heading {
+      margin: 0;
+      color: rgba(244, 248, 246, .92);
+      font-size: 42px;
+      font-weight: 520;
+    }
+
+    .note-list {
+      display: grid;
+      gap: 26px;
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      color: rgba(244, 248, 246, .9);
+      font-size: 40px;
+    }
+
+    .note-item {
+      position: relative;
+      padding-left: 38px;
+      line-height: 1.4;
+    }
+
+    .note-item::before {
+      position: absolute;
+      top: 0;
+      left: 0;
+      color: var(--mint);
+      content: "•";
+    }
+
+    .icon-candidates {
+      margin-top: 48px;
+      padding: 36px 40px 42px;
+      border: 1px solid var(--widget-line);
+      border-radius: 38px;
+      background: var(--widget);
+      box-shadow: 0 24px 60px rgba(0, 0, 0, .24), inset 0 1px rgba(255, 255, 255, .06);
+      color: var(--text);
+    }
+
+    .icon-candidates-heading {
+      margin: 0;
+      font-size: 34px;
+      font-weight: 600;
+      letter-spacing: .02em;
+    }
+
+    .icon-candidates-description {
+      margin: 10px 0 28px;
+      color: var(--muted);
+      font-size: 20px;
+    }
+
+    .icon-candidate-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 24px;
+    }
+
+    .icon-candidate {
+      min-height: 238px;
+      padding: 24px;
+      border: 1px solid var(--widget-line);
+      border-radius: 26px;
+      background: var(--widget-raised);
+    }
+
+    .candidate-widget-header {
+      display: flex;
+      min-height: 58px;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 1px solid rgba(244, 248, 246, .12);
+    }
+
+    .candidate-widget-title {
+      color: var(--text);
+      font-size: 22px;
+      font-weight: 600;
+    }
+
+    .candidate-widget-date {
+      margin-left: auto;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .candidate-action {
+      display: grid;
+      width: 56px;
+      height: 56px;
+      flex: 0 0 56px;
+      place-items: center;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, .08);
+      color: var(--text);
+    }
+
+    .candidate-action svg {
+      width: 34px;
+      height: 34px;
+    }
+
+    .icon-candidate-name {
+      margin: 24px 0 8px;
+      color: var(--mint);
+      font-size: 22px;
+      font-weight: 700;
+    }
+
+    .icon-candidate-purpose {
+      margin: 0;
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    .icon-candidate:nth-child(4) {
+      grid-column: 1 / 2;
+    }
+
+    .icon-candidate:nth-child(5) {
+      grid-column: 2 / 3;
+    }
+
+  </style>
+</head>
+<body>
+  <main class="preview-page">
+    <section class="widget" id="widget" data-kind="read">
+      <header class="widget-header">
+        <span class="header-mark" aria-hidden="true" id="header-mark"></span>
+        <span class="widget-title" id="title">今日便签</span>
+        <span class="header-date">今天</span>
+      </header>
+      <section id="content"></section>
+    </section>
+
+    <section class="icon-candidates" aria-labelledby="icon-candidates-heading">
+      <h1 class="icon-candidates-heading" id="icon-candidates-heading">打开编辑页 · 图标候选</h1>
+      <p class="icon-candidates-description">这次全部围绕“笔记/日记页面 + 编辑动作”设计，保持现有小部件的颜色和按钮位置。</p>
+      <div class="icon-candidate-grid">
+        <article class="icon-candidate">
+          <div class="candidate-widget-header">
+            <span class="candidate-widget-title">今日速记</span>
+            <span class="candidate-widget-date">今天</span>
+            <span class="candidate-action" role="img" aria-label="A daily_note_edit：日记页和铅笔">
+              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <path d="M5 3h14c1.1 0 2 .9 2 2v16H3V5c0-1.1.9-2 2-2Zm3-1v4m8-4v4M3 9h18M7 13h3m-3 4h3m5-3 2-2 3 3-2 2-4 1 1-4Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
+          </div>
+          <p class="icon-candidate-name">A · daily_note_edit</p>
+          <p class="icon-candidate-purpose">日记页 + 铅笔，最贴近“打开今日记录”。</p>
+        </article>
+
+        <article class="icon-candidate">
+          <div class="candidate-widget-header">
+            <span class="candidate-widget-title">今日速记</span>
+            <span class="candidate-widget-date">今天</span>
+            <span class="candidate-action" role="img" aria-label="B sticky_memo_edit：便签和铅笔">
+              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <path d="M4 3h14l2 2v16H4V3Zm12 0v5h4M7 11h7m-7 4h5m3 2 2-2 3 3-2 2-4 1 1-4Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
+          </div>
+          <p class="icon-candidate-name">B · sticky_memo_edit</p>
+          <p class="icon-candidate-purpose">便签卡片 + 铅笔，和速记入口关联很强。</p>
+        </article>
+
+        <article class="icon-candidate">
+          <div class="candidate-widget-header">
+            <span class="candidate-widget-title">今日速记</span>
+            <span class="candidate-widget-date">今天</span>
+            <span class="candidate-action" role="img" aria-label="C journal_page_edit：记事页和铅笔">
+              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <path d="M6 4h14v16H6V4ZM4 7h2m-2 4h2m-2 4h2m5-7h6m-6 4h8m-8 4h5m1 2 2-2 3 3-2 2-4 1 1-4Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
+          </div>
+          <p class="icon-candidate-name">C · journal_page_edit</p>
+          <p class="icon-candidate-purpose">记事页 + 铅笔，偏向持续编辑整篇笔记。</p>
+        </article>
+
+        <article class="icon-candidate">
+          <div class="candidate-widget-header">
+            <span class="candidate-widget-title">今日速记</span>
+            <span class="candidate-widget-date">今天</span>
+            <span class="candidate-action" role="img" aria-label="D article_edit：文章和铅笔">
+              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <path d="M5 3h14v18H5V3Zm3 4h8M8 11h8M8 15h5m3 2 2-2 3 3-2 2-4 1 1-4Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
+          </div>
+          <p class="icon-candidate-name">D · article_edit</p>
+          <p class="icon-candidate-purpose">文章行文 + 铅笔，表达进入正文编辑。</p>
+        </article>
+
+        <article class="icon-candidate">
+          <div class="candidate-widget-header">
+            <span class="candidate-widget-title">今日速记</span>
+            <span class="candidate-widget-date">今天</span>
+            <span class="candidate-action" role="img" aria-label="E notebook_edit：记事本和铅笔">
+              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <path d="M6 4h14v16H6V4ZM4 7h2m-2 4h2m-2 4h2m5-7h6m-6 4h4m1 4 2-2 3 3-2 2-4 1 1-4Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
+          </div>
+          <p class="icon-candidate-name">E · notebook_edit</p>
+          <p class="icon-candidate-purpose">记事本 + 铅笔，偏“打开笔记本继续写”。</p>
+        </article>
+
+        <article class="icon-candidate">
+          <div class="candidate-widget-header">
+            <span class="candidate-widget-title">今日速记</span>
+            <span class="candidate-widget-date">今天</span>
+            <span class="candidate-action" role="img" aria-label="F markdown_edit：Markdown 和铅笔">
+              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <path d="M3 4h18v16H3V4Zm3 11V9h2l2 2 2-2v6m5-5v5m0-5-2 2m2-2 2 2m1 2 2-2 3 3-2 2-4 1 1-4Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
+          </div>
+          <p class="icon-candidate-name">F · markdown_edit</p>
+          <p class="icon-candidate-purpose">Markdown 标记 + 铅笔，和 Obsidian 编辑最贴近。</p>
+        </article>
+
+        <article class="icon-candidate">
+          <div class="candidate-widget-header">
+            <span class="candidate-widget-title">今日速记</span>
+            <span class="candidate-widget-date">今天</span>
+            <span class="candidate-action" role="img" aria-label="G checklist_edit：清单和铅笔">
+              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <path d="M4 4h16v16H4V4Zm3 4 1 1 2-2m2 1h5M7 13l1 1 2-2m2 1h5m-5 4h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="m15 18 2-2 3 3-2 2-4 1 1-4Z" fill="currentColor" />
+              </svg>
+            </span>
+          </div>
+          <p class="icon-candidate-name">G · checklist_edit</p>
+          <p class="icon-candidate-purpose">任务清单 + 铅笔，兼顾任务和编辑页。</p>
+        </article>
+
+        <article class="icon-candidate">
+          <div class="candidate-widget-header">
+            <span class="candidate-widget-title">今日速记</span>
+            <span class="candidate-widget-date">今天</span>
+            <span class="candidate-action" role="img" aria-label="H page_edit：折角页面和铅笔">
+              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <path d="M6 3h9l4 4v14H6V3Zm9 0v5h4M9 11h5m-5 4h3m3 2 2-2 3 3-2 2-4 1 1-4Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
+          </div>
+          <p class="icon-candidate-name">H · page_edit</p>
+          <p class="icon-candidate-purpose">折角页面 + 铅笔，页面入口感最强。</p>
+        </article>
+
+        <article class="icon-candidate">
+          <div class="candidate-widget-header">
+            <span class="candidate-widget-title">今日速记</span>
+            <span class="candidate-widget-date">今天</span>
+            <span class="candidate-action" role="img" aria-label="I memo_edit：便签卡片和铅笔">
+              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <path d="M4 4h16v12H9l-5 4V4Zm4 5h8m-8 4h5m3 3 2-2 3 3-2 2-4 1 1-4Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
+          </div>
+          <p class="icon-candidate-name">I · memo_edit</p>
+          <p class="icon-candidate-purpose">便签卡片 + 铅笔，强调速记和修改。</p>
+        </article>
+
+        <article class="icon-candidate">
+          <div class="candidate-widget-header">
+            <span class="candidate-widget-title">今日速记</span>
+            <span class="candidate-widget-date">今天</span>
+            <span class="candidate-action" role="img" aria-label="J writing_edit：写作页面和铅笔">
+              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <path d="M4 3h16v18H4V3Zm3 5h10M7 12h6M7 16h4m5-1 2-2 3 3-2 2-4 1 1-4Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
+          </div>
+          <p class="icon-candidate-name">J · writing_edit</p>
+          <p class="icon-candidate-purpose">写作页面 + 铅笔，突出“继续记录”。</p>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const isTask = new URLSearchParams(location.search).get("kind") === "task";
+    const content = document.getElementById("content");
+    const title = document.getElementById("title");
+    const headerMark = document.getElementById("header-mark");
+
+    const taskIcon = `
+      <svg viewBox="0 0 960 960" focusable="false">
+        <g transform="translate(0 960)">
+        <path d="M680,-40v-120H560v-80h120v-120h80v120h120v80H760v120H680ZM200,-200v-560,560ZM200,-120q-33,0-56.5-23.5T120,-200v-560q0-33 23.5-56.5T200,-840h560q33,0 56.5,23.5T840,-760v353q-18-11-38-18t-42-11v-324H200v560h280q0 21 3 41t10 39H200ZM348.5,-291.5Q360,-303 360,-320t-11.5-28.5Q337,-360 320,-360t-28.5,11.5Q280,-337 280,-320t11.5,28.5Q303,-280 320,-280t28.5,-11.5Zm0,-160Q360,-463 360,-480t-11.5-28.5Q337,-520 320,-520t-28.5,11.5Q280,-497 280,-480t11.5,28.5Q303,-440 320,-440t28.5,-11.5ZM440,-440h240v-80H440v80Zm0,-160h240v-80H440v80Zm0,320h54q8-23 20-43t28-37H440v80Z" fill="currentColor" />
+        </g>
+      </svg>`;
+    const noteIcon = `
+      <svg viewBox="0 0 960 960" focusable="false">
+        <g transform="translate(0 960)">
+        <path d="M640,-120H200q-33,0-56.5-23.5T120,-200v-560q0-33 23.5-56.5T200,-840h560q33 0 56.5,23.5T840,-760v440L640,-120ZM600,-200v-80q0-33 23.5-56.5T680,-360h80v-400H200v560h400ZM440,-320h80v-240h120v-80H320v80h120v240Zm160,120ZM200,-200v-560,560Z" fill="currentColor" />
+        </g>
+      </svg>`;
+
+    headerMark.innerHTML = isTask ? taskIcon : noteIcon;
+    title.textContent = isTask ? "今日任务" : "今日便签";
+
+    if (isTask) {
+      content.className = "task-list";
+      [
+        [true, "写下今天的三件事"],
+        [false, "整理收件箱"],
+        [false, "完成同步"],
+        [false, "记得保存重要附件"],
+      ].forEach(([checked, textValue]) => {
+        const item = document.createElement("div");
+        item.className = "task-row" + (checked ? " is-done" : "");
+        item.innerHTML = `<span class="check${checked ? " checked" : ""}">${checked ? "✓" : ""}</span><span></span>`;
+        item.lastElementChild.textContent = textValue;
+        content.appendChild(item);
+      });
+    } else {
+      content.className = "note-content";
+      content.innerHTML = `
+        <h2 class="note-heading">🗓️ 每日复盘</h2>
+        <ul class="note-list">
+          <li class="note-item">完成了所有任务，很棒</li>
+          <li class="note-item">希望明天再接再厉</li>
+          <li class="note-item">记录一个值得保留的瞬间</li>
+        </ul>`;
+    }
+  </script>
+</body>
+</html>

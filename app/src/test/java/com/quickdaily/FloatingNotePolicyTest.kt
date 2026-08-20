@@ -144,13 +144,42 @@ class FloatingNotePolicyTest {
     }
 
     @Test
-    fun keepDraftSettingDefaultsToDisabled() {
+    fun saveDraftSettingDefaultsToEnabled() {
+        assertTrue(FloatingNoteEntryPolicy.DEFAULT_SAVE_ON_CLOSE)
         assertFalse(FloatingNoteEntryPolicy.DEFAULT_KEEP_DRAFT_ON_CLOSE)
     }
 
     @Test
-    fun saveOnCloseDefaultsToEnabled() {
-        assertTrue(FloatingNoteEntryPolicy.DEFAULT_SAVE_ON_CLOSE)
+    fun saveOnCloseMigrationPreservesTheEffectiveLegacyBehavior() {
+        assertTrue(FloatingNoteEntryPolicy.resolveSaveOnClose(null, null))
+        assertTrue(FloatingNoteEntryPolicy.resolveSaveOnClose(true, null))
+        assertFalse(FloatingNoteEntryPolicy.resolveSaveOnClose(false, null))
+        assertFalse(FloatingNoteEntryPolicy.resolveSaveOnClose(null, true))
+        assertTrue(FloatingNoteEntryPolicy.resolveSaveOnClose(null, false))
+    }
+
+    @Test
+    fun canonicalSaveKeyWinsWhenLegacyKeysConflict() {
+        assertTrue(FloatingNoteEntryPolicy.resolveSaveOnClose(true, true))
+        assertFalse(FloatingNoteEntryPolicy.resolveSaveOnClose(false, false))
+    }
+
+    @Test
+    fun saveOnCloseMigrationIsVersionGatedAndIdempotentAfterSaving() {
+        assertTrue(FloatingNoteEntryPolicy.shouldMigrateSaveOnClose(canonical = null, schemaVersion = 0))
+        assertTrue(FloatingNoteEntryPolicy.shouldMigrateSaveOnClose(canonical = true, schemaVersion = 0))
+        assertFalse(
+            FloatingNoteEntryPolicy.shouldMigrateSaveOnClose(
+                canonical = true,
+                schemaVersion = FloatingNoteEntryPolicy.SAVE_ON_CLOSE_SCHEMA_VERSION,
+            )
+        )
+        assertTrue(
+            FloatingNoteEntryPolicy.shouldMigrateSaveOnClose(
+                canonical = null,
+                schemaVersion = FloatingNoteEntryPolicy.SAVE_ON_CLOSE_SCHEMA_VERSION,
+            )
+        )
     }
 
     @Test
@@ -174,6 +203,18 @@ class FloatingNotePolicyTest {
     @Test
     fun floatingOpacityDefaultsTo97Percent() {
         assertEquals(97, FloatingNoteAppearance.DEFAULT_OPACITY_PERCENT)
+    }
+
+    @Test
+    fun floatingAppearanceDefaultsToFollowingTheSystem() {
+        assertEquals(
+            com.quickdaily.ui.theme.QuickDailyNightMode.SYSTEM,
+            FloatingNoteAppearance.DEFAULT_NIGHT_MODE,
+        )
+        assertEquals(
+            com.quickdaily.ui.theme.QuickDailyNightMode.SYSTEM,
+            com.quickdaily.ui.theme.QuickDailyNightMode.fromKey(null),
+        )
     }
 
 

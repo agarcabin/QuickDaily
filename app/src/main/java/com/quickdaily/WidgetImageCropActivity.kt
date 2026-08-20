@@ -41,64 +41,81 @@ class WidgetImageCropActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val uri = intent.data ?: run { finish(); return }
-        val bitmap = decodeSampledBitmap(uri)
-            ?: run { finish(); return }
-        sourceBitmap = bitmap
+        try {
+            val uri = intent?.data ?: throw IllegalArgumentException("Missing image URI")
+            val bitmap = decodeSampledBitmap(uri)
+                ?: throw IllegalArgumentException("Image decode returned no bitmap")
+            sourceBitmap = bitmap
 
-        val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
-        image = ImageView(this).apply {
-            setImageBitmap(bitmap)
-            scaleType = ImageView.ScaleType.MATRIX
-            setOnTouchListener(::onImageTouch)
-        }
-        root.addView(image, FrameLayout.LayoutParams(-1, -1))
-        root.addView(CropOverlay(this), FrameLayout.LayoutParams(-1, -1))
-        val actions = ComposeView(this).apply {
-            setContent {
-                QuickDailyTheme {
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.8f),
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .navigationBarsPadding()
-                                .padding(horizontal = 24.dp, vertical = 12.dp),
+            // Initialize the detector before the ImageView can receive a touch event.
+            // Some OEMs dispatch an initial touch while the crop surface is being attached.
+            scaler = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                override fun onScale(detector: ScaleGestureDetector): Boolean {
+                    matrix.postScale(detector.scaleFactor, detector.scaleFactor, detector.focusX, detector.focusY)
+                    constrainMatrix()
+                    image.imageMatrix = matrix
+                    return true
+                }
+            })
+
+            val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+            image = ImageView(this).apply {
+                setImageBitmap(bitmap)
+                scaleType = ImageView.ScaleType.MATRIX
+                setOnTouchListener(::onImageTouch)
+            }
+            root.addView(image, FrameLayout.LayoutParams(-1, -1))
+            root.addView(CropOverlay(this), FrameLayout.LayoutParams(-1, -1))
+            val actions = ComposeView(this).apply {
+                setContent {
+                    QuickDailyTheme {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.8f),
                         ) {
-                            OutlinedButton(
-                                onClick = { finish() },
-                                modifier = Modifier.weight(1f),
-                            ) { Text("取消") }
-                            Button(
-                                onClick = { saveCrop() },
+                            Row(
                                 modifier = Modifier
-                                    .padding(start = 12.dp)
-                                    .weight(1f),
-                            ) { Text("确定") }
+                                    .fillMaxWidth()
+                                    .navigationBarsPadding()
+                                    .padding(horizontal = 24.dp, vertical = 12.dp),
+                            ) {
+                                OutlinedButton(
+                                    onClick = { finish() },
+                                    modifier = Modifier.weight(1f),
+                                ) { Text("取消") }
+                                Button(
+                                    onClick = { saveCrop() },
+                                    modifier = Modifier
+                                        .padding(start = 12.dp)
+                                        .weight(1f),
+                                ) { Text("确定") }
+                            }
                         }
                     }
                 }
             }
-        }
-        root.addView(actions, FrameLayout.LayoutParams(-1, -2, android.view.Gravity.BOTTOM))
-        setContentView(root)
-        image.post {
-            val scale = maxOf(image.width.toFloat() / bitmap.width, image.height.toFloat() / bitmap.height)
-            matrix.setScale(scale, scale)
-            matrix.postTranslate((image.width - bitmap.width * scale) / 2f, (image.height - bitmap.height * scale) / 2f)
-            constrainMatrix()
-            image.imageMatrix = matrix
-        }
-        scaler = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-            override fun onScale(detector: ScaleGestureDetector): Boolean {
-                matrix.postScale(detector.scaleFactor, detector.scaleFactor, detector.focusX, detector.focusY)
+            root.addView(actions, FrameLayout.LayoutParams(-1, -2, android.view.Gravity.BOTTOM))
+            setContentView(root)
+            image.post {
+                val scale = maxOf(image.width.toFloat() / bitmap.width, image.height.toFloat() / bitmap.height)
+                matrix.setScale(scale, scale)
+                matrix.postTranslate((image.width - bitmap.width * scale) / 2f, (image.height - bitmap.height * scale) / 2f)
                 constrainMatrix()
                 image.imageMatrix = matrix
-                return true
             }
-        })
+        } catch (error: Throwable) {
+            android.util.Log.e("QuickDailyCrop", "crop setup failed", error)
+            setResult(
+                RESULT_CANCELED,
+                android.content.Intent().putExtra(EXTRA_ERROR, true),
+            )
+            android.widget.Toast.makeText(
+                this,
+                "图片读取失败，请重新选择图片。",
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
+            finish()
+        }
     }
 
     private fun onImageTouch(view: View, event: MotionEvent): Boolean {
@@ -207,5 +224,8 @@ class WidgetImageCropActivity : Activity() {
         }
     }
 
-    companion object { const val EXTRA_RESULT_PATH = "widget_crop_path" }
+    companion object {
+        const val EXTRA_RESULT_PATH = "widget_crop_path"
+        const val EXTRA_ERROR = "widget_crop_error"
+    }
 }

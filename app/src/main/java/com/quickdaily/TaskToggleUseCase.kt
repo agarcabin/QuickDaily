@@ -107,21 +107,29 @@ internal object TaskToggleUseCase {
             return TaskToggleResult(false, failureReason = reason)
         }
 
-        val timestampEnabled = context.getSharedPreferences("QuickDaily", Context.MODE_PRIVATE)
+        val preferences = context.getSharedPreferences("QuickDaily", Context.MODE_PRIVATE)
+        val timestampEnabled = preferences
             .getBoolean(
                 TaskCompletionTimestampPolicy.PREF_KEY,
                 TaskCompletionTimestampPolicy.DEFAULT_ENABLED,
             )
+        val timestampFormat = TaskCompletionTimestampPolicy.normalizeFormat(
+            preferences.getString(
+                TaskCompletionTimestampPolicy.PREF_FORMAT_KEY,
+                TaskCompletionTimestampPolicy.DEFAULT_FORMAT,
+            ),
+        )
         val savedLine: String
         val timestampAction: String
         if (item.checked) {
-            savedLine = TaskCompletionTimestampPolicy.removeIfPresent(toggledLine)
+            savedLine = TaskCompletionTimestampPolicy.removeIfPresent(toggledLine, timestampFormat)
             timestampAction = if (savedLine != toggledLine) "removed" else "none"
         } else {
             savedLine = TaskCompletionTimestampPolicy.appendIfEnabled(
                 line = toggledLine,
                 enabled = timestampEnabled,
-                date = com.quickdaily.util.DateUtil.todayStr("yyyy-MM-dd"),
+                date = com.quickdaily.util.DateUtil.todayStr("YYYY-MM-DD"),
+                format = timestampFormat,
             )
             timestampAction = when {
                 savedLine != toggledLine -> "appended"

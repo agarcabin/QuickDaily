@@ -51,7 +51,7 @@ class TaskViewsFactory(private val context: Context, private val widgetId: Int) 
             ?: RemoteViews(context.packageName, R.layout.widget_task_item)
 
     override fun getLoadingView(): RemoteViews? = null
-    override fun getViewTypeCount(): Int = 1
+    override fun getViewTypeCount(): Int = 3
     override fun getItemId(position: Int): Long = position.toLong()
     override fun hasStableIds(): Boolean = false
 

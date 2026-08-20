@@ -1,5 +1,5 @@
 ﻿{
-    "version": "1.9.1-beta",
+    "version": "1.9.3-beta",
     "url": "https://github.com/agarcabin/QuickDaily/releases/latest",
-    "body": "QuickDaily 1.9.1-beta\n• 新增 换行使用 4 空格继承缩进并续接无序列表、有序列表和任务，退格可整段回退\n• 调整 便签小部件悬浮窗标题为“日期/页面名 + 速记”\n• 新增 #标签仅在渲染模式和小部件中使用当前主题色文字"
+    "body": "QuickDaily 1.9.3-beta\n• 新增 首次使用引导与悬浮窗控件教学\n• 新增 PDF、Word、PowerPoint、Excel、OpenDocument 与 WPS 文档分享捕获\n• 优化 设置分类与任务完成日期格式\n• 优化 设置页下拉框、锚点文本、小部件外观与提示音试听"
 }

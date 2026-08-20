@@ -161,6 +161,9 @@ class QuickDailyReadWidget : AppWidgetProvider() {
                 "widgetId=" + widgetId + " target=" + config.target.key + " pathConfigured=" + config.customRelativePath.isNotBlank() + " size=" + size + " result=" + (result?.javaClass?.simpleName ?: "loading"),
             )
             WidgetAppearance.applyRoot(views, R.id.widget_root, appearance)
+            WidgetAppearance.applyIcon(views, R.id.btn_home, appearance.iconForeground)
+            WidgetAppearance.applyIcon(views, R.id.btn_add, appearance.iconForeground)
+            WidgetAppearance.applyIcon(views, R.id.btn_scope, appearance.iconForeground)
             WidgetSizePolicy.applyReadChrome(views, size)
 
             // Editor page button
@@ -207,6 +210,7 @@ class QuickDailyReadWidget : AppWidgetProvider() {
             val renderMd = ctx.getSharedPreferences("QuickDaily", 0).getBoolean("render_markdown", true)
             views.setImageViewResource(R.id.btn_eye,
                 if (renderMd) R.drawable.ic_eye_on_white else R.drawable.ic_eye_off_white)
+            WidgetAppearance.applyIcon(views, R.id.btn_eye, appearance.iconForeground)
 
             // Title
             views.setTextViewText(R.id.widget_title, ReadWidgetConfigStore.displayName(config))

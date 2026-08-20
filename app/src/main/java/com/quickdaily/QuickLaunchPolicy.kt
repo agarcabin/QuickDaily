@@ -13,7 +13,7 @@ internal object QuickLaunchPolicy {
         categories: Set<String>?,
         vaultPath: String,
         hasStorageAccess: Boolean,
-        homeEntryMode: String = HomeEntryMode.EDITOR.key,
+        homeEntryMode: String = HomeEntryMode.OVERLAY.key,
     ): Boolean = isConfiguredLauncher(action, categories, vaultPath, hasStorageAccess) &&
         HomeEntryMode.fromKey(homeEntryMode) == HomeEntryMode.OVERLAY
 
@@ -22,7 +22,7 @@ internal object QuickLaunchPolicy {
         categories: Set<String>?,
         vaultPath: String,
         hasStorageAccess: Boolean,
-        homeEntryMode: String = HomeEntryMode.EDITOR.key,
+        homeEntryMode: String = HomeEntryMode.OVERLAY.key,
     ): Boolean = isConfiguredLauncher(action, categories, vaultPath, hasStorageAccess) &&
         HomeEntryMode.fromKey(homeEntryMode) == HomeEntryMode.FULLSCREEN
 

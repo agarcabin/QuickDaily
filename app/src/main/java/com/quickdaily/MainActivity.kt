@@ -37,6 +37,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import com.quickdaily.ui.EditorScreen
+import com.quickdaily.ui.OnboardingScreen
 import com.quickdaily.ui.SettingsScreen
 import com.quickdaily.ui.theme.QuickDailyTheme
 import com.quickdaily.ui.theme.rememberQuickDailyMotionPolicy
@@ -44,7 +45,9 @@ import com.quickdaily.util.ImageUtil
 import com.quickdaily.util.DiaryAppendUtil
 import com.quickdaily.BetaLogger
 import com.quickdaily.TaskWidget
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
 
@@ -79,10 +82,12 @@ class MainActivity : ComponentActivity() {
 
         BetaLogger.log("Lifecycle", "onCreate")
         appState = ViewModelProvider(this)[AppState::class.java]
+        OnboardingStore.initialize(this)
         if (intent.hasExtra(EXTRA_EDITOR_RELATIVE_PATH)) {
             appState.loadEditorTarget(intent.getStringExtra(EXTRA_EDITOR_RELATIVE_PATH))
         }
         val firstLaunch = appState.config.value.vaultPath.isBlank()
+        val showOnboarding = OnboardingStore.shouldShow(this)
         awaitingFloatingPermission = intent.getBooleanExtra(EXTRA_REQUEST_FLOATING_PERMISSION, false)
 
         // 标准桌面/侧边栏入口默认进入速记。首次安装、仓库未配置或存储不可用时，
@@ -92,7 +97,11 @@ class MainActivity : ComponentActivity() {
         }
 
         // 处理分享意图（冷启动时走这里）
-        handleShareIntent(intent)
+        if (showOnboarding && (intent.action == Intent.ACTION_SEND || intent.action == Intent.ACTION_SEND_MULTIPLE)) {
+            android.widget.Toast.makeText(this, "完成仓库与权限设置后请重新分享", android.widget.Toast.LENGTH_LONG).show()
+        } else {
+            handleShareIntent(intent)
+        }
 
         setContent {
             QuickDailyTheme {
@@ -100,7 +109,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
-                    val navigator = remember { Navigator(firstLaunch) }
+                    val navigator = remember { Navigator(showOnboarding, firstLaunch) }
                     val motionPolicy = rememberQuickDailyMotionPolicy()
                     val reducedMotion = motionPolicy.reducedMotion
                     val firstLaunchEntrance = remember(firstLaunch) {
@@ -147,6 +156,13 @@ class MainActivity : ComponentActivity() {
                         label = "settingsNavigation",
                         ) { screen ->
                             when (screen) {
+                                Screen.ONBOARDING -> OnboardingScreen(
+                                    appState = appState,
+                                    onFinished = {
+                                        navigator.screen = Screen.EDITOR
+                                    },
+                                    onExternalLaunch = { externalLaunching = true },
+                                )
                                 Screen.EDITOR -> EditorScreen(
                                     appState = appState,
                                     onSettingsClick = { navigator.screen = Screen.SETTINGS },
@@ -155,7 +171,12 @@ class MainActivity : ComponentActivity() {
                                 Screen.SETTINGS -> SettingsScreen(
                                     appState = appState,
                                     onBack = { navigator.screen = Screen.EDITOR },
-                                    onExternalLaunch = { externalLaunching = true }
+                                    onExternalLaunch = { externalLaunching = true },
+                                    onRestartOnboarding = {
+                                        SponsorReadState.resetAll(this@MainActivity)
+                                        OnboardingStore.restart(this@MainActivity)
+                                        navigator.screen = Screen.ONBOARDING
+                                    },
                                 )
                             }
                         }
@@ -165,8 +186,10 @@ class MainActivity : ComponentActivity() {
         }
         // 权限检查延迟到 UI 首帧之后，不阻塞冷启动
         window.decorView.post {
-            checkPermissions()
-            maybeShowFloatingPermissionPrompt()
+            if (!showOnboarding) {
+                checkPermissions()
+                maybeShowFloatingPermissionPrompt()
+            }
         }
 
         // 启动时自动检查更新
@@ -215,35 +238,115 @@ class MainActivity : ComponentActivity() {
         if (shouldOpenQuickNote(intent) && launchQuickNoteFromLauncher()) {
             return
         }
-        handleShareIntent(intent)
+        if (OnboardingStore.shouldShow(this) && (intent.action == Intent.ACTION_SEND || intent.action == Intent.ACTION_SEND_MULTIPLE)) {
+            android.widget.Toast.makeText(this, "完成仓库与权限设置后请重新分享", android.widget.Toast.LENGTH_LONG).show()
+        } else {
+            handleShareIntent(intent)
+        }
     }
 
-        private fun handleShareIntent(intent: Intent) {
-        when (intent.action) {
-            Intent.ACTION_SEND -> {
-                // 文本分享
-                val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
-                if (sharedText != null && sharedText.isNotBlank()) {
-                    saveSharedTextToDiary(sharedText)
-                    return
-                }
-                // 图片分享（单张）
-                if (intent.type?.startsWith("image/") == true) {
-                    val imageUri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
-                    if (imageUri != null) {
-                        saveSharedImagesToDiary(listOf(imageUri))
-                    }
-                }
+    private fun handleShareIntent(intent: Intent) {
+        val payload = SharedPayloadParser.parse(this, intent) ?: return
+        when {
+            payload.documents.isNotEmpty() -> saveSharedDocumentsToDiary(payload.text, payload.documents)
+            payload.images.isNotEmpty() -> {
+                payload.text?.let(::saveSharedTextToDiary)
+                saveSharedImagesToDiary(payload.images)
             }
-            Intent.ACTION_SEND_MULTIPLE -> {
-                if (intent.type?.startsWith("image/") == true) {
-                    val imageUris = intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
-                    if (imageUris != null && imageUris.isNotEmpty()) {
-                        saveSharedImagesToDiary(imageUris)
-                    }
-                }
-            }
+            payload.text != null -> saveSharedTextToDiary(payload.text)
         }
+    }
+
+    private fun saveSharedDocumentsToDiary(text: String?, uris: List<Uri>) {
+        val prefs = getSharedPreferences("QuickDaily", 0)
+        val vaultPath = prefs.getString("vault_path", "").orEmpty()
+        if (vaultPath.isBlank() || !hasStorageAccess()) {
+            android.widget.Toast.makeText(this, "完成仓库与权限设置后请重新分享", android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                SharedDocumentImporter.import(
+                    context = this@MainActivity,
+                    uris = uris,
+                    vaultPath = vaultPath,
+                    storagePath = prefs.getString("image_storage_path", "").orEmpty(),
+                )
+            }
+            if (result.links.isEmpty()) {
+                android.widget.Toast.makeText(this@MainActivity, "文件保存失败，日记未修改", android.widget.Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            appendSharedBlockToDiary(text, result.links)
+            android.widget.Toast.makeText(
+                this@MainActivity,
+                "已保存 ${result.links.size}/${result.total} 个文件",
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+
+    private fun appendSharedBlockToDiary(text: String?, links: List<String>) {
+        val prefs = getSharedPreferences("QuickDaily", 0)
+        val vaultPath = prefs.getString("vault_path", "").orEmpty()
+        val diaryFolder = prefs.getString("diary_folder", "Daily").orEmpty()
+        val dateFormat = prefs.getString("date_format", "YYYY-MM-DD").orEmpty()
+        val timestampFormat = prefs.getString("timestamp_format", "list_time").orEmpty()
+        val anchor = prefs.getString("anchor_text", "").orEmpty().trim()
+        val addAnchorIfMissing = prefs.getBoolean("add_anchor_if_missing", false)
+        val timestampOrder = prefs.getString("timestamp_order", "below").orEmpty()
+        val path = "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/${com.quickdaily.util.DateUtil.todayStr(dateFormat)}.md"
+        val lines = buildList {
+            text?.takeIf(String::isNotBlank)?.let { value ->
+                add(when (timestampFormat) {
+                    "none" -> value
+                    "time_only" -> "${com.quickdaily.util.DateUtil.nowTimeStr()} $value"
+                    "time_only_seconds" -> "${com.quickdaily.util.DateUtil.nowTimeSecondsStr()} $value"
+                    "list" -> "- $value"
+                    "ordered" -> "1. $value"
+                    "list_time" -> "- ${com.quickdaily.util.DateUtil.nowTimeStr()} $value"
+                    "list_time_seconds" -> "- ${com.quickdaily.util.DateUtil.nowTimeSecondsStr()} $value"
+                    "date_time" -> "${com.quickdaily.util.DateUtil.nowDateTimeChineseStr()} $value"
+                    "list_date_time" -> "- ${com.quickdaily.util.DateUtil.nowDateTimeChineseStr()} $value"
+                    else -> value
+                })
+            }
+            addAll(links)
+        }
+        val mutationGuard = com.quickdaily.util.FileUtil.acquirePathMutation(path)
+        try {
+            var existing = com.quickdaily.util.FileUtil.read(path)
+            if (existing.isBlank()) {
+                val template = prefs.getString("template_path", "").orEmpty()
+                if (template.isNotBlank()) {
+                    val templatePath = if (template.startsWith('/')) template else "${vaultPath.trimEnd('/')}/$template"
+                    existing = com.quickdaily.util.FileUtil.readOrNull(templatePath).orEmpty()
+                }
+            }
+            val parsed = com.quickdaily.util.ContentUtil.parseFrontmatter(existing)
+            var body = if (parsed.hasFrontmatter) parsed.body else existing
+            if (anchor.isNotEmpty() && !body.contains(anchor) && addAnchorIfMissing) {
+                body = if (body.isEmpty() || body.endsWith('\n')) "$body$anchor\n" else "$body\n$anchor\n"
+            }
+            val newBody = if (timestampOrder == "below") {
+                DiaryAppendUtil.appendAtAnchorSectionEnd(body, anchor, lines)
+            } else if (anchor.isNotEmpty() && body.contains(anchor)) {
+                val index = body.indexOf(anchor) + anchor.length
+                body.substring(0, index) + "\n" + lines.joinToString("\n") + body.substring(index)
+            } else if (body.isEmpty()) {
+                lines.joinToString("\n") + "\n"
+            } else {
+                body.trimEnd() + "\n" + lines.joinToString("\n") + "\n"
+            }
+            com.quickdaily.util.FileUtil.write(
+                path,
+                if (parsed.hasFrontmatter) com.quickdaily.util.ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, newBody) else newBody,
+            )
+        } finally {
+            mutationGuard.close()
+        }
+        WidgetRefreshHelper.refreshAll(this)
+        if (::appState.isInitialized) appState.reloadIfNewerOnDisk()
     }
 
     private fun saveSharedTextToDiary(text: String) {
@@ -589,10 +692,14 @@ class MainActivity : ComponentActivity() {
 
 // ── Simple Navigator ──────────────────────────────────────
 
-enum class Screen { EDITOR, SETTINGS }
+enum class Screen { ONBOARDING, EDITOR, SETTINGS }
 
-class Navigator(firstLaunch: Boolean) {
+class Navigator(showOnboarding: Boolean, firstLaunch: Boolean) {
     var screen by androidx.compose.runtime.mutableStateOf(
-        if (firstLaunch) Screen.SETTINGS else Screen.EDITOR
+        when {
+            showOnboarding -> Screen.ONBOARDING
+            firstLaunch -> Screen.SETTINGS
+            else -> Screen.EDITOR
+        }
     )
 }

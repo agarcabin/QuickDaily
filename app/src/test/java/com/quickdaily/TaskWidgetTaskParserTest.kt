@@ -71,4 +71,38 @@ class TaskWidgetTaskParserTest {
     fun malformedLineIsNotToggled() {
         assertFalse(TaskWidgetTaskParser.toggleLine("  - regular bullet") != null)
     }
+
+    @Test
+    fun dateGroupingAddsHeadersOnlyWhenNonTodayTasksExist() {
+        val today = TaskWidgetItem(
+            text = "今天",
+            sourcePath = "/vault/today.md",
+            date = "2026-08-20",
+            lineIndex = 0,
+            rawLine = "- [ ] 今天",
+            checked = false,
+            indentLevel = 0,
+            rootLineIndex = 0,
+        )
+        val yesterday = today.copy(
+            text = "昨天",
+            sourcePath = "/vault/yesterday.md",
+            date = "2026-08-19",
+            rawLine = "- [ ] 昨天",
+        )
+
+        assertEquals(listOf(today), TaskWidgetDateGrouping.withHeaders(listOf(today), "2026-08-20"))
+
+        val grouped = TaskWidgetDateGrouping.withHeaders(listOf(today, yesterday), "2026-08-20")
+        assertEquals(listOf("8月20日，周四", "今天", "8月19日，周三", "昨天"), grouped.map { it.text })
+        assertTrue(grouped[0].isDateHeader)
+        assertTrue(grouped[0].isFirstDateHeader)
+        assertTrue(grouped[2].isDateHeader)
+        assertFalse(grouped[2].isFirstDateHeader)
+    }
+
+    @Test
+    fun dateHeaderUsesMonthDayAndChineseWeekday() {
+        assertEquals("8月24日，周一", TaskWidgetDateGrouping.labelFor("2026-08-24"))
+    }
 }

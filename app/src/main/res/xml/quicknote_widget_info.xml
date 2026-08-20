@@ -10,6 +10,6 @@
     android:initialLayout="@layout/widget_quicknote"
     android:resizeMode="horizontal|vertical"
     android:widgetCategory="home_screen"
-    android:label="快速添加"
-    android:previewImage="@drawable/quicknote_preview"
+    android:label="快速录入"
+    android:previewImage="@drawable/quicknote_preview_design"
     android:description="@string/widget_description" />

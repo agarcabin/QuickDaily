@@ -173,6 +173,10 @@ object WidgetContentLoader {
                 TaskWidgetDisplayPolicy.SHOW_COMPLETED_PREF_KEY,
                 TaskWidgetDisplayPolicy.DEFAULT_SHOW_COMPLETED,
             )
+            val groupByDate = prefs.getBoolean(
+                TaskWidgetDisplayPolicy.GROUP_BY_DATE_PREF_KEY,
+                TaskWidgetDisplayPolicy.DEFAULT_GROUP_BY_DATE,
+            )
             val tasks = mutableListOf<TaskWidgetItem>()
             var lastPath: String? = null
             val paths: List<Pair<String, String?>> = when (widgetConfig.scope) {
@@ -224,8 +228,20 @@ object WidgetContentLoader {
                         "showCompleted=$showCompleted bodyLength=${body.length} visibleTasks=${visibleTasks.size}",
                 )
             }
+            val displayTasks = if (
+                groupByDate &&
+                (widgetConfig.scope == TaskWidgetScope.WEEK || widgetConfig.scope == TaskWidgetScope.MONTH)
+            ) {
+                TaskWidgetDateGrouping.withHeaders(tasks, DateUtil.dateStr(dateFormat))
+            } else {
+                tasks
+            }
+            BetaLogger.log(
+                "TaskWidget/Group",
+                "scope=${widgetConfig.scope.key} enabled=$groupByDate raw=${tasks.size} display=${displayTasks.size}",
+            )
             if (tasks.isEmpty()) WidgetLoadResult.Empty("暂无待办事项", lastPath)
-            else WidgetLoadResult.Success(tasks, lastPath ?: vaultPath)
+            else WidgetLoadResult.Success(displayTasks, lastPath ?: vaultPath)
         } catch (e: Exception) {
             WidgetLoadResult.Failure("读取失败", exception = e)
         }
@@ -274,10 +290,9 @@ object ReadWidgetViews {
                 setFloat(R.id.task_text, "setTextSize", if (size.isTiny) 11f else 12f)
                 setInt(R.id.task_text, "setMaxLines", size.readMaxLines)
                 setTextColor(R.id.task_text, if (item.checked) colors.muted else colors.foreground)
-                setImageViewResource(
+                setImageViewBitmap(
                     R.id.task_checkbox,
-                    if (item.checked) android.R.drawable.checkbox_on_background
-                    else android.R.drawable.checkbox_off_background
+                    WidgetTaskCheckboxRenderer.bitmap(context, item.checked, colors),
                 )
                 setViewPadding(
                     R.id.task_row,
@@ -414,8 +429,21 @@ object TaskWidgetViews {
         context: Context,
         item: TaskWidgetItem,
         size: WidgetSize = WidgetSize.DEFAULT
-    ): RemoteViews =
-        RemoteViews(context.packageName, R.layout.widget_task_item).apply {
+    ): RemoteViews {
+        if (item.isDateHeader) {
+            val colors = WidgetAppearance.colors(context)
+            val layout = if (item.isFirstDateHeader) {
+                R.layout.widget_task_date_header
+            } else {
+                R.layout.widget_task_date_header_spaced
+            }
+            return RemoteViews(context.packageName, layout).apply {
+                setTextViewText(R.id.date_header, item.text)
+                setTextColor(R.id.date_header, colors.iconMuted)
+                setFloat(R.id.date_header, "setTextSize", if (size.isTiny) 12f else 13f)
+            }
+        }
+        return RemoteViews(context.packageName, R.layout.widget_task_item).apply {
             val colors = WidgetAppearance.colors(context)
             setTextViewText(R.id.task_text, ReadWidgetViews.renderTags(item.text.trim(), colors))
             setFloat(R.id.task_text, "setTextSize", if (size.isTiny) 11f else 12f)
@@ -431,10 +459,9 @@ object TaskWidgetViews {
                 if (showFullContent) Int.MAX_VALUE else size.taskMaxLines,
             )
             setTextColor(R.id.task_text, if (item.checked) colors.muted else colors.foreground)
-            setImageViewResource(
+            setImageViewBitmap(
                 R.id.task_checkbox,
-                if (item.checked) android.R.drawable.checkbox_on_background
-                else android.R.drawable.checkbox_off_background
+                WidgetTaskCheckboxRenderer.bitmap(context, item.checked, colors),
             )
             setViewPadding(
                 R.id.task_row,
@@ -450,6 +477,7 @@ object TaskWidgetViews {
             }
             setOnClickFillInIntent(R.id.task_checkbox, fillIntent)
         }
+    }
 
     @RequiresApi(Build.VERSION_CODES.S)
     fun collection(
@@ -459,7 +487,7 @@ object TaskWidgetViews {
     ): RemoteViews.RemoteCollectionItems {
         val builder = RemoteViews.RemoteCollectionItems.Builder()
             .setHasStableIds(false)
-            .setViewTypeCount(1)
+            .setViewTypeCount(3)
         items.forEachIndexed { index, item ->
             builder.addItem(index.toLong(), create(context, item, size))
         }

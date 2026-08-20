@@ -1,6 +1,9 @@
 package com.quickdaily.ui
 
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -102,6 +105,7 @@ fun EditorToolbarActions(
     page: Int = 0,
     onPageChanged: (Int) -> Unit = {},
     onPageCountChanged: (Int) -> Unit = {},
+    onUserPageInteraction: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val actions = remember(order, visible) {
@@ -139,7 +143,18 @@ fun EditorToolbarActions(
 
         LazyRow(
             state = listState,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            if (event.type == PointerEventType.Press) {
+                                onUserPageInteraction()
+                            }
+                        }
+                    }
+                },
             horizontalArrangement = Arrangement.Start,
             flingBehavior = rememberSnapFlingBehavior(listState),
             userScrollEnabled = pages.size > 1,

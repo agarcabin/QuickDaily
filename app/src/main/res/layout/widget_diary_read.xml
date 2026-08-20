@@ -55,6 +55,7 @@
                 android:contentDescription="Toggle reading mode"
                 android:src="@drawable/ic_eye_on_white"
                 android:background="@null"
+                android:padding="2dp"
                 android:scaleType="centerInside" />
 
             <ImageButton
@@ -64,6 +65,7 @@
                 android:contentDescription="Open editor"
                 android:src="@drawable/ic_edit_white"
                 android:background="@null"
+                android:padding="2dp"
                 android:scaleType="centerInside" />
 
             <ImageButton
@@ -73,6 +75,7 @@
                 android:contentDescription="Add note"
                 android:src="@drawable/ic_add_white"
                 android:background="@null"
+                android:padding="2dp"
                 android:scaleType="centerInside" />
         </LinearLayout>
     </FrameLayout>

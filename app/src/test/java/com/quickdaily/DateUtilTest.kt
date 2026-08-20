@@ -9,6 +9,7 @@ class DateUtilTest {
     @Test
     fun dayOfMonthTokenRemainsTwoDigitAndWeekdayTokensRemainMapped() {
         assertEquals("yyyy-MM-dd(EEEEE)", DateUtil.convertObsidianFormat("YYYY-MM-DD(dd)"))
+        assertEquals("yyyy-MM-dd", DateUtil.convertObsidianFormat("YYYY-MM-DD"))
         assertEquals("EEEEE", DateUtil.convertObsidianFormat("dd"))
         assertEquals("EEE", DateUtil.convertObsidianFormat("ddd"))
         assertEquals("EEEE", DateUtil.convertObsidianFormat("dddd"))

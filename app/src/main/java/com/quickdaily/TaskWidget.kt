@@ -7,7 +7,7 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.media.MediaActionSound
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -65,7 +65,7 @@ class TaskWidget : AppWidgetProvider() {
                     })
                 }
             }
-            ACTION_ADD_TASK -> addTask(context, widgetId)
+            ACTION_ADD_TASK -> addTask(context, widgetId, intent.sourceBounds?.let(::Rect))
             ACTION_TOGGLE_TASK -> {
                 val path = intent.getStringExtra(EXTRA_TASK_PATH).orEmpty()
                 val lineIndex = intent.getIntExtra(EXTRA_TASK_LINE, -1)
@@ -138,6 +138,10 @@ class TaskWidget : AppWidgetProvider() {
                 "widgetId=$widgetId scope=${config.scope.key} customPath=${config.customRelativePath} size=$size result=${result?.javaClass?.simpleName ?: "loading"}",
             )
             WidgetAppearance.applyRoot(views, R.id.widget_root, appearance)
+            WidgetAppearance.applyIcon(views, R.id.btn_refresh, appearance.iconForeground)
+            WidgetAppearance.applyIcon(views, R.id.btn_scope, appearance.iconForeground)
+            WidgetAppearance.applyIcon(views, R.id.btn_add_task, appearance.iconForeground)
+            WidgetAppearance.applyIcon(views, R.id.btn_home, appearance.iconForeground)
             WidgetSizePolicy.applyTaskChrome(views, size)
 
             val title = if (config.scope == TaskWidgetScope.CUSTOM) {
@@ -264,7 +268,7 @@ class TaskWidget : AppWidgetProvider() {
             }
         }
 
-        private fun addTask(context: Context, widgetId: Int) {
+        private fun addTask(context: Context, widgetId: Int, sourceBounds: Rect? = null) {
             val config = if (widgetId >= 0) {
                 TaskWidgetConfigStore.load(context, widgetId)
             } else {
@@ -288,6 +292,7 @@ class TaskWidget : AppWidgetProvider() {
                 targetRelativePath = target,
                 displayTitle = title,
                 rememberTarget = false,
+                sourceBounds = sourceBounds,
             )
             if (target != null && FloatingNoteControllerProvider.forContext(context).showOrFocus(request)) {
                 return
@@ -300,6 +305,7 @@ class TaskWidget : AppWidgetProvider() {
                 putExtra(NoteEditActivity.EXTRA_DIALOG_TITLE, title.orEmpty())
                 putExtra("floating_source", FloatingNoteSource.WIDGET.name)
                 putExtra(NoteEditActivity.EXTRA_REMEMBER_TARGET, false)
+                sourceBounds?.let { setSourceBounds(Rect(it)) }
             })
         }
 
@@ -337,14 +343,18 @@ class TaskWidget : AppWidgetProvider() {
                 return
             }
 
+            val prefs = context.getSharedPreferences("QuickDaily", 0)
+            val soundMode = TaskCompletionSoundPolicy.migrateMode(
+                storedMode = prefs.getString(TaskCompletionSoundPolicy.PREF_MODE_KEY, null),
+                legacyEnabled = if (prefs.contains(TaskCompletionSoundPolicy.LEGACY_PREF_KEY)) {
+                    prefs.getBoolean(TaskCompletionSoundPolicy.LEGACY_PREF_KEY, true)
+                } else null,
+            )
             if (result.beforeChecked == false && TaskCompletionSoundPolicy.shouldPlay(
-                    enabled = context.getSharedPreferences("QuickDaily", 0).getBoolean(
-                        TaskCompletionSoundPolicy.PREF_KEY,
-                        TaskCompletionSoundPolicy.DEFAULT_ENABLED,
-                    ),
+                    mode = soundMode,
                     saveSucceeded = true,
                 )) {
-                runCatching { MediaActionSound().play(MediaActionSound.FOCUS_COMPLETE) }
+                TaskCompletionSoundPolicy.play(context, soundMode)
             }
             WidgetRefreshCoordinator.refreshAll(context, immediate = true)
         }

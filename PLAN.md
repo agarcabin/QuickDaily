@@ -36,3 +36,31 @@ _Locked via grill - by Codex + user_
 - 不改变模板内容加载格式、Obsidian 配置读取规则或其他设置项的保存语义。
 - 不重构附件复制、图片裁剪、小部件和已有的三处未提交修改。
 - 不提交、推送、打 tag、创建 GitHub Release 或 Pull Request。
+
+# Plan: QuickDaily 1.9.3-beta 设置页与提示音更新
+_Locked via grill - by Codex + user_
+
+## Goal
+在保留当前脏工作树已有改动的前提下，完成 1.9.3-beta 设置页的下拉框、锚点文本、Monet、透明度、小部件、路径配置和折叠状态调整；将任务完成提示音替换为可再分发的本地 CC0 音效并支持选择试听；以本地 1.9.2-beta APK 审计设置迁移情况。保持 1.9.3-beta，只做代码、测试和本地构建验证。
+
+## Approach
+1. 以 `C:\Download\互传\QuickDaily-1.9.2-beta.apk`、当前 `SettingsScreen.kt`、`DiaryConfig`、SharedPreferences 及主题/小部件偏好为依据，输出设置迁移清单；区分保留、改名、移动、条件隐藏和真正删除。
+2. 统一所有下拉菜单的左侧对齐和右侧选中勾；将锚点文本改为带多行输入、取消/保存/重置按钮的弹窗，允许空文本且重置待保存。
+3. 调整 Monet 自定义颜色的条件显示、小部件卡片与文案、背景默认值、透明度说明、路径配置标题、其他页顺序和默认展开状态；保留所有既有偏好键。
+4. 从 OpenGameArt CC0 UI 音效包中选取短的 Attention/Notification 类素材，记录来源和许可，放入 `res/raw`；保留 `urgent`/`classic`/`silent` 键，统一任务完成播放和设置选择试听。
+5. 更新相关策略测试和配置默认值测试，执行 JVM 单测、lint、Debug 构建和 `git diff --check`；不执行 ADB、APK 交接、Git 提交或远端发布。
+
+## Key decisions & tradeoffs
+- 1.9.2-beta 是迁移基线；已有用户的 `system` 小部件背景选择不被升级覆盖，新用户缺少偏好时默认使用现有 `dark`/`#202124`。
+- 锚点文本允许为空；取消丢弃草稿；重置只修改草稿，保存后才持久化。
+- Monet 开启且系统支持时隐藏整个自定义颜色区域；关闭 Monet 后恢复，不删除预设选择。
+- 两个透明度滑条统一使用“更透明 — 更深色”。
+- 音效只使用来源和许可可确认的本地 CC0 资源，不运行时下载，也不回退到系统音效。
+
+## Risks / open questions
+- 本机 `codex.exe` 之前因 Windows Access Denied 无法启动，Act 2 没有产生第二模型 verdict；本次不声称计划获得 `VERDICT: APPROVED`。
+- 当前工程没有 Compose UI 测试依赖，因此设置页运行时视觉和试听仍不属于本轮已验证证据。
+
+## Out of scope
+- 不覆盖或恢复当前已有未提交文件。
+- 不改变既有 SharedPreferences 键名，不提交、推送、打 tag、创建 PR/Release，不复制 APK，不安装或操作 Android 设备。

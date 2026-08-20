@@ -91,8 +91,8 @@ class QuickLaunchPolicyTest {
     }
 
     @Test
-    fun defaultLauncherModeIsEditor() {
-        assertFalse(
+    fun defaultLauncherModeIsOverlay() {
+        assertTrue(
             QuickLaunchPolicy.shouldOpenQuickNote(
                 action = launcherAction,
                 categories = setOf(launcherCategory),
