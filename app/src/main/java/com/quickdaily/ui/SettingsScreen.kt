@@ -4273,18 +4273,16 @@ private fun SponsorListCard(
                                 color = MaterialTheme.colorScheme.surfaceContainerHighest,
                                 tonalElevation = 2.dp,
                             ) {
+                                val tailContentPadding = with(density) {
+                                    bubbleTailHeightPx.toDp() + bubbleTailContentGap
+                                }
                                 Box(
                                     modifier = Modifier.padding(
-                                        top = if (!bubbleAbove) {
-                                            with(density) { bubbleTailHeightPx.toDp() } + bubbleTailContentGap
-                                        } else {
-                                            0.dp
-                                        },
-                                        bottom = if (bubbleAbove) {
-                                            with(density) { bubbleTailHeightPx.toDp() } + bubbleTailContentGap
-                                        } else {
-                                            0.dp
-                                        },
+                                        // Keep text in the rounded body. The shape's actual tail
+                                        // direction can differ from the initial placement while
+                                        // Popup measures or when the bubble is clamped by the window.
+                                        top = if (bubbleTailOnTop) tailContentPadding else 0.dp,
+                                        bottom = if (bubbleTailOnTop) 0.dp else tailContentPadding,
                                     ),
                                 ) {
                                     Text(
