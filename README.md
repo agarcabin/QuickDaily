@@ -1,4 +1,155 @@
-# QuickDaily — Obsidian 闪念速记 · Android 小部件
+language：[English](https://github.com/agarcabin/QuickDaily#english) | [简体中文](https://github.com/agarcabin/QuickDaily#%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87)
+
+---
+
+<a id="english"></a>
+
+## English
+
+### QuickDaily — Obsidian Quick Notes · Android Widgets
+
+<p align="center">
+  <b>Take out your phone → open the widget instantly → save a quick note to your vault → put it away</b>
+</p>
+
+<p align="center">
+  <a href="https://github.com/agarcabin/QuickDaily/releases/tag/v1.9">
+    <img src="https://img.shields.io/badge/Download-v1.9-brightgreen?style=for-the-badge&logo=github" alt="Download v1.9" />
+  </a>
+  <a href="https://github.com/agarcabin/QuickDaily/releases">
+    <img src="https://img.shields.io/github/v/release/agarcabin/QuickDaily?style=for-the-badge&logo=github" alt="GitHub Release" />
+  </a>
+  <a href="https://github.com/agarcabin/QuickDaily/releases">
+    <img src="https://img.shields.io/github/downloads/agarcabin/QuickDaily/total?style=for-the-badge&logo=github&label=Downloads" alt="GitHub Downloads" />
+  </a>
+  <a href="https://www.coolapk.com/u/400522">
+    <img src="https://img.shields.io/badge/CoolAPK-@附近的人-ff6900?style=for-the-badge" alt="CoolAPK" />
+  </a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Android-8.0%2B-green?logo=android" />
+  <img src="https://img.shields.io/badge/Kotlin-1.9.24-blue?logo=kotlin" />
+  <img src="https://img.shields.io/badge/Jetpack%20Compose-BOM%202024.09-purple?logo=jetpackcompose" />
+  <img src="https://img.shields.io/badge/License-MIT-yellow" />
+</p>
+
+---
+
+### Demo screenshots
+
+<p align="left">
+  <img width="240" alt="QuickDaily v1.9.1 quick-note example" src="./quickdaily-speed-note-v1.9.1.gif" />
+</p>
+
+(Recorded with QD v1.9.1 — 2026/08/29)
+
+<p align="left">
+  <img width="240" alt="QuickDaily screen recording" src="https://github.com/user-attachments/assets/a2718d12-e216-4b45-8f7a-b2b68ce0cefb" />
+</p>
+
+(Recorded with QD v1.0.0 — 2026/05/29)
+
+---
+
+### Why QuickDaily?
+
+**Obsidian Mobile is great, but it takes too long to start.** By the time it finishes loading, the idea is gone.
+
+QuickDaily does one thing: **help you capture a thought for today as quickly as possible**.
+
+- Reads and writes your Obsidian vault diary files directly in the background
+- Cold-starts in **< 500 ms** and opens directly to today's diary
+- Save, lock your phone, and put it away — everything is saved automatically
+
+---
+
+### Features at a glance
+
+| | |
+|---|---|
+| **⚡ Instant launch** — open and start writing; cold start <500ms | **🧩 Seamless Obsidian integration** — reads diary configuration, paths, and templates automatically |
+| **📑 Markdown rendering** — supports headings, lists, task checkboxes, bold/italic text, and links | **💾 Real-time saving** — debounced 500ms writes and immediate background saving |
+| **🏠 Home-screen diary widget** — browse the full diary for today | **🪟 Floating quick capture** — a 1x1 widget opens a transparent floating note window |
+| **📥 Task entry** — task mode in the floating window, with double-tap completion | **🖼️ Image capture** — batch-import images from the floating window into your diary |
+| **📆 Flexible date formats** — includes week-number date formats | **🔍 Frontmatter filtering** — optionally hide diary frontmatter and focus on the content |
+| **🔖 Quick-note anchor** — configure anchor text and insert notes at a specified position | **🎯 Today task widget** — view and check off tasks directly from the home screen |
+
+---
+
+### More features
+
+| | |
+|---|---|
+| 🖍️ **Timestamps** — 7 configurable formats, compatible with Thino / Knomo | ⏱️ **Quick Settings tile** — capture a note from the notification shade |
+| 📱 **Launcher shortcuts** — create a shortcut from the launcher | 🎨 **Material 3 theme** — Android 15 edge-to-edge support |
+| 🖼️ **Custom widget images** — customize the diary widget background | 🔄 **Automatic update checks** — check for new GitHub versions at startup |
+
+---
+
+### Demo video
+
+🎬 [Watch the demo video on Bilibili](https://www.bilibili.com/video/BV1smTm6wE4t/)
+
+---
+
+### Download
+
+> **Latest version: v1.4**
+
+| Channel | Link |
+|------|------|
+| GitHub Release | [QuickDaily-1.4.apk](https://github.com/agarcabin/QuickDaily/releases/tag/v1.4) |
+| Lanzou Cloud (China mirror) | [Download here](https://github.com/agarcabin/QuickDaily/releases) (password: fjdr) |
+| CoolAPK community | [@附近的人](https://www.coolapk.com/u/400522) |
+| QQ group | [1050092886](https://qm.qq.com/q/G2zLL5RpiU) — Obsidian 许愿屋 |
+
+---
+
+### Support the project
+
+If QuickDaily is useful to you, consider buying me a coffee:
+
+![Donation QR code](/赞赏码.png)
+
+### Tech stack
+
+| Technology | Version |
+|------|------|
+| Kotlin | 1.9.24 |
+| Jetpack Compose | BOM 2024.09.00 |
+| Material3 | Material Design 3 |
+| AGP | 8.2.0 |
+| Gradle | 8.4 |
+| minSdk | 26 (Android 8.0) |
+| targetSdk | 35 (Android 15) |
+| Architecture | MVVM + Compose + Coroutines |
+
+---
+
+### Build
+
+```bash
+git clone https://github.com/agarcabin/QuickDaily.git
+cd QuickDaily
+./gradlew assembleRelease
+```
+
+Android SDK 35+ is required. Set `sdk.dir` in `local.properties`.
+
+---
+
+### License
+
+MIT License — see [LICENSE](LICENSE).
+
+---
+
+<a id="简体中文"></a>
+
+## 简体中文
+
+### QuickDaily — Obsidian 闪念速记 · Android 小部件
 
 <p align="center">
   <b>掏出手机 → 小部件秒开 → 速录一键保存至ob库 → 放回口袋</b>
@@ -28,15 +179,15 @@
 
 ---
 
-## 使用截图
+### 演示截图
 
-<p align="lift">
+<p align="left">
   <img width="240" alt="QuickDaily v1.9.1 速录案例" src="./quickdaily-speed-note-v1.9.1.gif" />
 </p>
 
 QD v1.9.1 - 2026/08/29
 
-<p align="lift">
+<p align="left">
   <img width="240" alt="QuickDaily 录屏演示" src="https://github.com/user-attachments/assets/a2718d12-e216-4b45-8f7a-b2b68ce0cefb" />
 </p>
 
@@ -44,7 +195,7 @@ QD v1.0.0 - 2026/05/29
 
 ---
 
-## 为什么需要 QuickDaily？
+### 为什么需要 QuickDaily？
 
 **Obsidian 移动端什么都好，就是启动太慢了。** 等它加载完，灵感早飞了。
 
@@ -56,7 +207,7 @@ QuickDaily 只做一件事：**让你用最快的速度记下今天的一句话*
 
 ---
 
-## 功能一览
+### 功能一览
 
 | | |
 |---|---|
@@ -69,7 +220,7 @@ QuickDaily 只做一件事：**让你用最快的速度记下今天的一句话*
 
 ---
 
-## 更多特性
+### 更多特性
 
 | | |
 |---|---|
@@ -79,13 +230,13 @@ QuickDaily 只做一件事：**让你用最快的速度记下今天的一句话*
 
 ---
 
-## 演示视频
+### 演示视频
 
 🎬 [点击观看演示视频 (Bilibili)](https://www.bilibili.com/video/BV1smTm6wE4t/)
 
 ---
 
-## 下载
+### 下载
 
 > **最新版本：v1.4**
 
@@ -98,12 +249,13 @@ QuickDaily 只做一件事：**让你用最快的速度记下今天的一句话*
 
 ---
 
+### 打赏
 
-## 打赏
 如果你觉得对你很有帮助的话，请我喝杯咖啡吧~
+
 ![赞赏码](/赞赏码.png)
 
-## 技术栈
+### 技术栈
 
 | 技术 | 版本 |
 |------|------|
@@ -118,7 +270,7 @@ QuickDaily 只做一件事：**让你用最快的速度记下今天的一句话*
 
 ---
 
-## 构建
+### 构建
 
 ```bash
 git clone https://github.com/agarcabin/QuickDaily.git
@@ -130,6 +282,6 @@ cd QuickDaily
 
 ---
 
-## 许可
+### 许可
 
 MIT License — 详见 [LICENSE](LICENSE)
