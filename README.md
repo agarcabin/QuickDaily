@@ -11,6 +11,9 @@
   <a href="https://github.com/agarcabin/QuickDaily/releases">
     <img src="https://img.shields.io/github/v/release/agarcabin/QuickDaily?style=for-the-badge&logo=github" alt="GitHub Release" />
   </a>
+  <a href="https://github.com/agarcabin/QuickDaily/releases">
+    <img src="https://img.shields.io/github/downloads/agarcabin/QuickDaily/total?style=for-the-badge&logo=github&label=累计下载" alt="GitHub Downloads" />
+  </a>
   <a href="https://www.coolapk.com/u/400522">
     <img src="https://img.shields.io/badge/酷安-@附近的人-ff6900?style=for-the-badge" alt="CoolAPK" />
   </a>
