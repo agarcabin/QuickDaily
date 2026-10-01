@@ -13,6 +13,9 @@ local.properties
 *.apk
 *.jks
 *.keystore
+# Local Kotlin diagnostics and device QA captures
+/.kotlin/
+/adb-test-artifacts/
 # QuickDaily device QA evidence: keep raw artifacts outside Git
 .adb-test/
 /adb-qa-*/

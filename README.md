@@ -1,18 +1,20 @@
-Langue：[English](#english)、[简体中文](#简体中文)
+language：[English](#english) | [简体中文](#简体中文)
+
+---
 
 <a id="english"></a>
 
 ## English
 
-### QuickDaily — Obsidian Quick Notes · Android Widgets
+<h3 align="center">QuickDaily — Obsidian Quick Notes · Android Widgets</h3>
 
 <p align="center">
   <b>Take out your phone → open the widget instantly → save a quick note to your vault → put it away</b>
 </p>
 
 <p align="center">
-  <a href="https://github.com/agarcabin/QuickDaily/releases/tag/v1.9">
-    <img src="https://img.shields.io/badge/Download-v1.9-brightgreen?style=for-the-badge&logo=github" alt="Download v1.9" />
+  <a href="https://github.com/agarcabin/QuickDaily/releases">
+    <img src="https://img.shields.io/github/downloads/agarcabin/QuickDaily/total?style=for-the-badge&logo=github&label=%E4%B8%8B%E8%BD%BD%E6%AC%A1%E6%95%B0%E7%BB%9F%E8%AE%A1" alt="下载次数统计" />
   </a>
   <a href="https://github.com/agarcabin/QuickDaily/releases">
     <img src="https://img.shields.io/github/v/release/agarcabin/QuickDaily?style=for-the-badge&logo=github" alt="GitHub Release" />
@@ -87,56 +89,6 @@ QuickDaily does one thing: **help you capture a thought for today as quickly as 
 🎬 [Watch the demo video on Bilibili](https://www.bilibili.com/video/BV1smTm6wE4t/)
 
 ---
-
-### Download
-
-> **Latest version: v1.4**
-
-| Channel | Link |
-|------|------|
-| GitHub Release | [QuickDaily-1.4.apk](https://github.com/agarcabin/QuickDaily/releases/tag/v1.4) |
-| Lanzou Cloud (China mirror) | [Download here](https://github.com/agarcabin/QuickDaily/releases) (password: fjdr) |
-| CoolAPK community | [@附近的人](https://www.coolapk.com/u/400522) |
-| QQ group | [1050092886](https://qm.qq.com/q/G2zLL5RpiU) — Obsidian 许愿屋 |
-
----
-
-### Support the project
-
-If QuickDaily is useful to you, consider buying me a coffee:
-
-![Donation QR code](/赞赏码.png)
-
-### Tech stack
-
-| Technology | Version |
-|------|------|
-| Kotlin | 1.9.24 |
-| Jetpack Compose | BOM 2024.09.00 |
-| Material3 | Material Design 3 |
-| AGP | 8.2.0 |
-| Gradle | 8.4 |
-| minSdk | 26 (Android 8.0) |
-| targetSdk | 35 (Android 15) |
-| Architecture | MVVM + Compose + Coroutines |
-
----
-
-### Build
-
-```bash
-git clone https://github.com/agarcabin/QuickDaily.git
-cd QuickDaily
-./gradlew assembleRelease
-```
-
-Android SDK 35+ is required. Set `sdk.dir` in `local.properties`.
-
----
-
-### License
-
-MIT License — see [LICENSE](LICENSE).
 
 ---
 
