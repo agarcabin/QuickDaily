@@ -1,16 +1,15 @@
 package com.quickdaily
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.LocalDateTime
 
 class TaskCompletionTimestampPolicyTest {
     @Test
     fun completionTimestampUsesUppercaseObsidianDateFormat() {
-        assertEquals("YYYY-MM-DD", TaskCompletionTimestampPolicy.DATE_FORMAT)
-        assertEquals(
-            "从任务小部件完成任务时，在任务末尾添加 ✅️ YYYY-MM-DD",
-            TaskCompletionTimestampPolicy.SETTING_DESCRIPTION,
-        )
+        assertEquals("✅️ YYYY-MM-DD", TaskCompletionTimestampPolicy.DEFAULT_FORMAT)
     }
 
     @Test
@@ -82,5 +81,64 @@ class TaskCompletionTimestampPolicyTest {
         val line = "\t- [x] No timestamp"
 
         assertEquals(line, TaskCompletionTimestampPolicy.removeIfPresent(line))
+    }
+
+    @Test
+    fun customMomentTokensRenderInAnyOrder() {
+        val timestamp = LocalDateTime.of(2026, 7, 3, 4, 5, 6)
+
+        assertEquals(
+            "2026-03-07 04:05:06",
+            TaskCompletionTimestampPolicy.formatTimestamp("YYYY-DD-MM HH:mm:ss", timestamp),
+        )
+        assertEquals(
+            "26/7/3 4:5:6",
+            TaskCompletionTimestampPolicy.formatTimestamp("YY/M/D H:m:s", timestamp),
+        )
+    }
+
+    @Test
+    fun bracketedLiteralTextIsPreservedWithoutTreatingItAsAToken() {
+        assertEquals(
+            "完成于 2026 年 07 月 03 日",
+            TaskCompletionTimestampPolicy.formatTimestamp(
+                "[完成于 ]YYYY[ 年 ]MM[ 月 ]DD[ 日]",
+                LocalDateTime.of(2026, 7, 3, 4, 5, 6),
+            ),
+        )
+    }
+
+    @Test
+    fun emptyAndUnknownFormatsNormalizeToTheDefault() {
+        assertEquals(TaskCompletionTimestampPolicy.DEFAULT_FORMAT, TaskCompletionTimestampPolicy.normalizeFormat(""))
+        assertEquals(TaskCompletionTimestampPolicy.DEFAULT_FORMAT, TaskCompletionTimestampPolicy.normalizeFormat("YYYY-QQ-DD"))
+        assertTrue(TaskCompletionTimestampPolicy.isValidFormat("YYYY-DD-MM"))
+        assertFalse(TaskCompletionTimestampPolicy.isValidFormat("YYYY-QQ-DD"))
+    }
+
+    @Test
+    fun customTimestampIsNotDuplicatedAndCanBeRemoved() {
+        val timestamp = LocalDateTime.of(2026, 7, 3, 4, 5, 6)
+        val line = TaskCompletionTimestampPolicy.appendIfEnabled(
+            line = "- [X] Buy milk",
+            enabled = true,
+            format = "YYYY-DD-MM HH:mm",
+            timestamp = timestamp,
+        )
+
+        assertEquals("- [X] Buy milk 2026-03-07 04:05", line)
+        assertEquals(
+            line,
+            TaskCompletionTimestampPolicy.appendIfEnabled(
+                line = line,
+                enabled = true,
+                format = "YYYY-DD-MM HH:mm",
+                timestamp = timestamp,
+            ),
+        )
+        assertEquals(
+            "- [X] Buy milk",
+            TaskCompletionTimestampPolicy.removeIfPresent(line, "YYYY-DD-MM HH:mm"),
+        )
     }
 }

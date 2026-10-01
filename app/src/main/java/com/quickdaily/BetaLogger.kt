@@ -11,6 +11,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import com.quickdaily.util.VaultStoragePrefs
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -100,20 +101,28 @@ object BetaLogger {
         val prefs = context.getSharedPreferences("QuickDaily", Context.MODE_PRIVATE)
         val customPages = TaskWidgetConfigStore.recentCustomPaths(context).joinToString("|")
         val featureStats = collectFeatureStats(context, prefs)
+        val storage = VaultStoragePrefs.current(context)
         log(
             "ConfigSnapshot",
             "source=$source loggingEnabled=${prefs.getBoolean("logging_enabled", false)} " +
                 "vaultPath=${prefs.getString("vault_path", "").orEmpty()} " +
+                "vaultBackend=${storage.backend} vaultTreeUri=${storage.treeUri} " +
+                "obsidianVaultId=${prefs.getString(VaultStoragePrefs.OBSIDIAN_VAULT_ID_KEY, "").orEmpty()} " +
                 "diaryFolder=${prefs.getString("diary_folder", "Daily").orEmpty()} " +
                 "dateFormat=${prefs.getString("date_format", "YYYY-MM-DD").orEmpty()} " +
                 "filterFrontmatter=${prefs.getBoolean("filter_frontmatter", false)} " +
                 "renderMarkdown=${prefs.getBoolean("render_markdown", true)} " +
                 "appVersion=${BuildConfig.VERSION_NAME} appVersionCode=${BuildConfig.VERSION_CODE} " +
                 "taskCompletionTimestamp=${prefs.getBoolean(TaskCompletionTimestampPolicy.PREF_KEY, TaskCompletionTimestampPolicy.DEFAULT_ENABLED)} " +
-                "taskCompletionSound=${prefs.getBoolean(TaskCompletionSoundPolicy.PREF_KEY, TaskCompletionSoundPolicy.DEFAULT_ENABLED)} " +
+                "taskCompletionSoundMode=${TaskCompletionSoundPolicy.migrateMode(
+                    storedMode = prefs.getString(TaskCompletionSoundPolicy.PREF_MODE_KEY, null),
+                    legacyEnabled = if (prefs.contains(TaskCompletionSoundPolicy.LEGACY_PREF_KEY)) {
+                        prefs.getBoolean(TaskCompletionSoundPolicy.LEGACY_PREF_KEY, true)
+                    } else null,
+                ).key} " +
                 "taskShowCompleted=${prefs.getBoolean(TaskWidgetDisplayPolicy.SHOW_COMPLETED_PREF_KEY, TaskWidgetDisplayPolicy.DEFAULT_SHOW_COMPLETED)} " +
                 "systemSidebarSupport=${prefs.getBoolean(FloatingNoteEntryPolicy.PREF_SYSTEM_SIDEBAR_SUPPORT, FloatingNoteEntryPolicy.DEFAULT_SYSTEM_SIDEBAR_SUPPORT)} " +
-                "homeEntryMode=${prefs.getString("home_entry_mode", HomeEntryMode.EDITOR.key).orEmpty()} " +
+                "homeEntryMode=${prefs.getString("home_entry_mode", HomeEntryMode.OVERLAY.key).orEmpty()} " +
                 "themeMonet=${prefs.getBoolean("theme_use_monet", true)} " +
                 "themeAccent=${prefs.getString("theme_accent_preset", "blue").orEmpty()} " +
                 "themeNightMode=${prefs.getString("theme_night_mode", "system").orEmpty()} " +
@@ -236,7 +245,8 @@ object BetaLogger {
         try {
             val content = getLogContent()
             if (content.isEmpty()) {
-                android.widget.Toast.makeText(context, "日志为空", android.widget.Toast.LENGTH_SHORT).show()
+                val uiContext = LocaleController.localizedContext(context)
+                android.widget.Toast.makeText(context, uiContext.getString(R.string.qd_debug_log_empty), android.widget.Toast.LENGTH_SHORT).show()
                 return
             }
             val cacheFile = java.io.File(context.cacheDir, "QuickDaily_log.txt")
@@ -249,9 +259,15 @@ object BetaLogger {
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            context.startActivity(Intent.createChooser(intent, "分享 Beta 日志"))
+            context.startActivity(
+                Intent.createChooser(
+                    intent,
+                    LocaleController.localizedContext(context).getString(R.string.qd_debug_share_log),
+                ),
+            )
         } catch (_: Exception) {
-            android.widget.Toast.makeText(context, "分享失败", android.widget.Toast.LENGTH_SHORT).show()
+            val uiContext = LocaleController.localizedContext(context)
+            android.widget.Toast.makeText(context, uiContext.getString(R.string.qd_debug_share_failed), android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 }

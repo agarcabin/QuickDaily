@@ -8,6 +8,9 @@ data class TextIndentResult(
 )
 
 object TextIndentPolicy {
+    const val INDENT_WIDTH = 4
+    const val INDENT_UNIT = "    "
+
     fun indent(text: String, selection: TextRange): TextIndentResult =
         transform(text, selection, outdent = false)
 
@@ -47,12 +50,12 @@ object TextIndentPolicy {
             }
         }
 
-        val output = buildString(text.length + lineStarts.size) {
+        val output = buildString(text.length + lineStarts.size * INDENT_WIDTH) {
             var cursor = 0
             lineStarts.forEach { lineStart ->
                 append(text, cursor, lineStart)
                 val remove = removals.getValue(lineStart)
-                if (!outdent) append('\t')
+                if (!outdent) append(INDENT_UNIT)
                 append(text, lineStart + remove, nextLineEnd(text, lineStart))
                 cursor = nextLineEnd(text, lineStart)
             }
@@ -62,7 +65,7 @@ object TextIndentPolicy {
         fun mapPosition(position: Int): Int {
             var mapped = position
             lineStarts.forEach { lineStart ->
-                val delta = if (outdent) -removals.getValue(lineStart) else 1
+                val delta = if (outdent) -removals.getValue(lineStart) else INDENT_WIDTH
                 if (lineStart < position || (!outdent && lineStart == position)) mapped += delta
             }
             return mapped.coerceIn(0, output.length)

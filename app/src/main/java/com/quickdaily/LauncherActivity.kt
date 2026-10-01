@@ -9,13 +9,15 @@ import android.os.Environment
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.core.content.ContextCompat
+import com.quickdaily.util.VaultBackend
+import com.quickdaily.util.VaultStoragePrefs
 
 /**
  * Transparent dispatcher used only by the launcher icon.
  * Keeping the normal MainActivity theme out of this path prevents a white
  * starting window from flashing before the transparent quick-note editor.
  */
-class LauncherActivity : ComponentActivity() {
+class LauncherActivity : LocalizedComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         BetaLogger.init(this)
@@ -48,7 +50,8 @@ class LauncherActivity : ComponentActivity() {
         } else if (shouldOpenFullScreen()) {
             BetaLogger.log("FloatingNote/Launch", "launcher route=fullscreen")
             val baseTitle = FloatingNoteTargetStore.titleFor(this, null)
-            val title = if (baseTitle.endsWith("速录")) baseTitle else "$baseTitle 速录"
+            val suffix = getString(R.string.qd_editor_quick_capture_suffix)
+            val title = if (baseTitle.endsWith(suffix)) baseTitle else "$baseTitle $suffix"
             startActivity(
                 NoteEditActivity.fullScreenIntent(
                     context = this,
@@ -82,29 +85,27 @@ class LauncherActivity : ComponentActivity() {
 
     private fun shouldOpenFullScreen(): Boolean {
         val prefs = getSharedPreferences("QuickDaily", 0)
-        val vaultPath = prefs.getString("vault_path", "").orEmpty()
+        val vaultPath = VaultStoragePrefs.current(this).rootPath
         return QuickLaunchPolicy.shouldOpenFullScreen(
             action = intent.action,
             categories = intent.categories,
             vaultPath = vaultPath,
             hasStorageAccess = hasStorageAccess(),
-            homeEntryMode = prefs.getString("home_entry_mode", HomeEntryMode.EDITOR.key)
-                ?: HomeEntryMode.EDITOR.key,
+            homeEntryMode = prefs.getString("home_entry_mode", HomeEntryMode.OVERLAY.key)
+                ?: HomeEntryMode.OVERLAY.key,
         )
     }
 
     private fun shouldOpenQuickNote(): Boolean {
-        val vaultPath = getSharedPreferences("QuickDaily", 0)
-            .getString("vault_path", "")
-            .orEmpty()
+        val vaultPath = VaultStoragePrefs.current(this).rootPath
         val result = QuickLaunchPolicy.shouldOpenQuickNote(
             action = intent.action,
             categories = intent.categories,
             vaultPath = vaultPath,
             hasStorageAccess = hasStorageAccess(),
             homeEntryMode = getSharedPreferences("QuickDaily", 0)
-                .getString("home_entry_mode", HomeEntryMode.EDITOR.key)
-                ?: HomeEntryMode.EDITOR.key,
+                .getString("home_entry_mode", HomeEntryMode.OVERLAY.key)
+                ?: HomeEntryMode.OVERLAY.key,
         )
         BetaLogger.log(
             "FloatingNote/Launch",
@@ -114,6 +115,11 @@ class LauncherActivity : ComponentActivity() {
     }
 
     private fun hasStorageAccess(): Boolean {
+        val storage = VaultStoragePrefs.current(this)
+        if (storage.backend == VaultBackend.SAF) {
+            return VaultStoragePrefs.validate(this).status == com.quickdaily.util.VaultValidationStatus.VALID
+        }
+        if (VaultStoragePrefs.isLegacyHomePath(storage.rootPath)) return false
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             Environment.isExternalStorageManager()
         } else {

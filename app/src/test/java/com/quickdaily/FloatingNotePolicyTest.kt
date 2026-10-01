@@ -43,6 +43,41 @@ class FloatingNotePolicyTest {
     }
 
     @Test
+    fun explicitEntryTitleWinsOverPersistedDraftTitle() {
+        assertEquals(
+            "2026-08-08 速记",
+            FloatingNotePolicy.displayTitleForRequest(
+                hasPersistedDraft = true,
+                persistedTitle = "今日日记",
+                requestedTitle = "2026-08-08 速记",
+                fallbackTitle = "fallback",
+            ),
+        )
+    }
+
+    @Test
+    fun missingEntryTitleFallsBackToDraftThenTargetTitle() {
+        assertEquals(
+            "项目 速记",
+            FloatingNotePolicy.displayTitleForRequest(
+                hasPersistedDraft = true,
+                persistedTitle = "项目 速记",
+                requestedTitle = "  ",
+                fallbackTitle = "fallback",
+            ),
+        )
+        assertEquals(
+            "2026-08-08 速记",
+            FloatingNotePolicy.displayTitleForRequest(
+                hasPersistedDraft = false,
+                persistedTitle = null,
+                requestedTitle = null,
+                fallbackTitle = "2026-08-08 速记",
+            ),
+        )
+    }
+
+    @Test
     fun launchGateAllowsOnlyOnePendingOverlayStart() {
         FloatingNoteLaunchGate.release()
         assertTrue(FloatingNoteLaunchGate.acquire())
@@ -109,13 +144,42 @@ class FloatingNotePolicyTest {
     }
 
     @Test
-    fun keepDraftSettingDefaultsToDisabled() {
+    fun saveDraftSettingDefaultsToEnabled() {
+        assertTrue(FloatingNoteEntryPolicy.DEFAULT_SAVE_ON_CLOSE)
         assertFalse(FloatingNoteEntryPolicy.DEFAULT_KEEP_DRAFT_ON_CLOSE)
     }
 
     @Test
-    fun saveOnCloseDefaultsToEnabled() {
-        assertTrue(FloatingNoteEntryPolicy.DEFAULT_SAVE_ON_CLOSE)
+    fun saveOnCloseMigrationPreservesTheEffectiveLegacyBehavior() {
+        assertTrue(FloatingNoteEntryPolicy.resolveSaveOnClose(null, null))
+        assertTrue(FloatingNoteEntryPolicy.resolveSaveOnClose(true, null))
+        assertFalse(FloatingNoteEntryPolicy.resolveSaveOnClose(false, null))
+        assertFalse(FloatingNoteEntryPolicy.resolveSaveOnClose(null, true))
+        assertTrue(FloatingNoteEntryPolicy.resolveSaveOnClose(null, false))
+    }
+
+    @Test
+    fun canonicalSaveKeyWinsWhenLegacyKeysConflict() {
+        assertTrue(FloatingNoteEntryPolicy.resolveSaveOnClose(true, true))
+        assertFalse(FloatingNoteEntryPolicy.resolveSaveOnClose(false, false))
+    }
+
+    @Test
+    fun saveOnCloseMigrationIsVersionGatedAndIdempotentAfterSaving() {
+        assertTrue(FloatingNoteEntryPolicy.shouldMigrateSaveOnClose(canonical = null, schemaVersion = 0))
+        assertTrue(FloatingNoteEntryPolicy.shouldMigrateSaveOnClose(canonical = true, schemaVersion = 0))
+        assertFalse(
+            FloatingNoteEntryPolicy.shouldMigrateSaveOnClose(
+                canonical = true,
+                schemaVersion = FloatingNoteEntryPolicy.SAVE_ON_CLOSE_SCHEMA_VERSION,
+            )
+        )
+        assertTrue(
+            FloatingNoteEntryPolicy.shouldMigrateSaveOnClose(
+                canonical = null,
+                schemaVersion = FloatingNoteEntryPolicy.SAVE_ON_CLOSE_SCHEMA_VERSION,
+            )
+        )
     }
 
     @Test
@@ -139,6 +203,18 @@ class FloatingNotePolicyTest {
     @Test
     fun floatingOpacityDefaultsTo97Percent() {
         assertEquals(97, FloatingNoteAppearance.DEFAULT_OPACITY_PERCENT)
+    }
+
+    @Test
+    fun floatingAppearanceDefaultsToFollowingTheSystem() {
+        assertEquals(
+            com.quickdaily.ui.theme.QuickDailyNightMode.SYSTEM,
+            FloatingNoteAppearance.DEFAULT_NIGHT_MODE,
+        )
+        assertEquals(
+            com.quickdaily.ui.theme.QuickDailyNightMode.SYSTEM,
+            com.quickdaily.ui.theme.QuickDailyNightMode.fromKey(null),
+        )
     }
 
 

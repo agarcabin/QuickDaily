@@ -6,7 +6,7 @@ import android.app.Activity
 import android.os.Bundle
 import java.util.concurrent.atomic.AtomicBoolean
 
-class ToggleMarkdownActivity : Activity() {
+class ToggleMarkdownActivity : LocalizedActivity() {
     companion object {
         private val isToggling = AtomicBoolean(false)
     }

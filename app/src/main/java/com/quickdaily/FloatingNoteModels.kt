@@ -2,6 +2,7 @@ package com.quickdaily
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Rect
 import android.provider.Settings
 import android.net.Uri
 import android.util.Base64
@@ -13,6 +14,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.core.content.ContextCompat
 import com.quickdaily.util.DateUtil
 import com.quickdaily.util.VaultPathUtil
+import com.quickdaily.ui.theme.QuickDailyNightMode
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.ConcurrentHashMap
 import java.util.UUID
@@ -38,6 +40,7 @@ data class FloatingNoteRequest(
     val displayTitle: String? = null,
     val requestId: String = newFloatingNoteRequestId(),
     val rememberTarget: Boolean = true,
+    val sourceBounds: Rect? = null,
 )
 
 data class FloatingNoteTargetOption(
@@ -67,7 +70,7 @@ object FloatingNoteTargetStore {
             FloatingNoteTargetOption(
                 path = null,
                 title = titleFor(context, null),
-                menuTitle = "日记",
+                menuTitle = LocaleController.localizedContext(context).getString(R.string.qd_read_widget_today),
             )
         ) + customPaths.map { path ->
             FloatingNoteTargetOption(path, titleFor(context, path))
@@ -82,11 +85,22 @@ object FloatingNoteTargetStore {
             ?.let { TaskWidgetConfigStore.displayName(it) }
             ?.takeIf { it.isNotBlank() }
             ?: DateUtil.todayStr(dateFormat)
-        return "$pageName 速记"
+        return "$pageName ${LocaleController.localizedContext(context).getString(R.string.qd_editor_quick_capture_suffix)}"
     }
 }
 
 internal object FloatingNotePolicy {
+    fun displayTitleForRequest(
+        hasPersistedDraft: Boolean,
+        persistedTitle: String?,
+        requestedTitle: String?,
+        fallbackTitle: String,
+    ): String = requestedTitle
+        ?.takeIf { it.isNotBlank() }
+        ?: persistedTitle
+            ?.takeIf { hasPersistedDraft && it.isNotBlank() }
+        ?: fallbackTitle
+
     fun shouldApplyPrefill(
         text: String,
         imageCount: Int,
@@ -120,19 +134,48 @@ internal object FloatingNoteEntryPolicy {
     const val DEFAULT_SYSTEM_SIDEBAR_SUPPORT = false
     const val PREF_KEEP_DRAFT_ON_CLOSE = "floating_note_keep_draft_on_close"
     const val PREF_SAVE_ON_CLOSE = "floating_note_save_on_close"
+    const val PREF_SAVE_ON_CLOSE_SCHEMA_VERSION = "floating_note_save_on_close_schema_version"
+    const val SAVE_ON_CLOSE_SCHEMA_VERSION = 2
     const val DEFAULT_SAVE_ON_CLOSE = true
     const val DEFAULT_KEEP_DRAFT_ON_CLOSE = false
 
+    internal fun resolveSaveOnClose(
+        canonical: Boolean?,
+        legacyKeepDraft: Boolean?,
+    ): Boolean = canonical ?: legacyKeepDraft?.not() ?: DEFAULT_SAVE_ON_CLOSE
+
+    internal fun shouldMigrateSaveOnClose(
+        canonical: Boolean?,
+        schemaVersion: Int,
+    ): Boolean = canonical == null || schemaVersion < SAVE_ON_CLOSE_SCHEMA_VERSION
+
     fun shouldSaveOnClose(context: Context): Boolean {
         val prefs = context.getSharedPreferences(FLOATING_NOTE_PREFS, Context.MODE_PRIVATE)
-        return when {
-            prefs.contains(PREF_SAVE_ON_CLOSE) -> prefs.getBoolean(PREF_SAVE_ON_CLOSE, DEFAULT_SAVE_ON_CLOSE)
-            prefs.contains(PREF_KEEP_DRAFT_ON_CLOSE) -> !prefs.getBoolean(
-                PREF_KEEP_DRAFT_ON_CLOSE,
-                DEFAULT_KEEP_DRAFT_ON_CLOSE,
-            )
-            else -> DEFAULT_SAVE_ON_CLOSE
+        val canonical = if (prefs.contains(PREF_SAVE_ON_CLOSE)) {
+            prefs.getBoolean(PREF_SAVE_ON_CLOSE, DEFAULT_SAVE_ON_CLOSE)
+        } else {
+            null
         }
+        val legacyKeepDraft = if (prefs.contains(PREF_KEEP_DRAFT_ON_CLOSE)) {
+            prefs.getBoolean(PREF_KEEP_DRAFT_ON_CLOSE, DEFAULT_KEEP_DRAFT_ON_CLOSE)
+        } else {
+            null
+        }
+        val resolved = resolveSaveOnClose(
+            canonical = canonical,
+            legacyKeepDraft = legacyKeepDraft,
+        )
+        if (shouldMigrateSaveOnClose(
+                canonical = canonical,
+                schemaVersion = prefs.getInt(PREF_SAVE_ON_CLOSE_SCHEMA_VERSION, 0),
+            )) {
+            prefs.edit()
+                .putBoolean(PREF_SAVE_ON_CLOSE, resolved)
+                .putBoolean(PREF_KEEP_DRAFT_ON_CLOSE, !resolved)
+                .putInt(PREF_SAVE_ON_CLOSE_SCHEMA_VERSION, SAVE_ON_CLOSE_SCHEMA_VERSION)
+                .apply()
+        }
+        return resolved
     }
 
 
@@ -181,6 +224,8 @@ class FloatingNoteEditorState(context: Context) {
     var rememberTarget by mutableStateOf(true)
     var targetRelativePath by mutableStateOf<String?>(null)
     var displayTitle by mutableStateOf<String?>(null)
+    /** Ephemeral screen-space bounds of the widget that launched this editor. */
+    var sourceBounds by mutableStateOf<Rect?>(null)
     var isSaving by mutableStateOf(false)
     var selectionStart by mutableStateOf(0)
     var selectionEnd by mutableStateOf(0)
@@ -195,9 +240,7 @@ internal object FloatingNoteDraftTargetPolicy {
     fun keyFor(context: Context, targetRelativePath: String?): String =
         keyForPath(
             targetRelativePath,
-            context.getSharedPreferences(FLOATING_NOTE_PREFS, Context.MODE_PRIVATE)
-                .getString("vault_path", "")
-                .orEmpty(),
+            com.quickdaily.util.VaultStoragePrefs.current(context).rootPath,
         )
 
     internal fun keyForPath(targetRelativePath: String?, vaultPath: String): String {
@@ -251,6 +294,7 @@ object FloatingNoteDraftStore {
             else state.invalidAttachments.add(uri)
         }
         state.source = request.source
+        state.sourceBounds = request.sourceBounds?.let(::Rect) ?: state.sourceBounds
         state.rememberTarget = request.rememberTarget
         state.returnToHomeAfterClose = FloatingNotePolicy.effectiveReturnHome(
             stored?.returnHome,
@@ -267,11 +311,12 @@ object FloatingNoteDraftStore {
             },
             rememberTarget = request.rememberTarget,
         )
-        state.displayTitle = if (hasPersistedDraft) {
-            stored?.displayTitle
-        } else {
-            request.displayTitle ?: FloatingNoteTargetStore.titleFor(context, state.targetRelativePath)
-        }
+        state.displayTitle = FloatingNotePolicy.displayTitleForRequest(
+            hasPersistedDraft = hasPersistedDraft,
+            persistedTitle = stored?.displayTitle,
+            requestedTitle = request.displayTitle,
+            fallbackTitle = FloatingNoteTargetStore.titleFor(context, state.targetRelativePath),
+        )
         state.enterToSave = prefs.getBoolean("enter_to_save", true)
         val selection = TextRange(
             stored?.selectionStart?.coerceIn(0, state.text.length) ?: state.text.length,
@@ -614,7 +659,10 @@ internal object FloatingNoteTargetMemory {
 }
 internal object FloatingNoteAppearance {
     const val PREF_OPACITY = "floating_note_opacity"
+    const val PREF_NIGHT_MODE = "floating_note_night_mode"
+    const val ACTION_APPEARANCE_CHANGED = "com.quickdaily.action.FLOATING_NOTE_APPEARANCE_CHANGED"
     const val DEFAULT_OPACITY_PERCENT = 97
+    val DEFAULT_NIGHT_MODE: QuickDailyNightMode = QuickDailyNightMode.SYSTEM
 
     fun percent(context: Context): Int = context
         .getSharedPreferences(FLOATING_NOTE_PREFS, Context.MODE_PRIVATE)
@@ -622,4 +670,25 @@ internal object FloatingNoteAppearance {
         .coerceIn(0, 100)
 
     fun alpha(context: Context): Float = percent(context) / 100f
+
+    fun nightMode(context: Context): QuickDailyNightMode = QuickDailyNightMode.fromKey(
+        context.getSharedPreferences(FLOATING_NOTE_PREFS, Context.MODE_PRIVATE)
+            .getString(PREF_NIGHT_MODE, DEFAULT_NIGHT_MODE.key),
+    )
+
+    fun setNightMode(context: Context, mode: QuickDailyNightMode) {
+        context.getSharedPreferences(FLOATING_NOTE_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(PREF_NIGHT_MODE, mode.key)
+            .apply()
+        refresh(context)
+    }
+
+    /** Refreshes already visible floating hosts without creating a new overlay. */
+    fun refresh(context: Context) {
+        context.sendBroadcast(Intent(ACTION_APPEARANCE_CHANGED).setPackage(context.packageName))
+        if (FloatingNoteService.isWindowShowing) {
+            ContextCompat.startForegroundService(context, FloatingNoteService.refreshAppearanceIntent(context))
+        }
+    }
 }

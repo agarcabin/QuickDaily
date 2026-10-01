@@ -29,8 +29,12 @@ object FileUtil {
     private val mutationLocks = ConcurrentHashMap<String, ReentrantLock>()
 
     fun acquirePathMutation(path: String): AutoCloseable {
-        val key = runCatching { File(path).canonicalPath }
-            .getOrElse { File(path).absolutePath }
+        val key = if (isSafBackedPath(path)) {
+            path.trim()
+        } else {
+            runCatching { File(path).canonicalPath }
+                .getOrElse { File(path).absolutePath }
+        }
         val lock = mutationLocks.computeIfAbsent(key) { ReentrantLock() }
         lock.lock()
         return AutoCloseable { lock.unlock() }
@@ -47,6 +51,9 @@ object FileUtil {
     }
 
     fun read(path: String): String {
+        if (isSafBackedPath(path)) {
+            return StorageContextHolder.get()?.let { VaultStorage.readText(it, path).orEmpty() }.orEmpty()
+        }
         return try {
             File(path).readText(Charsets.UTF_8)
         } catch (_: Exception) {
@@ -55,6 +62,9 @@ object FileUtil {
     }
 
     fun readOrNull(path: String): String? {
+        if (isSafBackedPath(path)) {
+            return StorageContextHolder.get()?.let { VaultStorage.readText(it, path) }
+        }
         return try {
             File(path).readText(Charsets.UTF_8)
         } catch (_: Exception) {
@@ -63,6 +73,10 @@ object FileUtil {
     }
 
     fun write(path: String, content: String): Boolean {
+        if (isSafBackedPath(path)) {
+            val context = StorageContextHolder.get()
+            return context != null && VaultStorage.writeText(context, path, content)
+        }
         val target = File(path).absoluteFile
         return try {
             target.parentFile?.mkdirs()
@@ -94,6 +108,13 @@ object FileUtil {
     }
 
     fun readResult(path: String): ReadResult {
+        if (isSafBackedPath(path)) {
+            val context = StorageContextHolder.get()
+                ?: return ReadResult.Error(IllegalStateException("SAF context unavailable"))
+            if (!VaultStorage.exists(context, path)) return ReadResult.NotFound
+            return VaultStorage.readText(context, path)?.let(ReadResult::Success)
+                ?: ReadResult.Error(IllegalStateException("SAF document cannot be read"))
+        }
         val file = java.io.File(path)
         if (!file.exists()) return ReadResult.NotFound
         return try {
@@ -127,6 +148,9 @@ object FileUtil {
 
     /** Reads a stable content fingerprint for external-edit detection. */
     fun fingerprint(path: String): FileFingerprint? {
+        if (isSafBackedPath(path)) {
+            return StorageContextHolder.get()?.let { VaultStorage.fingerprint(it, path) }
+        }
         val file = File(path)
         if (!file.exists()) return FileFingerprint(false, 0L, "", 0L)
         return runCatching {
@@ -149,6 +173,14 @@ object FileUtil {
     }
 
     fun writeResult(path: String, content: String): WriteResult {
+        if (isSafBackedPath(path)) {
+            val context = StorageContextHolder.get()
+            return if (context != null && VaultStorage.writeText(context, path, content)) {
+                WriteResult.Success
+            } else {
+                WriteResult.Error(IllegalStateException("SAF document cannot be written"))
+            }
+        }
         return try {
             java.io.File(path).parentFile?.mkdirs()
             java.io.File(path).writeText(content, Charsets.UTF_8)
@@ -159,11 +191,31 @@ object FileUtil {
         }
     }
 
-    fun exists(path: String): Boolean = File(path).exists()
-    fun isDirectory(path: String): Boolean = File(path).isDirectory
+    fun exists(path: String): Boolean = if (isSafBackedPath(path)) {
+        StorageContextHolder.get()?.let { VaultStorage.exists(it, path) } == true
+    } else {
+        File(path).exists()
+    }
+
+    fun isDirectory(path: String): Boolean = if (isSafBackedPath(path)) {
+        StorageContextHolder.get()?.let { VaultStorage.isDirectory(it, path) } == true
+    } else {
+        File(path).isDirectory
+    }
 
     /** 返回文件最后修改时间戳；不存在返回 0 */
-    fun lastModified(path: String): Long = runCatching {
-        File(path).lastModified()
-    }.getOrDefault(0L)
+    fun canWrite(path: String): Boolean = if (isSafBackedPath(path)) {
+        StorageContextHolder.get()?.let { VaultStorage.canWrite(it, path) } == true
+    } else {
+        runCatching { File(path).isFile && File(path).canWrite() }.getOrDefault(false)
+    }
+
+    fun lastModified(path: String): Long = if (isSafBackedPath(path)) {
+        StorageContextHolder.get()?.let { VaultStorage.lastModified(it, path) } ?: 0L
+    } else {
+        runCatching { File(path).lastModified() }.getOrDefault(0L)
+    }
+
+    private fun isSafBackedPath(path: String): Boolean =
+        SafVirtualPath.isSafPath(path) || SafDocumentPath.isPath(path)
 }

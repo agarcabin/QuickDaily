@@ -7,6 +7,18 @@ object VaultPathUtil {
     /** Resolve either an absolute filesystem path or a vault-relative path. */
     fun resolveTarget(vaultPath: String, targetPath: String): String? {
         if (targetPath.isBlank()) return null
+        if (SafDocumentPath.isPath(targetPath)) {
+            return SafDocumentPath.parse(targetPath)?.let { targetPath.trimEnd('/') }
+        }
+        if (SafVirtualPath.isSafPath(vaultPath)) {
+            if (SafVirtualPath.isSafPath(targetPath)) {
+                val vault = SafVirtualPath.parse(vaultPath) ?: return null
+                val target = SafVirtualPath.parse(targetPath) ?: return null
+                if (vault.rootPath != target.rootPath) return null
+                return targetPath.trimEnd('/')
+            }
+            return SafVirtualPath.join(vaultPath, targetPath)
+        }
         return try {
             val target = File(targetPath)
             if (target.isAbsolute) target.canonicalPath else resolve(vaultPath, targetPath)
@@ -17,6 +29,9 @@ object VaultPathUtil {
 
     fun resolve(vaultPath: String, relativePath: String): String? {
         if (vaultPath.isBlank() || relativePath.isBlank()) return null
+        if (SafVirtualPath.isSafPath(vaultPath)) {
+            return SafVirtualPath.join(vaultPath, relativePath)
+        }
         return try {
             val root = File(vaultPath).canonicalFile
             val target = File(root, relativePath.replace('/', File.separatorChar)).canonicalFile
@@ -28,6 +43,12 @@ object VaultPathUtil {
 
     fun relativePath(vaultPath: String, filePath: String): String? {
         if (vaultPath.isBlank() || filePath.isBlank()) return null
+        if (SafVirtualPath.isSafPath(vaultPath) || SafVirtualPath.isSafPath(filePath)) {
+            val root = SafVirtualPath.parse(vaultPath) ?: return null
+            val target = SafVirtualPath.parse(filePath) ?: return null
+            if (root.rootPath != target.rootPath || target.relativePath.isBlank()) return null
+            return target.relativePath
+        }
         return try {
             val root = File(vaultPath).canonicalFile
             val target = File(filePath).canonicalFile

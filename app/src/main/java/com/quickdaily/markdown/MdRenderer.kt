@@ -11,18 +11,32 @@ import androidx.compose.material.icons.outlined.CheckBoxOutlineBlank
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextGeometricTransform
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.quickdaily.WidgetContentLoader
+import com.quickdaily.TagHighlightPolicy
+import com.quickdaily.DisplayRange
+import com.quickdaily.DisplayStyleKind
+import com.quickdaily.DisplayText
+import com.quickdaily.HiddenFlowItem
+import com.quickdaily.HiddenTextPolicy
+import com.quickdaily.InlineDisplayPolicy
+import com.quickdaily.InlineSurface
+import com.quickdaily.SourceDocument
+import com.quickdaily.TaskActionRef
+import com.quickdaily.util.SafVirtualPath
+import com.quickdaily.util.VaultStorage
 
 // ── Renderer ────────────────────────────────────────────
 
@@ -31,13 +45,19 @@ fun MdRenderer(
     text: String,
     vaultBasePath: String? = null,
     imageStoragePath: String? = null,
-    onToggleCheckbox: ((Int) -> Unit)? = null,
+    hiddenDisplayTexts: List<String> = emptyList(),
+    onToggleCheckbox: ((TaskActionRef) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    val lines = remember(text) { parseLines(text) }
+    val lines = remember(text, hiddenDisplayTexts) {
+        prepareMdLines(text, hiddenDisplayTexts)
+    }
     val colors = MaterialTheme.colorScheme
+    val context = LocalContext.current
     Column(modifier = modifier.fillMaxWidth()) {
-        lines.forEach { line ->
+        lines.forEach { prepared ->
+            if (prepared.collapseLine) return@forEach
+            val line = prepared.line
             when (line) {
                 is MdLine.Blank -> Spacer(Modifier.height(8.dp))
                 is MdLine.Heading -> {
@@ -45,8 +65,9 @@ fun MdRenderer(
                         1 -> 1.5f; 2 -> 1.3f; 3 -> 1.15f
                         4 -> 1.1f; else -> 1.0f
                     }
-                    BasicText(
-                        text = buildAnnotated(line.text),
+                    TagHighlightedBasicText(
+                        display = prepared.display,
+                        hiddenRanges = prepared.hiddenRanges,
                         style = LocalTextStyle.current.copy(
                             fontSize = (MaterialTheme.typography.bodyLarge.fontSize * scale),
                             fontWeight = FontWeight.Bold,
@@ -62,7 +83,7 @@ fun MdRenderer(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable(enabled = onToggleCheckbox != null) {
-                                onToggleCheckbox?.invoke(line.index)
+                                onToggleCheckbox?.invoke(line.actionRef)
                             }
                             .padding(
                                 start = (line.indentLevel * WidgetContentLoader.SUBTASK_INDENT_DP).dp,
@@ -73,14 +94,18 @@ fun MdRenderer(
                         Icon(
                             imageVector = if (line.checked) Icons.Outlined.CheckBox
                                 else Icons.Outlined.CheckBoxOutlineBlank,
-                            contentDescription = if (line.checked) "已勾选" else "未勾选",
+                            contentDescription = stringResource(
+                                if (line.checked) com.quickdaily.R.string.qd_common_checked
+                                else com.quickdaily.R.string.qd_common_unchecked,
+                            ),
                             tint = if (line.checked) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(20.dp)
                         )
                         Spacer(Modifier.width(6.dp))
-                        BasicText(
-                            text = buildAnnotated(line.text),
+                        TagHighlightedBasicText(
+                            display = prepared.display,
+                            hiddenRanges = prepared.hiddenRanges,
                             style = LocalTextStyle.current.copy(
                                 color = if (line.checked)
                                     MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
@@ -99,8 +124,9 @@ fun MdRenderer(
                             )
                         )
                         Spacer(Modifier.width(8.dp))
-                        BasicText(
-                            text = buildAnnotated(line.text),
+                        TagHighlightedBasicText(
+                            display = prepared.display,
+                            hiddenRanges = prepared.hiddenRanges,
                             style = LocalTextStyle.current.copy(color = colors.onSurface)
                         )
                     }
@@ -113,11 +139,9 @@ fun MdRenderer(
                         } else null
                         Pair(primary, fallback)
                     }
-                    val bitmap = remember(paths) {
-                        try {
-                            BitmapFactory.decodeFile(paths.first)
-                                ?: paths.second?.let { BitmapFactory.decodeFile(it) }
-                        } catch (_: Exception) { null }
+                    val bitmap = remember(paths, context) {
+                        decodeImageBitmap(context, paths.first)
+                            ?: paths.second?.let { decodeImageBitmap(context, it) }
                     }
                     if (bitmap != null) {
                         Image(
@@ -128,15 +152,16 @@ fun MdRenderer(
                         )
                     } else {
                         BasicText(
-                            text = AnnotatedString(line.alt.ifEmpty { "[图片: ${line.path}]" }),
-                                style = LocalTextStyle.current.copy(color = colors.onSurfaceVariant),
+                            text = buildAnnotated(prepared.display, prepared.hiddenRanges),
+                            style = LocalTextStyle.current.copy(color = colors.onSurfaceVariant),
                             modifier = Modifier.padding(vertical = 2.dp)
                         )
                     }
                 }
                 is MdLine.Plain -> {
-                    BasicText(
-                        text = buildAnnotated(line.text),
+                    TagHighlightedBasicText(
+                        display = prepared.display,
+                        hiddenRanges = prepared.hiddenRanges,
                         style = LocalTextStyle.current.copy(color = colors.onSurface),
                         modifier = Modifier.padding(vertical = 1.dp)
                     )
@@ -146,86 +171,100 @@ fun MdRenderer(
     }
 }
 
+private data class PreparedMdLine(
+    val line: MdLine,
+    val display: DisplayText,
+    val hiddenRanges: List<DisplayRange>,
+    val collapseLine: Boolean,
+)
+
+private fun prepareMdLines(
+    text: String,
+    hiddenDisplayTexts: List<String>,
+): List<PreparedMdLine> {
+    val lines = parseLines(text)
+    val sourceLines = SourceDocument.splitLines(text)
+    val displays = lines.map { line ->
+        when (line) {
+            MdLine.Blank -> DisplayText("")
+            is MdLine.Image -> DisplayText(line.alt.ifEmpty { "[图片: ${line.path}]" })
+            is MdLine.Heading -> InlineDisplayPolicy.render(line.text, InlineSurface.EDITOR)
+            is MdLine.Task -> InlineDisplayPolicy.render(line.text, InlineSurface.EDITOR)
+            is MdLine.Bullet -> InlineDisplayPolicy.render(line.text, InlineSurface.EDITOR)
+            is MdLine.Plain -> InlineDisplayPolicy.render(line.text, InlineSurface.EDITOR)
+        }
+    }
+    val flow = lines.mapIndexed { index, line ->
+            HiddenFlowItem(
+                display = displays[index],
+                sourceText = sourceLines.getOrNull(index)?.rawLine,
+                barrierBefore = line is MdLine.Image,
+                barrierAfter = line is MdLine.Image,
+            )
+        }
+    val hidden = HiddenTextPolicy.apply(flow, hiddenDisplayTexts)
+    val collapsed = HiddenTextPolicy.collapseExtraRows(flow, hidden)
+    return lines.indices.map { index ->
+        PreparedMdLine(lines[index], displays[index], hidden[index], collapsed[index])
+    }
+}
+
 // ── Inline Parser ────────────────────────────────────────
 
 @Composable
-private fun buildAnnotated(raw: String): AnnotatedString {
+private fun buildAnnotated(
+    display: DisplayText,
+    hiddenRanges: List<DisplayRange> = emptyList(),
+): AnnotatedString {
     val colors = MaterialTheme.colorScheme
-    return buildAnnotatedString {
-        var i = 0
-        while (i < raw.length) {
-            when {
-                // #tag / #tag/subtag
-                raw[i] == '#' && (i == 0 || (!raw[i - 1].isLetterOrDigit() && raw[i - 1] != '_')) -> {
-                    var end = i + 1
-                    while (end < raw.length && (raw[end].isLetterOrDigit() || raw[end] == '_' || raw[end] == '/' || raw[end] == '-')) end++
-                    if (end > i + 1) {
-                        withStyle(SpanStyle(color = colors.tertiary)) { append(raw.substring(i, end)) }
-                        i = end
-                    } else {
-                        append(raw[i]); i++
-                    }
-                }
-                // **粗体**
-                raw.startsWith("**", i) -> {
-                    val end = raw.indexOf("**", i + 2)
-                    if (end > i) {
-                        withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
-                            append(raw.substring(i + 2, end))
-                        }
-                        i = end + 2
-                    } else {
-                        append(raw[i]); i++
-                    }
-                }
-                // *斜体* / _斜体_
-                (raw.startsWith("*", i) && !raw.startsWith("**", i)) || raw.startsWith("_", i) -> {
-                    val marker = if (raw[i] == '*') "*" else "_"
-                    val end = raw.indexOf(marker, i + 1)
-                    if (end > i && end - i > 1) {
-                        withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
-                            append(raw.substring(i + 1, end))
-                        }
-                        i = end + 1
-                    } else {
-                        append(raw[i]); i++
-                    }
-                }
-                // ~~删除线~~
-                raw.startsWith("~~", i) -> {
-                    val end = raw.indexOf("~~", i + 2)
-                    if (end > i) {
-                        withStyle(SpanStyle(color = colors.onSurfaceVariant)) {
-                            append(raw.substring(i + 2, end))
-                        }
-                        i = end + 2
-                    } else {
-                        append(raw[i]); i++
-                    }
-                }
-                // [链接](url)
-                raw.startsWith("[", i) -> {
-                    val bracketEnd = raw.indexOf("](", i)
-                    val parenEnd = if (bracketEnd > i) raw.indexOf(")", bracketEnd + 2) else -1
-                    if (bracketEnd > i && parenEnd > bracketEnd) {
-                        val linkText = raw.substring(i + 1, bracketEnd)
-                        withStyle(SpanStyle(
-                            color = colors.primary,
-                            textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline
-                        )) {
-                            append(linkText)
-                        }
-                        i = parenEnd + 1
-                    } else {
-                        append(raw[i]); i++
-                    }
-                }
-                else -> {
-                    append(raw[i]); i++
-                }
-            }
+    return AnnotatedString.Builder().apply {
+        append(display.text)
+        display.styles.forEach { range ->
+            addStyle(
+                when (range.kind) {
+                    DisplayStyleKind.BOLD -> SpanStyle(fontWeight = FontWeight.Bold)
+                    DisplayStyleKind.ITALIC -> SpanStyle(fontStyle = FontStyle.Italic)
+                    DisplayStyleKind.STRIKETHROUGH -> SpanStyle(color = colors.onSurfaceVariant)
+                    DisplayStyleKind.CODE -> SpanStyle(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                    DisplayStyleKind.LINK -> SpanStyle(
+                        color = colors.primary,
+                        textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline,
+                    )
+                    DisplayStyleKind.WIKILINK -> SpanStyle(color = colors.primary)
+                },
+                range.start,
+                range.end,
+            )
         }
-    }
+        TagHighlightPolicy.ranges(display.text).forEach { range ->
+            addStyle(SpanStyle(color = colors.primary), range.start, range.end)
+        }
+        hiddenRanges.forEach { range ->
+            addStyle(
+                SpanStyle(
+                    color = androidx.compose.ui.graphics.Color.Transparent,
+                    textGeometricTransform = TextGeometricTransform(scaleX = 0f),
+                ),
+                range.start,
+                range.end,
+            )
+        }
+    }.toAnnotatedString()
+}
+
+@Composable
+private fun TagHighlightedBasicText(
+    display: DisplayText,
+    hiddenRanges: List<DisplayRange>,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+) {
+    val annotated = buildAnnotated(display, hiddenRanges)
+    BasicText(
+        text = annotated,
+        style = style,
+        modifier = modifier,
+    )
 }
 
 // ── Line Model ───────────────────────────────────────────
@@ -234,7 +273,13 @@ sealed class MdLine {
     data object Blank : MdLine()
     data class Heading(val level: Int, val text: String) : MdLine()
     data class Image(val path: String, val alt: String) : MdLine()
-    data class Task(val index: Int, val checked: Boolean, val text: String, val indentLevel: Int = 0) : MdLine()
+    data class Task(
+        val index: Int,
+        val checked: Boolean,
+        val text: String,
+        val indentLevel: Int = 0,
+        val actionRef: TaskActionRef = TaskActionRef(index, "", ""),
+    ) : MdLine()
     data class Bullet(val text: String) : MdLine()
     data class Plain(val text: String) : MdLine()
 }
@@ -247,12 +292,12 @@ private val TOGGLE_CHECK_RE = Regex("- \\[x\\]", RegexOption.IGNORE_CASE)
 private val IMAGE_WIKI_RE = Regex("""^!\[\[([^\]|]+)(?:\|([^\]]*))?\]\]\s*$""")
 
 fun parseLines(markdown: String): List<MdLine> {
-    val lines = markdown.split("\n")
     val result = mutableListOf<MdLine>()
     var taskIndex = 0
     val taskIndentStack = ArrayDeque<TaskIndentEntry>()
 
-    for (line in lines) {
+    for (record in SourceDocument.splitLines(markdown)) {
+        val line = record.rawLine
         val trimmed = line.trim()
         when {
             trimmed.isEmpty() -> result.add(MdLine.Blank)
@@ -286,7 +331,15 @@ fun parseLines(markdown: String): List<MdLine> {
                 val indentLevel = taskIndentStack.lastOrNull()?.let { it.level + 1 } ?: 0
                 val checked = trimmed[3] == 'x' || trimmed[3] == 'X'
                 val text = trimmed.drop(6).trimStart()
-                result.add(MdLine.Task(taskIndex++, checked, text, indentLevel))
+                result.add(
+                    MdLine.Task(
+                        index = taskIndex++,
+                        checked = checked,
+                        text = text,
+                        indentLevel = indentLevel,
+                        actionRef = TaskActionRef(record.index, record.rawLine, record.separator),
+                    )
+                )
                 taskIndentStack.addLast(TaskIndentEntry(indentColumns, indentLevel))
             }
             // 无序列表
@@ -323,25 +376,45 @@ private fun resolveImagePath(path: String, vaultBasePath: String?): String {
     return "${vaultBasePath.trimEnd('/')}/${path.trimStart('/')}"
 }
 
+private fun decodeImageBitmap(context: android.content.Context, path: String): android.graphics.Bitmap? {
+    if (SafVirtualPath.isSafPath(path)) {
+        val document = VaultStorage.documentForPath(context, path) ?: return null
+        return runCatching {
+            context.contentResolver.openInputStream(document.uri)?.use(BitmapFactory::decodeStream)
+        }.getOrNull()
+    }
+    return runCatching { BitmapFactory.decodeFile(path) }.getOrNull()
+}
+
 /** 在原始文本中切换指定位置的任务勾选状态，返回新文本 */
 fun toggleTaskCheck(text: String, taskIndex: Int): String {
-    val lines = text.split("\n")
+    val lines = SourceDocument.splitLines(text)
     var count = 0
-    val newLines = lines.map { line ->
-        val trimmed = line.trim()
+    var targetIndex = -1
+    lines.forEach { record ->
+        val trimmed = record.rawLine.trim()
         if (trimmed.startsWith("- [ ]") || trimmed.startsWith("- [x]") || trimmed.startsWith("- [X]")) {
             if (count == taskIndex) {
-                count++
-                if (trimmed.startsWith("- [ ]")) {
-                    line.replaceFirst("- [ ]", "- [x]")
-                } else {
-                    line.replaceFirst(TOGGLE_CHECK_RE, "- [ ]")
-                }
-            } else {
-                count++
-                line
+                targetIndex = record.index
             }
-        } else line
+            count++
+        }
     }
-    return newLines.joinToString("\n")
+    val record = lines.getOrNull(targetIndex) ?: return text
+    val toggled = toggleEditorTaskLine(record.rawLine) ?: return text
+    return SourceDocument.from(text).replaceLine(targetIndex, toggled)
+}
+
+fun toggleTaskCheck(text: String, actionRef: TaskActionRef): String {
+    val record = SourceDocument.splitLines(text).getOrNull(actionRef.lineIndex) ?: return text
+    if (record.rawLine != actionRef.rawLine || record.separator != actionRef.lineSeparator) return text
+    val toggled = toggleEditorTaskLine(record.rawLine) ?: return text
+    return SourceDocument.from(text).replaceLine(actionRef.lineIndex, toggled)
+}
+
+private fun toggleEditorTaskLine(line: String): String? = when {
+    line.trim().startsWith("- [ ]") -> line.replaceFirst("- [ ]", "- [x]")
+    line.trim().startsWith("- [x]") || line.trim().startsWith("- [X]") ->
+        line.replaceFirst(TOGGLE_CHECK_RE, "- [ ]")
+    else -> null
 }

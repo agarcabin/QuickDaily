@@ -37,11 +37,12 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
 import com.quickdaily.ui.theme.QuickDailyTheme
-import java.io.File
+import com.quickdaily.util.FileUtil
 
 /** Configuration activity for one QuickDailyReadWidget instance. */
-class ReadWidgetConfigActivity : ComponentActivity() {
+class ReadWidgetConfigActivity : LocalizedComponentActivity() {
     private var widgetId: Int = AppWidgetManager.INVALID_APPWIDGET_ID
     private var currentConfig = ReadWidgetConfig()
 
@@ -55,7 +56,7 @@ class ReadWidgetConfigActivity : ComponentActivity() {
         val path = ReadWidgetConfigStore.filePathFromUri(this, uri)
         if (path == null) {
             BetaLogger.log("ReadWidgetConfig", "file picker rejected widgetId=" + widgetId + " uri=" + uri)
-            Toast.makeText(this, "请选择可访问的 Markdown 文件", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, getString(R.string.qd_widget_markdown_file_required), Toast.LENGTH_LONG).show()
             return@registerForActivityResult
         }
         BetaLogger.log("ReadWidgetConfig", "file picker selected widgetId=" + widgetId + " path=" + path)
@@ -127,10 +128,10 @@ private fun ReadWidgetConfigScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("便签小部件") },
+                title = { Text(stringResource(R.string.qd_read_widget_label)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.Close, contentDescription = "关闭")
+                        Icon(Icons.Default.Close, contentDescription = stringResource(R.string.qd_common_close))
                     }
                 },
             )
@@ -155,9 +156,9 @@ private fun ReadWidgetConfigScreen(
                             .fillMaxWidth()
                             .padding(vertical = 8.dp),
                     ) {
-                        Text("选择显示页面", style = MaterialTheme.typography.titleLarge)
+                        Text(stringResource(R.string.qd_widget_select_display_page), style = MaterialTheme.typography.titleLarge)
                         Text(
-                            "每个便签小部件可以独立显示今日日记或一个具体的 Markdown 页面。",
+                            stringResource(R.string.qd_widget_read_description),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 4.dp),
@@ -166,7 +167,7 @@ private fun ReadWidgetConfigScreen(
                 }
                 items(targets, key = { it.key }) { target ->
                     ListItem(
-                        headlineContent = { Text(target.label) },
+                        headlineContent = { Text(stringResource(target.labelRes)) },
                         leadingContent = {
                             RadioButton(
                                 selected = currentConfig.target == target &&
@@ -183,7 +184,7 @@ private fun ReadWidgetConfigScreen(
                 if (recentPages.isNotEmpty()) {
                     item {
                         Text(
-                            "最近的自定义页面",
+                            stringResource(R.string.qd_widget_recent_custom_page),
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(start = 0.dp, top = 20.dp, bottom = 4.dp),
@@ -194,7 +195,7 @@ private fun ReadWidgetConfigScreen(
                     val available = ReadWidgetConfigStore.customFilePath(
                         androidx.compose.ui.platform.LocalContext.current,
                         ReadWidgetConfig(ReadWidgetTarget.CUSTOM, path),
-                    )?.let { File(it).isFile } == true
+                    )?.let { FileUtil.exists(it) && !FileUtil.isDirectory(it) } == true
                     val checked = currentConfig.target == ReadWidgetTarget.CUSTOM &&
                         currentConfig.customRelativePath == path
                     ListItem(
@@ -206,7 +207,7 @@ private fun ReadWidgetConfigScreen(
                             )
                         },
                         supportingContent = if (!available) {
-                            { Text("文件不可用", color = MaterialTheme.colorScheme.error) }
+                            { Text(stringResource(R.string.qd_widget_file_unavailable), color = MaterialTheme.colorScheme.error) }
                         } else null,
                         leadingContent = {
                             RadioButton(
@@ -216,7 +217,7 @@ private fun ReadWidgetConfigScreen(
                         },
                         trailingContent = {
                             IconButton(onClick = { onRecentPageRemoved(path) }) {
-                                Icon(Icons.Default.Close, contentDescription = "移除自定义页面")
+                                Icon(Icons.Default.Close, contentDescription = stringResource(R.string.qd_widget_remove_custom_page))
                             }
                         },
                         modifier = Modifier

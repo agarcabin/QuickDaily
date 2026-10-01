@@ -156,17 +156,21 @@ object ImageUtil {
             val fileName = generateFileName(namingFormat, displayName, ext, customNamingFormat)
             // 确定存储目录
             val dir = if (storagePath.isBlank()) "" else storagePath.trim('/')
-            val destDir = if (dir.isNotEmpty()) "${vaultPath.trimEnd('/')}/$dir" else vaultPath.trimEnd('/')
-            File(destDir).mkdirs()
-            val destFile = File(destDir, fileName)
-            // 复制
-            context.contentResolver.openInputStream(sourceUri)?.use { input ->
-                FileOutputStream(destFile).use { output ->
-                    input.copyTo(output)
-                }
+            val relativePath = if (dir.isNotEmpty()) "$dir/$fileName" else fileName
+            val destinationPath = VaultPathUtil.resolve(vaultPath, relativePath) ?: return null
+            val copied = if (SafVirtualPath.isSafPath(destinationPath)) {
+                VaultStorage.copyUriToPath(context, sourceUri, destinationPath)
+            } else {
+                val destDir = if (dir.isNotEmpty()) "${vaultPath.trimEnd('/')}/$dir" else vaultPath.trimEnd('/')
+                File(destDir).mkdirs()
+                val destFile = File(destDir, fileName)
+                context.contentResolver.openInputStream(sourceUri)?.use { input ->
+                    FileOutputStream(destFile).use { output -> input.copyTo(output) }
+                } != null
             }
+            if (!copied) return null
             // 返回相对路径
-            if (dir.isNotEmpty()) "$dir/$fileName" else fileName
+            relativePath
         } catch (e: Exception) {
             android.util.Log.e("QuickDaily", "复制图片失败: ${e.message}")
             null
@@ -191,17 +195,25 @@ object ImageUtil {
                 customNamingFormat,
             )
             val dir = storagePath.trim('/').takeIf { it.isNotBlank() }.orEmpty()
-            val destDir = if (dir.isNotEmpty()) {
-                File(vaultPath.trimEnd('/'), dir)
+            val relativePath = if (dir.isNotEmpty()) "$dir/$fileName" else fileName
+            val destinationPath = VaultPathUtil.resolve(vaultPath, relativePath) ?: return null
+            val copied = if (SafVirtualPath.isSafPath(destinationPath)) {
+                VaultStorage.copyLocalFileToPath(nullSafeContext(), sourceFile, destinationPath)
             } else {
-                File(vaultPath.trimEnd('/'))
+                val destDir = if (dir.isNotEmpty()) {
+                    File(vaultPath.trimEnd('/'), dir)
+                } else {
+                    File(vaultPath.trimEnd('/'))
+                }
+                if (!destDir.exists() && !destDir.mkdirs()) return null
+                val destFile = File(destDir, fileName)
+                sourceFile.inputStream().use { input ->
+                    FileOutputStream(destFile).use { output -> input.copyTo(output) }
+                }
+                true
             }
-            if (!destDir.exists() && !destDir.mkdirs()) return null
-            val destFile = File(destDir, fileName)
-            sourceFile.inputStream().use { input ->
-                FileOutputStream(destFile).use { output -> input.copyTo(output) }
-            }
-            if (dir.isNotEmpty()) "$dir/$fileName" else fileName
+            if (!copied) return null
+            relativePath
         } catch (_: Exception) {
             null
         }
@@ -224,4 +236,7 @@ object ImageUtil {
             relPath?.let { markdownLink(it, linkFormat) }
         }
     }
+
+    private fun nullSafeContext(): Context =
+        StorageContextHolder.get() ?: throw IllegalStateException("SAF context unavailable")
 }

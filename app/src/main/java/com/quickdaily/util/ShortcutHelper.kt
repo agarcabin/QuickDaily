@@ -11,6 +11,7 @@ import android.os.Build
 import com.quickdaily.QuickShortcutActivity
 import com.quickdaily.R
 import com.quickdaily.ShortcutPinResultReceiver
+import com.quickdaily.LocaleController
 import java.io.File
 
 object ShortcutHelper {
@@ -47,8 +48,8 @@ object ShortcutHelper {
         val shortcutId = "${SHORTCUT_ID_PREFIX}_${System.currentTimeMillis()}"
 
         val shortcut = ShortcutInfo.Builder(context, shortcutId)
-            .setShortLabel("速记")
-            .setLongLabel("QuickDaily 速记")
+            .setShortLabel(LocaleController.localizedContext(context).getString(R.string.qd_shortcut_short_label))
+            .setLongLabel(LocaleController.localizedContext(context).getString(R.string.qd_shortcut_long_label))
             .setIcon(loadShortcutIcon(context))
             .setIntent(Intent(context, QuickShortcutActivity::class.java).apply {
                 action = Intent.ACTION_VIEW
@@ -71,7 +72,12 @@ object ShortcutHelper {
     }
 
     private fun showRequestSentToast(context: Context) {
-        android.widget.Toast.makeText(context.applicationContext, "已发送创建请求，请在桌面确认", android.widget.Toast.LENGTH_SHORT).show()
+        val uiContext = LocaleController.localizedContext(context)
+        android.widget.Toast.makeText(
+            context.applicationContext,
+            uiContext.getString(R.string.qd_shortcut_request_sent),
+            android.widget.Toast.LENGTH_SHORT,
+        ).show()
     }
 
     /**
@@ -85,6 +91,7 @@ object ShortcutHelper {
 
         try {
             val newIcon = loadShortcutIcon(context)
+            val uiContext = LocaleController.localizedContext(context)
             // 更新动态快捷方式
             val dynamic = shortcutManager.dynamicShortcuts.filter {
                 it.id.startsWith(SHORTCUT_ID_PREFIX)
@@ -92,8 +99,8 @@ object ShortcutHelper {
             if (dynamic.isNotEmpty()) {
                 val updated = dynamic.map { si ->
                     ShortcutInfo.Builder(context, si.id)
-                        .setShortLabel(si.shortLabel ?: "速记")
-                        .setLongLabel(si.longLabel ?: "QuickDaily 速记")
+                        .setShortLabel(si.shortLabel ?: uiContext.getString(R.string.qd_shortcut_short_label))
+                        .setLongLabel(si.longLabel ?: uiContext.getString(R.string.qd_shortcut_long_label))
                         .setIcon(newIcon)
                         .setIntent(si.intent ?: Intent(context, QuickShortcutActivity::class.java))
                         .build()
@@ -108,8 +115,9 @@ object ShortcutHelper {
      */
     private fun pinShortcutLegacy(context: Context): Boolean {
         return try {
+            val uiContext = LocaleController.localizedContext(context)
             val addIntent = Intent("com.android.launcher.action.INSTALL_SHORTCUT").apply {
-                putExtra(Intent.EXTRA_SHORTCUT_NAME, "QuickDaily 速记")
+                putExtra(Intent.EXTRA_SHORTCUT_NAME, uiContext.getString(R.string.qd_shortcut_long_label))
                 putExtra(Intent.EXTRA_SHORTCUT_INTENT,
                     Intent(context, QuickShortcutActivity::class.java).apply {
                         action = Intent.ACTION_VIEW

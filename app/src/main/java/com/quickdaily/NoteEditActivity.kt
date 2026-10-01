@@ -1,23 +1,33 @@
 package com.quickdaily
 
 import android.app.Activity
+import android.content.BroadcastReceiver
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.util.Size
 import android.view.Gravity
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.BackEventCompat
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -41,6 +51,7 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -52,14 +63,20 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size as ComposeSize
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.activity.OnBackPressedCallback
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
@@ -67,7 +84,11 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.quickdaily.BetaLogger
@@ -85,6 +106,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.Image
@@ -92,6 +114,7 @@ import androidx.compose.runtime.snapshots.SnapshotStateList
 import com.quickdaily.ui.theme.*
 import com.quickdaily.ui.EditorToolbarActions
 import com.quickdaily.ui.QuickDailyAutocompleteSurface
+import com.quickdaily.ui.OnboardingSkipConfirmationDialog
 import android.Manifest
 import android.content.pm.PackageManager
 import android.media.MediaRecorder
@@ -121,6 +144,58 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.take
 import java.io.File
 import kotlin.math.roundToInt
+
+@Composable
+private fun floatingCoachDashedBorder(
+    color: Color,
+    cornerRadius: Dp = 12.dp,
+): Modifier {
+    val motionPolicy = LocalQuickDailyMotion.current
+    val density = LocalDensity.current
+    val dashOn = with(density) { FloatingCoachDashPolicy.DASH_ON_DP.dp.toPx() }
+    val dashOff = with(density) { FloatingCoachDashPolicy.DASH_OFF_DP.dp.toPx() }
+    val dashPeriod = FloatingCoachDashPolicy.periodPx(dashOn, dashOff)
+    val dashPhase = if (motionPolicy.reducedMotion) {
+        0f
+    } else {
+        val transition = rememberInfiniteTransition(label = "floatingCoachDashedBorder")
+        val phase by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = dashPeriod,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 1400, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "floatingCoachDashPhase",
+        )
+        phase
+    }
+    return Modifier.drawWithContent {
+        drawContent()
+        val strokeWidth = 2.dp.toPx()
+        drawRoundRect(
+            color = color,
+            topLeft = Offset(strokeWidth / 2f, strokeWidth / 2f),
+            size = ComposeSize(size.width - strokeWidth, size.height - strokeWidth),
+            cornerRadius = CornerRadius(cornerRadius.toPx()),
+            style = Stroke(
+                width = strokeWidth,
+                pathEffect = PathEffect.dashPathEffect(
+                    intervals = floatArrayOf(dashOn, dashOff),
+                    phase = dashPhase,
+                ),
+            ),
+        )
+    }
+}
+
+internal object FloatingCoachDashPolicy {
+    const val DASH_ON_DP = 12f
+    const val DASH_OFF_DP = 8f
+
+    fun periodPx(dashOnPx: Float, dashOffPx: Float): Float =
+        (dashOnPx + dashOffPx).coerceAtLeast(0f)
+}
 
 internal enum class EditorThumbnailStrategy {
     PlatformThumbnail,
@@ -176,7 +251,7 @@ internal object EditorThumbnailLoader {
     }
 }
 
-class NoteEditActivity : ComponentActivity() {
+class NoteEditActivity : LocalizedComponentActivity() {
     companion object {
         const val EXTRA_RETURN_TO_HOME = "return_to_home"
         const val EXTRA_TARGET_RELATIVE_PATH = "target_relative_path"
@@ -189,6 +264,7 @@ class NoteEditActivity : ComponentActivity() {
             source: FloatingNoteSource,
             targetRelativePath: String?,
             title: String?,
+            sourceBounds: Rect? = null,
         ): Intent = Intent(context, NoteEditActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             putExtra(EXTRA_FULLSCREEN, true)
@@ -196,6 +272,7 @@ class NoteEditActivity : ComponentActivity() {
             putExtra(EXTRA_TARGET_RELATIVE_PATH, targetRelativePath.orEmpty())
             putExtra(EXTRA_DIALOG_TITLE, title.orEmpty())
             putExtra(EXTRA_REMEMBER_TARGET, false)
+            sourceBounds?.let { setSourceBounds(Rect(it)) }
         }
     }
 
@@ -212,6 +289,16 @@ class NoteEditActivity : ComponentActivity() {
     private var floatingSource = FloatingNoteSource.WIDGET
     private var rememberTarget = true
     private var fullScreen by mutableStateOf(false)
+    private var floatingCoachStep by mutableStateOf<Int?>(null)
+    private var appearanceRefreshToken by mutableIntStateOf(0)
+
+    private val appearanceReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context, intent: Intent?) {
+            if (intent?.action != FloatingNoteAppearance.ACTION_APPEARANCE_CHANGED) return
+            appearanceRefreshToken++
+            if (!fullScreen) applyFloatingWindow()
+        }
+    }
 
     private var toolbarOrder by mutableStateOf(EditorToolbarPolicy.defaultOrder.map { it.id })
     private var toolbarVisible by mutableStateOf(EditorToolbarPolicy.defaultVisible)
@@ -223,17 +310,57 @@ class NoteEditActivity : ComponentActivity() {
     private var recordingStartedAt by mutableStateOf<Long?>(null)
     private var recordingElapsedMs by mutableStateOf(0L)
     private var returnToHomeAfterClose = false
+    private var sourceBounds: Rect? = null
+    private var predictiveExitBounds: Rect? = null
+    private var predictiveExitView: android.view.View? = null
     private var targetRelativePath by mutableStateOf<String?>(null)
     private var targetOptions by mutableStateOf<List<FloatingNoteTargetOption>>(emptyList())
-    private var dialogTitle by mutableStateOf("速记")
+    private var dialogTitle by mutableStateOf("")
     private var windowDragOrigin: FloatingNotePosition? = null
     private var windowDragX = 0f
     private var windowDragY = 0f
+    private var floatingPositionBeforeFullscreen: FloatingNotePosition? = null
 
     private val imagePicker = registerForActivityResult(
-        ActivityResultContracts.GetMultipleContents()
+        ActivityResultContracts.OpenMultipleDocuments()
     ) { uris: List<Uri> ->
-        selectedImages.addAll(uris)
+        if (uris.isEmpty()) {
+            BetaLogger.log("FloatingNote/Picker", "images picker cancelled")
+            return@registerForActivityResult
+        }
+        uris.forEach { uri ->
+            runCatching {
+                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }.onFailure { error ->
+                BetaLogger.logException("FloatingNote/Picker", "image_permission_failed uri=$uri", error)
+            }
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            val links = EditorImageInsertPolicy.processInSelectionOrder(uris) { uri ->
+                runCatching { EditorMediaUtil.imageLink(this@NoteEditActivity, uri) }
+                    .onFailure { error ->
+                        BetaLogger.logException("FloatingNote/Picker", "image_process_failed uri=$uri", error)
+                    }
+                    .getOrNull()
+            }
+            val successfulLinks = links.filterNotNull()
+            withContext(Dispatchers.Main) {
+                if (successfulLinks.isNotEmpty()) {
+                    insertMediaLinks(successfulLinks)
+                }
+                BetaLogger.log(
+                    "FloatingNote/Picker",
+                    "images selected=${uris.size} inserted=${successfulLinks.size}",
+                )
+                if (successfulLinks.size < uris.size) {
+                    Toast.makeText(
+                        this@NoteEditActivity,
+                        getString(R.string.qd_editor_image_save_partial_failed),
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            }
+        }
     }
 
     private val attachmentPicker = registerForActivityResult(
@@ -266,6 +393,12 @@ class NoteEditActivity : ComponentActivity() {
         floatingSource = intent.getStringExtra("floating_source")
             ?.let { runCatching { FloatingNoteSource.valueOf(it) }.getOrNull() }
             ?: FloatingNoteSource.WIDGET
+        floatingCoachStep = if (OnboardingStore.shouldShowFloatingCoach(this)) {
+            OnboardingStore.floatingCoachStep(this)
+        } else {
+            null
+        }
+        sourceBounds = intent.sourceBounds?.let(::Rect)
         rememberTarget = intent.getBooleanExtra(EXTRA_REMEMBER_TARGET, true)
         val requestId = intent.getStringExtra("floating_request_id")
             ?.takeIf { it.isNotBlank() }
@@ -287,9 +420,11 @@ class NoteEditActivity : ComponentActivity() {
             displayTitle = requestedDialogTitle,
             requestId = requestId,
             rememberTarget = rememberTarget,
+            sourceBounds = sourceBounds,
         )
         floatingDraft = FloatingNoteEditorState(this)
         FloatingNoteDraftStore.loadInto(this, floatingDraft, request)
+        sourceBounds = floatingDraft.sourceBounds ?: sourceBounds
         noteText = floatingDraft.text
         selectedImages.addAll(floatingDraft.selectedImages)
         pendingAttachments.addAll(floatingDraft.pendingAttachments)
@@ -326,7 +461,22 @@ class NoteEditActivity : ComponentActivity() {
             EditorToolbarPolicy.defaultVisible
         }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackStarted(backEvent: BackEventCompat) {
+                if (preparePredictiveExit()) {
+                    applyPredictiveExit(backEvent.progress)
+                }
+            }
+
+            override fun handleOnBackProgressed(backEvent: BackEventCompat) {
+                applyPredictiveExit(backEvent.progress)
+            }
+
+            override fun handleOnBackCancelled() {
+                resetPredictiveExit()
+            }
+
             override fun handleOnBackPressed() {
+                resetPredictiveExit()
                 closeFloatingEditor(fromBack = true)
             }
         })
@@ -388,7 +538,10 @@ class NoteEditActivity : ComponentActivity() {
         }
         FloatingNoteTiming.mark("activity_content_set_start", "host=activity width=$w height=$h alpha=${FloatingNoteAppearance.alpha(this)}")
         setContent {
-            QuickDailyTheme {
+            QuickDailyTheme(
+                nightModeOverride = FloatingNoteAppearance.nightMode(this@NoteEditActivity),
+                refreshKey = appearanceRefreshToken,
+            ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = Color.Transparent
@@ -432,7 +585,9 @@ class NoteEditActivity : ComponentActivity() {
                         onSave = ::saveEditor,
                         onClose = { closeFloatingEditor(discard = true) },
                         onTopAction = { if (fullScreen) saveEditor() else closeFloatingEditor(discard = true) },
-                        topActionText = if (fullScreen) "保存" else "关闭",
+                        topActionText = getString(
+                            if (fullScreen) R.string.qd_common_save else R.string.qd_common_close,
+                        ),
                         fullScreen = fullScreen,
                         onHome = { closeFloatingEditor(openHomeAfterClose = true) },
                         onReturnToFloating = ::shrinkToFloating,
@@ -440,8 +595,8 @@ class NoteEditActivity : ComponentActivity() {
                         hasAttachments = pendingAttachments.isNotEmpty(),
                         attachmentUris = pendingAttachments,
                         onPickImages = {
-                imagePicker.launch("image/*")
-            },
+                            imagePicker.launch(arrayOf("image/*"))
+                        },
                          onPickAttachment = {
                 attachmentPicker.launch(arrayOf("*/*"))
             },
@@ -455,8 +610,19 @@ class NoteEditActivity : ComponentActivity() {
                          onSelectionChange = { selectionRange = it },
                          onMoveWindowStart = ::beginWindowMove,
                          onMoveWindow = ::moveWindow,
-                         onMoveWindowEnd = ::endWindowMove,
-                         onFullScreen = ::openFullScreen,
+                          onMoveWindowEnd = ::endWindowMove,
+                          onFullScreen = ::openFullScreen,
+                          floatingCoachStep = floatingCoachStep,
+                          onFloatingCoachPrevious = {
+                              floatingCoachStep = OnboardingStore.previousFloatingCoach(this@NoteEditActivity)
+                          },
+                          onFloatingCoachNext = {
+                              floatingCoachStep = OnboardingStore.advanceFloatingCoach(this@NoteEditActivity)
+                         },
+                         onFloatingCoachSkip = {
+                             OnboardingStore.skipFloatingCoach(this@NoteEditActivity)
+                             floatingCoachStep = null
+                         },
                          onTiming = { stage, detail ->
                              FloatingNoteTiming.mark(
                                  stage,
@@ -547,18 +713,23 @@ class NoteEditActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) takePhotoNow()
-        else Toast.makeText(this, "请允许相机权限后再拍照", Toast.LENGTH_SHORT).show()
+        else Toast.makeText(this, getString(R.string.qd_editor_camera_permission_required), Toast.LENGTH_SHORT).show()
     }
 
     private val audioPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) startRecordingNow()
-        else Toast.makeText(this, "请允许录音权限后再录音", Toast.LENGTH_SHORT).show()
+        else Toast.makeText(this, getString(R.string.qd_editor_microphone_permission_required), Toast.LENGTH_SHORT).show()
     }
 
     private fun insertMediaLink(link: String) {
-        val next = EditorMediaUtil.insertLink(noteText, selectionRange, link)
+        insertMediaLinks(listOf(link))
+    }
+
+    private fun insertMediaLinks(links: List<String>) {
+        if (links.isEmpty()) return
+        val next = EditorMediaUtil.insertLinks(noteText, selectionRange, links)
         noteText = next.text
         selectionRange = next.selection
     }
@@ -574,7 +745,7 @@ class NoteEditActivity : ComponentActivity() {
     private fun takePhotoNow() {
         val file = runCatching { CaptureFileUtil.newImageFile(this) }.getOrNull()
         if (file == null) {
-            Toast.makeText(this, "无法创建照片文件", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.qd_editor_photo_file_failed), Toast.LENGTH_SHORT).show()
             return
         }
         pendingCameraFile = file
@@ -607,7 +778,7 @@ class NoteEditActivity : ComponentActivity() {
         }.getOrNull()
         if (nextRecorder == null) {
             file.delete()
-            Toast.makeText(this, "无法开始录音", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.qd_editor_record_start_failed), Toast.LENGTH_SHORT).show()
             return
         }
         recorder = nextRecorder
@@ -633,7 +804,11 @@ class NoteEditActivity : ComponentActivity() {
             val link = runCatching { EditorMediaUtil.audioLink(this@NoteEditActivity, file) }.getOrNull()
             if (link != null) file.delete()
             withContext(Dispatchers.Main) {
-                if (link != null) insertMediaLink(link) else Toast.makeText(this@NoteEditActivity, "录音保存失败，临时文件已保留", Toast.LENGTH_SHORT).show()
+                if (link != null) insertMediaLink(link) else Toast.makeText(
+                    this@NoteEditActivity,
+                    getString(R.string.qd_editor_record_save_failed),
+                    Toast.LENGTH_SHORT,
+                ).show()
             }
         }
     }
@@ -662,9 +837,16 @@ class NoteEditActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        intent.sourceBounds?.let { sourceBounds = Rect(it) }
         if (intent.getBooleanExtra(EXTRA_FULLSCREEN, false)) {
             BetaLogger.log("FloatingNote/Fullscreen", "activity reused fullscreen request")
+            if (!fullScreen) captureFloatingPositionBeforeFullscreen()
             fullScreen = true
+            floatingCoachStep = if (OnboardingStore.shouldShowFloatingCoach(this)) {
+                OnboardingStore.floatingCoachStep(this)
+            } else {
+                null
+            }
             intent.getStringExtra(EXTRA_DIALOG_TITLE)
                 ?.takeIf { it.isNotBlank() }
                 ?.let { dialogTitle = titleForCurrentMode(it) }
@@ -675,6 +857,22 @@ class NoteEditActivity : ComponentActivity() {
                 targetOptions = FloatingNoteTargetStore.options(this, targetRelativePath)
             }
             applyFullScreenWindow()
+        } else {
+            fullScreen = false
+            floatingCoachStep = if (OnboardingStore.shouldShowFloatingCoach(this)) {
+                OnboardingStore.floatingCoachStep(this)
+            } else {
+                null
+            }
+            intent.getStringExtra(EXTRA_DIALOG_TITLE)
+                ?.takeIf { it.isNotBlank() }
+                ?.let { dialogTitle = titleForCurrentMode(it) }
+            if (intent.hasExtra(EXTRA_TARGET_RELATIVE_PATH)) {
+                targetRelativePath = intent.getStringExtra(EXTRA_TARGET_RELATIVE_PATH)
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                targetOptions = FloatingNoteTargetStore.options(this, targetRelativePath)
+            }
         }
         // singleInstance 会复用当前编辑器。不要重新初始化 noteText，避免重复点击入口时丢草稿。
         if (intent.hasExtra(EXTRA_RETURN_TO_HOME)) {
@@ -690,6 +888,7 @@ class NoteEditActivity : ComponentActivity() {
         floatingDraft.pendingAttachments.clear()
         floatingDraft.pendingAttachments.addAll(pendingAttachments)
         floatingDraft.source = floatingSource
+        floatingDraft.sourceBounds = sourceBounds
         floatingDraft.rememberTarget = rememberTarget
         floatingDraft.targetRelativePath = targetRelativePath
         floatingDraft.displayTitle = dialogTitle
@@ -697,23 +896,66 @@ class NoteEditActivity : ComponentActivity() {
         floatingDraft.selectionEnd = selectionRange.end
     }
 
-    private fun persistDraftAndFinish(openHomeAfterClose: Boolean = false) {
+    private fun persistDraftAndFinish(
+        openHomeAfterClose: Boolean = false,
+        animateToWidget: Boolean = false,
+    ) {
         syncFloatingDraft()
         FloatingNoteDraftStore.persistOrClear(this, floatingDraft)
-        finishEditor(openHomeAfterClose)
+        finishEditor(openHomeAfterClose, animateToWidget = animateToWidget)
+    }
+
+    private fun preparePredictiveExit(): Boolean {
+        val view = window?.decorView ?: return false
+        val currentBounds = Rect()
+        if (!view.getGlobalVisibleRect(currentBounds)) return false
+        val targetBounds = sourceBounds?.let(::Rect) ?: return false
+        val metrics = resources.displayMetrics
+        if (!FloatingNoteExitAnimationPolicy.isEligible(
+                floatingSource,
+                targetBounds.toFloatingNoteScreenBounds(),
+                currentBounds.toFloatingNoteScreenBounds(),
+                metrics.widthPixels,
+                metrics.heightPixels,
+            )
+        ) return false
+        predictiveExitView = view
+        predictiveExitBounds = currentBounds
+        view.pivotX = currentBounds.width() / 2f
+        view.pivotY = currentBounds.height() / 2f
+        return true
+    }
+
+    private fun applyPredictiveExit(progress: Float) {
+        val view = predictiveExitView ?: return
+        val currentBounds = predictiveExitBounds ?: return
+        val targetBounds = sourceBounds?.let(::Rect) ?: return
+        FloatingNoteExitAnimator.applyProgress(view, currentBounds, targetBounds, progress)
+    }
+
+    private fun resetPredictiveExit() {
+        predictiveExitView?.let(FloatingNoteExitAnimator::reset)
+        predictiveExitView = null
+        predictiveExitBounds = null
     }
 
     private fun titleForCurrentMode(baseTitle: String): String {
         val normalized = withoutQuickRecordSuffix(baseTitle)
-        return if (fullScreen) "$normalized \u901f\u5F55" else normalized
+        return if (fullScreen) {
+            "$normalized \${getString(R.string.qd_editor_quick_capture_suffix)}"
+        } else {
+            normalized
+        }
     }
 
     private fun withoutQuickRecordSuffix(title: String): String {
         var normalized = title.trim()
-        while (normalized.endsWith("\u901f\u5F55")) {
-            normalized = normalized.removeSuffix("\u901f\u5F55").trimEnd()
+        val suffixes = listOf(getString(R.string.qd_editor_quick_capture_suffix), "\u901f\u5F55")
+        while (suffixes.any { normalized.endsWith(it) }) {
+            val suffix = suffixes.first { normalized.endsWith(it) }
+            normalized = normalized.removeSuffix(suffix).trimEnd()
         }
-        return normalized.ifBlank { "\u901f\u8bb0" }
+        return normalized.ifBlank { getString(R.string.qd_editor_floating_title) }
     }
 
     private fun openFullScreen() {
@@ -722,12 +964,19 @@ class NoteEditActivity : ComponentActivity() {
             "FloatingNote/Fullscreen",
             "activity expand source=" + floatingSource + " target=" + targetRelativePath.orEmpty(),
         )
+        captureFloatingPositionBeforeFullscreen()
         syncFloatingDraft()
         FloatingNoteDraftStore.persist(this, floatingDraft)
         val title = dialogTitle
             .takeIf { it.isNotBlank() }
             ?.let { "${withoutQuickRecordSuffix(it)} \u901f\u5F55" }
         title?.let { dialogTitle = it }
+        val currentCoachStep = floatingCoachStep
+        if (currentCoachStep != null &&
+            OnboardingPolicy.coachStepAfterEnteringFullscreen(currentCoachStep) != currentCoachStep
+        ) {
+            floatingCoachStep = OnboardingStore.advanceFloatingCoach(this)
+        }
         fullScreen = true
         setIntent(
             fullScreenIntent(
@@ -735,6 +984,7 @@ class NoteEditActivity : ComponentActivity() {
                 source = floatingSource,
                 targetRelativePath = targetRelativePath,
                 title = title,
+                sourceBounds = sourceBounds,
             )
         )
         applyFullScreenWindow()
@@ -752,6 +1002,30 @@ class NoteEditActivity : ComponentActivity() {
         floatingDraft.displayTitle = dialogTitle
         FloatingNoteDraftStore.persist(this, floatingDraft)
         applyFloatingWindow()
+    }
+
+    private fun captureFloatingPositionBeforeFullscreen() {
+        if (fullScreen) return
+        val attrs = window?.attributes ?: return
+        val dm = resources.displayMetrics
+        val width = attrs.width
+            .takeIf { it > 0 && it != WindowManager.LayoutParams.MATCH_PARENT }
+            ?: (dm.widthPixels * 0.88f).toInt()
+        val height = attrs.height
+            .takeIf { it > 0 && it != WindowManager.LayoutParams.MATCH_PARENT }
+            ?: (dm.heightPixels * 0.35f).toInt()
+        val position = FloatingNotePositionPolicy.clamp(
+            FloatingNotePosition(attrs.x, attrs.y),
+            dm.widthPixels,
+            dm.heightPixels,
+            width,
+            height,
+        )
+        floatingPositionBeforeFullscreen = position
+        // Persist before applying fullscreen because that operation changes
+        // WindowManager.LayoutParams.x/y to (0, 0).
+        FloatingNotePositionPolicy.save(this, position)
+        BetaLogger.log("FloatingNote/Fullscreen", "captured floating position x=${position.x} y=${position.y}")
     }
 
     private fun applyFullScreenWindow() {
@@ -782,12 +1056,13 @@ class NoteEditActivity : ComponentActivity() {
             w,
             h,
         )
-        val position = FloatingNotePositionPolicy.clamp(
-            FloatingNotePositionPolicy.load(this, fallbackPosition),
-            dm.widthPixels,
-            dm.heightPixels,
-            w,
-            h,
+        val position = FloatingNotePositionPolicy.resolve(
+            captured = floatingPositionBeforeFullscreen,
+            persisted = FloatingNotePositionPolicy.load(this, fallbackPosition),
+            screenWidth = dm.widthPixels,
+            screenHeight = dm.heightPixels,
+            windowWidth = w,
+            windowHeight = h,
         )
         window?.apply {
             addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
@@ -804,6 +1079,8 @@ class NoteEditActivity : ComponentActivity() {
             lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_DIM_BEHIND.inv()
             attributes = lp
         }
+        FloatingNotePositionPolicy.save(this, position)
+        floatingPositionBeforeFullscreen = null
     }
 
     private fun requestActivityImeHide() {
@@ -830,11 +1107,35 @@ class NoteEditActivity : ComponentActivity() {
         }
     }
 
-    private fun finishEditor(openHomeAfterClose: Boolean = false) {
+    private fun finishEditor(
+        openHomeAfterClose: Boolean = false,
+        suppressQuickDailyHome: Boolean = false,
+        animateToWidget: Boolean = false,
+    ) {
+        val canAnimateToWidget = animateToWidget &&
+            !openHomeAfterClose &&
+            !returnToHomeAfterClose &&
+            !suppressQuickDailyHome
+        if (canAnimateToWidget) {
+            val started = FloatingNoteExitAnimator.animateToSource(
+                view = window?.decorView ?: return finishEditorNow(openHomeAfterClose, suppressQuickDailyHome),
+                source = floatingSource,
+                sourceBounds = sourceBounds,
+                onEnd = { finishEditorNow(openHomeAfterClose, suppressQuickDailyHome) },
+            )
+            if (started) return
+        }
+        finishEditorNow(openHomeAfterClose, suppressQuickDailyHome)
+    }
+
+    private fun finishEditorNow(
+        openHomeAfterClose: Boolean,
+        suppressQuickDailyHome: Boolean,
+    ) {
         FloatingNoteTiming.mark("hide_start", "host=activity")
         stopRecording()
         requestActivityImeHide()
-        if (returnToHomeAfterClose || openHomeAfterClose) {
+        if (!suppressQuickDailyHome && (returnToHomeAfterClose || openHomeAfterClose)) {
             startActivity(MainActivity.editorIntent(this, targetRelativePath))
         }
         finish()
@@ -856,25 +1157,32 @@ class NoteEditActivity : ComponentActivity() {
         fromBack: Boolean = false,
     ) {
         if (noteSaveInProgress) return
+        val animateToWidget = fromBack &&
+            floatingSource == FloatingNoteSource.WIDGET &&
+            sourceBounds != null
         if (discard) {
             FloatingNoteDraftStore.clear(this, targetRelativePath)
-            finishEditor(openHomeAfterClose)
+            finishEditor(openHomeAfterClose, animateToWidget = animateToWidget)
             return
         }
         val hasContent = hasRealContent(noteText) || selectedImages.isNotEmpty() || pendingAttachments.isNotEmpty()
         BetaLogger.log("FloatingNote/Exit", "activity exit fromBack=$fromBack saveOnClose=${FloatingNoteEntryPolicy.shouldSaveOnClose(this)} hasContent=$hasContent")
         if (FloatingNoteEntryPolicy.shouldSaveOnClose(this) && hasContent) {
-            appendToDiary(noteText.trim(), openHomeAfterClose)
+            appendToDiary(noteText.trim(), openHomeAfterClose, animateToWidget)
         } else {
-            persistDraftAndFinish(openHomeAfterClose)
+            persistDraftAndFinish(openHomeAfterClose, animateToWidget)
         }
     }
-    private fun appendToDiary(text: String, openHomeAfterClose: Boolean = false) {
+    private fun appendToDiary(
+        text: String,
+        openHomeAfterClose: Boolean = false,
+        animateToWidget: Boolean = false,
+    ) {
         stopRecording()
         if (noteSaveInProgress) return
         if (!hasRealContent(text) && selectedImages.isEmpty() && pendingAttachments.isEmpty()) {
             FloatingNoteDraftStore.clear(this, targetRelativePath)
-            finishEditor(openHomeAfterClose)
+            finishEditor(openHomeAfterClose, animateToWidget = animateToWidget)
             return
         }
         noteSaveInProgress = true
@@ -891,17 +1199,25 @@ class NoteEditActivity : ComponentActivity() {
                     selectedImages.clear()
                     pendingAttachments.clear()
                     FloatingNoteDraftStore.clear(this@NoteEditActivity, targetRelativePath)
-                    Toast.makeText(this@NoteEditActivity, "已保存", Toast.LENGTH_SHORT).show()
-                    finishEditor(openHomeAfterClose)
+                    Toast.makeText(this@NoteEditActivity, getString(R.string.qd_editor_saved), Toast.LENGTH_SHORT).show()
+                    val openedObsidian = FloatingNoteObsidianLauncher.openAfterSuccessfulSave(
+                        this@NoteEditActivity,
+                        targetRelativePath,
+                    )
+                    finishEditor(
+                        openHomeAfterClose = openHomeAfterClose,
+                        suppressQuickDailyHome = openedObsidian,
+                        animateToWidget = animateToWidget,
+                    )
                 }
                 FloatingNoteSaveResult.NoContent -> {
                     FloatingNoteDraftStore.clear(this@NoteEditActivity, targetRelativePath)
-                    finishEditor(openHomeAfterClose)
+                    finishEditor(openHomeAfterClose, animateToWidget = animateToWidget)
                 }
                 is FloatingNoteSaveResult.Failed -> {
                     noteSaveInProgress = false
-                    BetaLogger.log("NoteEdit", "save failed=" + result.message)
-                    Toast.makeText(this@NoteEditActivity, result.message, Toast.LENGTH_LONG).show()
+                    BetaLogger.log("NoteEdit", "save failed messageType=${result.message::class.simpleName}")
+                    Toast.makeText(this@NoteEditActivity, result.message.resolve(this@NoteEditActivity), Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -909,11 +1225,27 @@ class NoteEditActivity : ComponentActivity() {
 
     override fun onTouchEvent(event: MotionEvent?): Boolean {
         if (event?.action == MotionEvent.ACTION_OUTSIDE) {
-            closeFloatingEditor(fromBack = true)
+            closeFloatingEditor()
             return true
         }
         return super.onTouchEvent(event)
     }
+
+    override fun onStart() {
+        super.onStart()
+        ContextCompat.registerReceiver(
+            this,
+            appearanceReceiver,
+            IntentFilter(FloatingNoteAppearance.ACTION_APPEARANCE_CHANGED),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+    }
+
+    override fun onStop() {
+        runCatching { unregisterReceiver(appearanceReceiver) }
+        super.onStop()
+    }
+
     override fun onDestroy() {
         FloatingNoteTiming.mark("activity_destroy")
         super.onDestroy()
@@ -941,7 +1273,7 @@ fun NoteEditDialog(
     enterToSave: Boolean,
     tagAutocomplete: Boolean = true,
     wikilinkAutocomplete: Boolean = true,
-    title: String = "速记",
+    title: String = "",
     targetPath: String? = null,
     targetOptions: List<FloatingNoteTargetOption> = emptyList(),
     onTargetChange: (FloatingNoteTargetOption) -> Unit = {},
@@ -951,7 +1283,7 @@ fun NoteEditDialog(
     onSave: () -> Unit,
     onClose: () -> Unit,
     onTopAction: () -> Unit = onClose,
-    topActionText: String = "关闭",
+    topActionText: String = "",
     fullScreen: Boolean = false,
     onHome: () -> Unit,
     onReturnToFloating: () -> Unit = {},
@@ -977,9 +1309,14 @@ fun NoteEditDialog(
     onRemoveAttachment: (Int) -> Unit = {},
     onTiming: (stage: String, detail: String?) -> Unit = { _, _ -> },
     onFullScreen: () -> Unit = {},
+    floatingCoachStep: Int? = null,
+    onFloatingCoachPrevious: () -> Unit = {},
+    onFloatingCoachNext: () -> Unit = {},
+    onFloatingCoachSkip: () -> Unit = {},
 ) {
     val floater = LocalFloaterColors.current
     val dim = LocalAppDimensions.current
+    val motionPolicy = LocalQuickDailyMotion.current
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val density = LocalDensity.current
@@ -987,8 +1324,10 @@ fun NoteEditDialog(
     var focusRequested by remember { mutableStateOf(false) }
     var imeShowRequested by remember { mutableStateOf(false) }
     var targetMenuExpanded by remember { mutableStateOf(false) }
+    var floatingCoachSkipDialogOpen by rememberSaveable { mutableStateOf(false) }
     var wikilinkPopupDismissKey by remember { mutableStateOf<String?>(null) }
     var tfv by remember { mutableStateOf(TextFieldValue(text, initialSelection ?: TextRange(text.length))) }
+    var autoIndentState by remember { mutableStateOf<EditorAutoIndentState?>(null) }
     var stampToggleState by remember { mutableStateOf(EditorStampToggleState()) }
     val localUndoStack = remember { mutableStateListOf<String>() }
     val localRedoStack = remember { mutableStateListOf<String>() }
@@ -997,6 +1336,10 @@ fun NoteEditDialog(
     val neView = LocalView.current
     val clipboardManager = LocalClipboardManager.current
     var recentWikilinks by remember { mutableStateOf(WikilinkRecentStore.load(neCtx)) }
+    var toolbarPage by remember { mutableIntStateOf(0) }
+    var toolbarPageCount by remember { mutableIntStateOf(0) }
+    var toolbarDemoRunForStep by remember { mutableStateOf<Int?>(null) }
+    var toolbarDemoUserInteracted by remember { mutableStateOf(false) }
 
     fun recordUndo(previousText: String, force: Boolean = false) {
         val now = System.currentTimeMillis()
@@ -1052,10 +1395,32 @@ fun NoteEditDialog(
     LaunchedEffect(text, initialSelection) {
         if (text != tfv.text || (initialSelection != null && tfv.selection != initialSelection)) {
             stampToggleState = stampToggleState.clear()
+            autoIndentState = null
             tfv = TextFieldValue(text, initialSelection ?: TextRange(text.length))
         }
     }
-    val tagVaultPath = neCtx.getSharedPreferences("QuickDaily", 0).getString("vault_path", "") ?: ""
+    LaunchedEffect(floatingCoachStep, toolbarPageCount, motionPolicy.reducedMotion) {
+        val toolbarDemoStep = OnboardingPolicy.FLOATING_COACH_STEP_COUNT - 1
+        if (floatingCoachStep != toolbarDemoStep) {
+            toolbarDemoRunForStep = null
+            toolbarDemoUserInteracted = false
+            return@LaunchedEffect
+        }
+        if (motionPolicy.reducedMotion || toolbarPageCount <= 1 || toolbarDemoRunForStep == toolbarDemoStep) {
+            return@LaunchedEffect
+        }
+        val originPage = toolbarPage.coerceIn(0, toolbarPageCount - 1)
+        val destinationPage = FloatingCoachToolbarDemoPolicy.adjacentPage(originPage, toolbarPageCount)
+            ?: return@LaunchedEffect
+        toolbarDemoRunForStep = toolbarDemoStep
+        toolbarDemoUserInteracted = false
+        toolbarPage = destinationPage
+        delay(550)
+        if (!toolbarDemoUserInteracted && toolbarPage == destinationPage) {
+            toolbarPage = originPage
+        }
+    }
+    val tagVaultPath = com.quickdaily.util.VaultStoragePrefs.current(neCtx).rootPath
     val wikilinkIndex by WikilinkIndexRepository.indexState.collectAsStateWithLifecycle()
     val completionIndex = wikilinkIndex.takeIf {
         it.rootPath == tagVaultPath && it.indexed && it.tagsIndexed && it.error == null
@@ -1280,6 +1645,16 @@ fun NoteEditDialog(
             onSaveOrClose = ::saveOrClose,
             onHome = onHome,
             onReturnToFloating = onReturnToFloating,
+            floatingCoachStep = floatingCoachStep,
+            onFloatingCoachPrevious = onFloatingCoachPrevious,
+            onFloatingCoachNext = onFloatingCoachNext,
+            onFloatingCoachSkipRequest = { floatingCoachSkipDialogOpen = true },
+            floatingCoachSkipDialogOpen = floatingCoachSkipDialogOpen,
+            onFloatingCoachSkipDialogDismiss = { floatingCoachSkipDialogOpen = false },
+            onFloatingCoachSkip = {
+                floatingCoachSkipDialogOpen = false
+                onFloatingCoachSkip()
+            },
             onTargetChange = onTargetChange,
             onAddCustomPage = onAddCustomPage,
             onRemoveTarget = onRemoveTarget,
@@ -1327,11 +1702,15 @@ fun NoteEditDialog(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Box(
-                            modifier = Modifier.wrapContentWidth(),
+                            modifier = Modifier
+                                .wrapContentWidth()
+                                .then(
+                                    if (floatingCoachStep == 1) floatingCoachDashedBorder(floater.primary) else Modifier
+                                ),
                             contentAlignment = Alignment.CenterStart,
                         ) {
                             TextButton(onClick = onHome) {
-                                Text("编辑页", color = floater.primary, style = MaterialTheme.typography.labelSmall)
+                                Text(stringResource(R.string.qd_editor_page), color = floater.primary, style = MaterialTheme.typography.labelSmall)
                             }
                         }
                         Row(
@@ -1346,6 +1725,9 @@ fun NoteEditDialog(
                                     // selector outside the centered header row.
                                     .weight(1f)
                                     .heightIn(min = 48.dp)
+                                    .then(
+                                        if (floatingCoachStep == 0) floatingCoachDashedBorder(floater.primary) else Modifier
+                                    )
                                     .pointerInput(Unit) {
                                         detectDragGesturesAfterLongPress(
                                             onDragStart = {
@@ -1363,7 +1745,7 @@ fun NoteEditDialog(
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Text(
-                                    title.ifBlank { "速记" },
+                                    title.ifBlank { stringResource(R.string.qd_editor_floating_title) },
                                     modifier = Modifier.fillMaxWidth(),
                                     style = MaterialTheme.typography.labelMedium,
                                     color = floater.onSurfaceVariant,
@@ -1374,13 +1756,16 @@ fun NoteEditDialog(
                             }
                             Box(
                                 modifier = Modifier
-                                    .size(40.dp)
+                                    .size(48.dp)
+                                    .then(
+                                        if (floatingCoachStep == 2) floatingCoachDashedBorder(floater.primary) else Modifier
+                                    )
                                     .clickable { targetMenuExpanded = true },
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Icon(
                                     Icons.Default.ExpandMore,
-                                    contentDescription = "选择记录页面",
+                                    contentDescription = stringResource(R.string.qd_editor_select_page),
                                     tint = floater.primary,
                                     modifier = Modifier.size(28.dp),
                                 )
@@ -1388,13 +1773,16 @@ fun NoteEditDialog(
                             if (!fullScreen) {
                                 Box(
                                     modifier = Modifier
-                                        .size(40.dp)
+                                        .size(48.dp)
+                                        .then(
+                                            if (floatingCoachStep == 3) floatingCoachDashedBorder(floater.primary) else Modifier
+                                        )
                                         .clickable(onClick = onFullScreen),
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     Icon(
                                         Icons.Default.Fullscreen,
-                                        contentDescription = "全屏",
+                                        contentDescription = stringResource(R.string.qd_editor_fullscreen),
                                         tint = floater.primary,
                                         modifier = Modifier.size(24.dp),
                                     )
@@ -1462,7 +1850,7 @@ fun NoteEditDialog(
                                 onClick = { onRemoveImage(index) },
                                 modifier = Modifier.align(Alignment.TopEnd).size(18.dp)
                             ) {
-                                Icon(Icons.Default.Close, "删除", tint = Color.Red, modifier = Modifier.size(14.dp))
+                                Icon(Icons.Default.Close, stringResource(R.string.qd_editor_delete), tint = Color.Red, modifier = Modifier.size(14.dp))
                             }
                         }
                     }
@@ -1480,7 +1868,10 @@ fun NoteEditDialog(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                text = if (invalid) "附件失效：${uri.lastPathSegment ?: uri}" else "附件：${uri.lastPathSegment ?: uri}",
+                                text = stringResource(
+                                    if (invalid) R.string.qd_editor_attachment_invalid else R.string.qd_editor_attachment,
+                                    uri.lastPathSegment ?: uri,
+                                ),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = if (invalid) MaterialTheme.colorScheme.error else floater.primary,
                                 modifier = Modifier.weight(1f),
@@ -1488,7 +1879,7 @@ fun NoteEditDialog(
                                 overflow = TextOverflow.Ellipsis,
                             )
                             IconButton(onClick = { onRemoveAttachment(index) }) {
-                                Icon(Icons.Default.Close, contentDescription = "移除附件", tint = floater.onBackgroundVariant)
+                                Icon(Icons.Default.Close, contentDescription = stringResource(R.string.qd_common_remove_attachment), tint = floater.onBackgroundVariant)
                             }
                         }
                     }
@@ -1500,15 +1891,22 @@ fun NoteEditDialog(
                     val insertedNewlines = newText.count { it == '\n' } - oldText.count { it == '\n' }
                     if (enterToSave && insertedNewlines > 0 && newText.length == oldText.length + 1) {
                         // IMEs that commit Enter as a newline still use the same explicit action.
+                        autoIndentState = null
                         saveOrClose()
                     } else {
-                        if (oldText != newText) {
+                        val result = EditorAutoIndentPolicy.apply(
+                            previous = tfv,
+                            proposed = newTfv,
+                            state = autoIndentState,
+                        )
+                        autoIndentState = result.state
+                        if (oldText != result.value.text) {
                             stampToggleState = stampToggleState.clear()
                             recordUndo(oldText)
                         }
-                        tfv = newTfv
-                        onTextChange(newText)
-                        onSelectionChange(newTfv.selection)
+                        tfv = result.value
+                        onTextChange(result.value.text)
+                        onSelectionChange(result.value.selection)
                     }
             },
                 keyboardOptions = KeyboardOptions(
@@ -1591,7 +1989,9 @@ fun NoteEditDialog(
                         }
                     },
                 decorationBox = { inner ->
-                    if (text.isEmpty()) Text("写点什么...", color = floater.onBackgroundDim, fontSize = MaterialTheme.typography.bodyMedium.fontSize)
+                    if (text.isEmpty()) {
+                        Text(stringResource(R.string.qd_editor_empty_floating_hint), color = floater.onBackgroundDim, fontSize = MaterialTheme.typography.bodyMedium.fontSize)
+                    }
                     inner() })
             } // end content Column (weight)
             // ── Tag autocomplete row ──
@@ -1626,7 +2026,7 @@ fun NoteEditDialog(
                 ) {
                     if (wikilinkIndex.loading) {
                         Text(
-                            "正在建立双链索引…",
+                            stringResource(R.string.qd_editor_wikilink_index_loading),
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                             style = MaterialTheme.typography.bodySmall,
                             color = floater.onBackgroundDim,
@@ -1675,9 +2075,24 @@ fun NoteEditDialog(
                     order = toolbarOrder,
                     visible = toolbarVisible,
                     tint = floater.primary,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .then(
+                            if (floatingCoachStep == OnboardingPolicy.FLOATING_COACH_STEP_COUNT - 1) {
+                                floatingCoachDashedBorder(floater.primary, cornerRadius = 8.dp)
+                            } else {
+                                Modifier
+                            },
+                        ),
                     buttonSize = 40.dp,
                     compact = true,
+                    page = toolbarPage,
+                    onPageChanged = { toolbarPage = it },
+                    onUserPageInteraction = { toolbarDemoUserInteracted = true },
+                    onPageCountChanged = { count ->
+                        toolbarPageCount = count
+                        toolbarPage = toolbarPage.coerceIn(0, (count - 1).coerceAtLeast(0))
+                    },
                     recording = recording,
                     recordingDurationMs = recordingDurationMs,
                     enabled = { action ->
@@ -1698,7 +2113,7 @@ fun NoteEditDialog(
                     modifier = Modifier.width(48.dp).height(48.dp),
                     contentPadding = PaddingValues(horizontal = 0.dp),
                 ) {
-                    Text("保存", color = floater.primary, style = MaterialTheme.typography.labelMedium)
+                    Text(stringResource(R.string.qd_common_save), color = floater.primary, style = MaterialTheme.typography.labelMedium)
                 }
             } // end toolbar Row
         }
@@ -1722,6 +2137,103 @@ fun NoteEditDialog(
                 onDismiss = { targetMenuExpanded = false },
             )
         }
+        if (floatingCoachStep != null) {
+            FloatingCoachCard(
+                coachStep = floatingCoachStep,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(start = 12.dp, end = 12.dp, bottom = 68.dp),
+                onPrevious = onFloatingCoachPrevious,
+                onNext = onFloatingCoachNext,
+                onSkipRequest = { floatingCoachSkipDialogOpen = true },
+            )
+        }
+        if (floatingCoachSkipDialogOpen) {
+            OnboardingSkipConfirmationDialog(
+                onDismiss = { floatingCoachSkipDialogOpen = false },
+                onConfirm = {
+                    floatingCoachSkipDialogOpen = false
+                    onFloatingCoachSkip()
+                },
+            )
+        }
+        }
+    }
+}
+
+@Composable
+private fun FloatingCoachCard(
+    coachStep: Int,
+    modifier: Modifier = Modifier,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onSkipRequest: () -> Unit,
+) {
+    val step = OnboardingPolicy.clampCoachStep(coachStep)
+    ElevatedCard(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    stringResource(
+                        R.string.qd_editor_coach_step,
+                        step + 1,
+                        OnboardingPolicy.FLOATING_COACH_STEP_COUNT,
+                    ),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .weight(1f)
+                        .semantics {
+                            liveRegion = LiveRegionMode.Polite
+                        },
+                )
+                TextButton(
+                    onClick = onSkipRequest,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) { Text(stringResource(R.string.qd_editor_coach_skip)) }
+            }
+            Text(
+                stringResource(
+                    when (step) {
+                        0 -> R.string.qd_editor_coach_move_overlay
+                        1 -> R.string.qd_editor_coach_open_editor
+                        2 -> R.string.qd_editor_coach_switch_page
+                        3 -> R.string.qd_editor_coach_fullscreen
+                        else -> R.string.qd_editor_coach_toolbar
+                    },
+                ),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(
+                    onClick = onPrevious,
+                    enabled = step > 0,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) { Text(stringResource(R.string.qd_onboarding_previous)) }
+                Spacer(Modifier.weight(1f))
+                Button(onClick = onNext, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text(
+                        stringResource(
+                            if (step == OnboardingPolicy.FLOATING_COACH_STEP_COUNT - 1) {
+                                R.string.qd_editor_coach_acknowledge
+                            } else {
+                                R.string.qd_onboarding_next
+                            },
+                        ),
+                    )
+                }
+            }
         }
     }
 }
@@ -1770,6 +2282,13 @@ private fun FullScreenNoteEditSurface(
     onWikilinkSelected: (WikilinkCandidate) -> Unit,
     onHome: () -> Unit,
     onReturnToFloating: () -> Unit,
+    floatingCoachStep: Int? = null,
+    onFloatingCoachPrevious: () -> Unit = {},
+    onFloatingCoachNext: () -> Unit = {},
+    onFloatingCoachSkipRequest: () -> Unit = {},
+    floatingCoachSkipDialogOpen: Boolean = false,
+    onFloatingCoachSkipDialogDismiss: () -> Unit = {},
+    onFloatingCoachSkip: () -> Unit = {},
 ) {
     val focusRequester = remember { FocusRequester() }
     val context = LocalContext.current
@@ -1783,6 +2302,7 @@ private fun FullScreenNoteEditSurface(
 
     var toolbarPage by remember { mutableIntStateOf(0) }
     var toolbarPageCount by remember { mutableIntStateOf(1) }
+    var autoIndentState by remember { mutableStateOf<EditorAutoIndentState?>(null) }
     val motionPolicy = LocalQuickDailyMotion.current
 
     LaunchedEffect(keyboardVisible) {
@@ -1828,7 +2348,7 @@ private fun FullScreenNoteEditSurface(
                             onClick = onHome,
                             modifier = Modifier.widthIn(min = 64.dp),
                         ) {
-                            Text("\u7f16\u8f91\u9875", maxLines = 1)
+                            Text(stringResource(R.string.qd_editor_page), maxLines = 1)
                         }
                         Box(
                             modifier = Modifier
@@ -1838,7 +2358,7 @@ private fun FullScreenNoteEditSurface(
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
-                                text = title.ifBlank { "\u901f\u8bb0" },
+                                text = title.ifBlank { stringResource(R.string.qd_editor_floating_title) },
                                 modifier = Modifier.fillMaxWidth(),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
@@ -1852,7 +2372,7 @@ private fun FullScreenNoteEditSurface(
                         ) {
                             Icon(
                                 Icons.Default.ExpandMore,
-                                contentDescription = "\u9009\u62e9\u8bb0\u5f55\u9875\u9762",
+                                contentDescription = stringResource(R.string.qd_editor_select_page),
                             )
                         }
                         IconButton(
@@ -1861,14 +2381,14 @@ private fun FullScreenNoteEditSurface(
                         ) {
                             Icon(
                                 Icons.Default.FullscreenExit,
-                                contentDescription = "\u7f29\u56de\u60ac\u6d6e\u7a97",
+                                contentDescription = stringResource(R.string.qd_editor_return_to_floating),
                             )
                         }
                         TextButton(
                             onClick = onSave,
                             modifier = Modifier.widthIn(min = 56.dp),
                         ) {
-                            Text("\u4fdd\u5b58", maxLines = 1)
+                            Text(stringResource(R.string.qd_common_save), maxLines = 1)
                         }
                     }
                 }
@@ -1890,7 +2410,17 @@ private fun FullScreenNoteEditSurface(
                         .padding(horizontal = 4.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box(Modifier.weight(1f)) {
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .then(
+                                if (floatingCoachStep == OnboardingPolicy.FLOATING_COACH_STEP_COUNT - 1) {
+                                    floatingCoachDashedBorder(MaterialTheme.colorScheme.primary, cornerRadius = 8.dp)
+                                } else {
+                                    Modifier
+                                },
+                            ),
+                    ) {
                         EditorToolbarActions(
                             order = toolbarOrder,
                             visible = toolbarVisible,
@@ -1924,7 +2454,13 @@ private fun FullScreenNoteEditSurface(
                     ) {
                         Icon(
                             Icons.Default.KeyboardArrowDown,
-                            contentDescription = if (keyboardVisible) "\u5173\u95ed\u952e\u76d8" else if (toolbarPage > 0) "\u8fd4\u56de\u7b2c\u4e00\u9875\u5de5\u5177" else "\u6253\u5f00\u7b2c\u4e8c\u9875\u5de5\u5177",
+                            contentDescription = stringResource(
+                                when {
+                                    keyboardVisible -> R.string.qd_editor_close_keyboard
+                                    toolbarPage > 0 -> R.string.qd_editor_previous_toolbar_page
+                                    else -> R.string.qd_editor_next_toolbar_page
+                                },
+                            ),
                             modifier = Modifier
                                 .size(22.dp)
                                 .graphicsLayer { rotationZ = toolbarArrowRotation },
@@ -1934,11 +2470,14 @@ private fun FullScreenNoteEditSurface(
             }
         },
     ) { padding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
         ) {
+            Column(
+                modifier = Modifier.fillMaxSize(),
+            ) {
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -1983,7 +2522,7 @@ private fun FullScreenNoteEditSurface(
                                     ) {
                                         Icon(
                                             Icons.Default.Close,
-                                            contentDescription = "\u79fb\u9664\u56fe\u7247",
+                                            contentDescription = stringResource(R.string.qd_editor_remove_image),
                                             tint = MaterialTheme.colorScheme.error,
                                             modifier = Modifier.size(16.dp),
                                         )
@@ -2008,7 +2547,11 @@ private fun FullScreenNoteEditSurface(
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text(
-                                        text = if (invalid) "\u9644\u4ef6\u4e0d\u53ef\u7528\uff1a${uri.lastPathSegment ?: uri}" else "\u9644\u4ef6\uff1a${uri.lastPathSegment ?: uri}",
+                                        text = if (invalid) {
+                                            stringResource(R.string.qd_editor_attachment_invalid, uri.lastPathSegment ?: uri)
+                                        } else {
+                                            stringResource(R.string.qd_editor_attachment, uri.lastPathSegment ?: uri)
+                                        },
                                         modifier = Modifier.weight(1f),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
@@ -2016,7 +2559,7 @@ private fun FullScreenNoteEditSurface(
                                         color = if (invalid) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                                     )
                                     IconButton(onClick = { onRemoveAttachment(index) }) {
-                                        Icon(Icons.Default.Close, contentDescription = "\u79fb\u9664\u9644\u4ef6")
+                                        Icon(Icons.Default.Close, contentDescription = stringResource(R.string.qd_common_remove_attachment))
                                     }
                                 }
                             }
@@ -2027,9 +2570,16 @@ private fun FullScreenNoteEditSurface(
                         onValueChange = { newValue ->
                             val insertedNewlines = newValue.text.count { it == '\n' } - textFieldValue.text.count { it == '\n' }
                             if (enterToSave && insertedNewlines > 0 && newValue.text.length == textFieldValue.text.length + 1) {
+                                autoIndentState = null
                                 onSaveOrClose()
                             } else {
-                                onTextChange(newValue)
+                                val result = EditorAutoIndentPolicy.apply(
+                                    previous = textFieldValue,
+                                    proposed = newValue,
+                                    state = autoIndentState,
+                                )
+                                autoIndentState = result.state
+                                onTextChange(result.value)
                             }
                         },
                         keyboardOptions = KeyboardOptions(
@@ -2157,6 +2707,26 @@ private fun FullScreenNoteEditSurface(
                     }
                 }
             }
+            if (floatingCoachStep != null) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.BottomCenter,
+                ) {
+                    FloatingCoachCard(
+                        coachStep = floatingCoachStep,
+                        modifier = Modifier.padding(12.dp),
+                        onPrevious = onFloatingCoachPrevious,
+                        onNext = onFloatingCoachNext,
+                        onSkipRequest = onFloatingCoachSkipRequest,
+                    )
+                }
+            }
+            if (floatingCoachSkipDialogOpen) {
+                OnboardingSkipConfirmationDialog(
+                    onDismiss = onFloatingCoachSkipDialogDismiss,
+                    onConfirm = onFloatingCoachSkip,
+                )
+            }
         }
     }
 
@@ -2173,6 +2743,8 @@ private fun FullScreenNoteEditSurface(
             )
         }
     }
+}
+
 }
 
 @Composable
@@ -2197,7 +2769,7 @@ private fun TargetSelectionSurface(
     ) {
         Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
             Text(
-                "记录到",
+                stringResource(R.string.qd_editor_record_to),
                 style = MaterialTheme.typography.titleMedium,
                 color = floater.onBackground,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
@@ -2220,7 +2792,7 @@ private fun TargetSelectionSurface(
                         if (targetPath == option.path) {
                             Icon(
                                 Icons.Default.Check,
-                                contentDescription = "当前页面",
+                                contentDescription = stringResource(R.string.qd_editor_current_page),
                                 tint = floater.primary,
                                 modifier = Modifier.padding(horizontal = 8.dp),
                             )
@@ -2236,7 +2808,7 @@ private fun TargetSelectionSurface(
                             IconButton(onClick = { onRemoveTarget(option.path) }) {
                                 Icon(
                                     Icons.Default.Close,
-                                    contentDescription = "删除页面记录",
+                                    contentDescription = stringResource(R.string.qd_editor_remove_page),
                                     tint = floater.onBackgroundVariant,
                                 )
                             }
@@ -2252,7 +2824,7 @@ private fun TargetSelectionSurface(
                 },
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("添加自定义页面", color = floater.primary)
+                Text(stringResource(R.string.qd_editor_add_custom_page), color = floater.primary)
             }
         }
     }

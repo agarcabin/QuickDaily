@@ -1,6 +1,9 @@
 package com.quickdaily.ui
 
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -59,6 +62,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
 import com.quickdaily.EditorToolbarAction
 import com.quickdaily.EditorToolbarPolicy
 import com.quickdaily.ui.theme.LocalQuickDailyMotion
@@ -102,6 +106,7 @@ fun EditorToolbarActions(
     page: Int = 0,
     onPageChanged: (Int) -> Unit = {},
     onPageCountChanged: (Int) -> Unit = {},
+    onUserPageInteraction: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val actions = remember(order, visible) {
@@ -139,7 +144,18 @@ fun EditorToolbarActions(
 
         LazyRow(
             state = listState,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            if (event.type == PointerEventType.Press) {
+                                onUserPageInteraction()
+                            }
+                        }
+                    }
+                },
             horizontalArrangement = Arrangement.Start,
             flingBehavior = rememberSnapFlingBehavior(listState),
             userScrollEnabled = pages.size > 1,
@@ -158,6 +174,7 @@ fun EditorToolbarActions(
                     horizontalArrangement = Arrangement.Start,
                 ) {
                     pageActions.forEach { action ->
+                        val actionDescription = stringResource(action.labelRes)
                         Box(
                             modifier = Modifier
                                 .width(pageSlotWidth)
@@ -173,7 +190,7 @@ fun EditorToolbarActions(
                                             onClick = { onAction(action) },
                                         )
                                         .semantics {
-                                            contentDescription = action.label
+                                            contentDescription = actionDescription
                                             role = Role.Button
                                         },
                                     contentAlignment = Alignment.Center,
@@ -215,7 +232,7 @@ fun EditorToolbarActionIcon(
     tint: Color,
     modifier: Modifier = Modifier,
 ) {
-    val actionDescription = action.label
+    val actionDescription = stringResource(action.labelRes)
     when (action) {
         EditorToolbarAction.IMAGE -> Icon(Icons.Default.Image, actionDescription, tint = tint, modifier = modifier)
         EditorToolbarAction.TASK -> Icon(Icons.Default.CheckBoxOutlineBlank, actionDescription, tint = tint, modifier = modifier)

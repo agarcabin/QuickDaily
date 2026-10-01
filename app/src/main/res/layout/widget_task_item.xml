@@ -16,7 +16,7 @@
         android:src="@android:drawable/checkbox_off_background"
         android:background="@null"
         android:scaleType="centerInside"
-        android:contentDescription="切换任务状态" />
+        android:contentDescription="@null" />
 
     <TextView
         android:id="@+id/task_text"

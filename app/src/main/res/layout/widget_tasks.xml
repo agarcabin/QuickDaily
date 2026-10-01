@@ -35,7 +35,7 @@
                 android:layout_width="28dp"
                 android:layout_height="28dp"
                 android:background="@null"
-                android:contentDescription="选择任务范围"
+                android:contentDescription="@null"
                 android:scaleType="centerInside"
                 android:src="@drawable/ic_expand_more_white" />
         </LinearLayout>
@@ -52,16 +52,18 @@
                 android:layout_width="28dp"
                 android:layout_height="28dp"
                 android:background="@null"
-                android:contentDescription="刷新任务"
+                android:contentDescription="@null"
+                android:padding="2dp"
                 android:scaleType="centerInside"
-                android:src="@android:drawable/stat_notify_sync" />
+                android:src="@drawable/ic_refresh_white" />
 
             <ImageButton
                 android:id="@+id/btn_home"
                 android:layout_width="28dp"
                 android:layout_height="28dp"
                 android:background="@null"
-                android:contentDescription="打开编辑页"
+                android:contentDescription="@null"
+                android:padding="2dp"
                 android:scaleType="centerInside"
                 android:src="@drawable/ic_edit_white" />
 
@@ -70,7 +72,8 @@
                 android:layout_width="28dp"
                 android:layout_height="28dp"
                 android:background="@null"
-                android:contentDescription="添加任务"
+                android:contentDescription="@null"
+                android:padding="2dp"
                 android:scaleType="centerInside"
                 android:src="@drawable/ic_add_white" />
         </LinearLayout>

@@ -2,14 +2,16 @@ package com.quickdaily
 
 import android.content.Context
 import com.quickdaily.util.DateUtil
-import java.io.File
+import com.quickdaily.util.FileUtil
+import com.quickdaily.util.VaultStoragePrefs
 
 enum class ReadWidgetTarget(
     val key: String,
     val label: String,
+    val labelRes: Int,
 ) {
-    TODAY("today", "今日日记"),
-    CUSTOM("custom", "自定义页面");
+    TODAY("today", "今日日记", R.string.qd_read_widget_today),
+    CUSTOM("custom", "自定义页面", R.string.qd_read_widget_custom);
 
     companion object {
         fun fromKey(value: String?): ReadWidgetTarget =
@@ -87,6 +89,14 @@ object ReadWidgetConfigStore {
         if (config.target == ReadWidgetTarget.TODAY) config.target.label
         else TaskWidgetConfigStore.displayName(config.customRelativePath).ifBlank { config.target.label }
 
+    fun displayName(context: Context, config: ReadWidgetConfig): String =
+        if (config.target == ReadWidgetTarget.TODAY) {
+            context.getString(config.target.labelRes)
+        } else {
+            TaskWidgetConfigStore.displayName(config.customRelativePath)
+                .ifBlank { context.getString(config.target.labelRes) }
+        }
+
     fun customFilePath(context: Context, config: ReadWidgetConfig): String? {
         if (config.target != ReadWidgetTarget.CUSTOM || config.customRelativePath.isBlank()) return null
         return TaskWidgetConfigStore.customFilePath(
@@ -98,7 +108,7 @@ object ReadWidgetConfigStore {
     fun targetFilePath(context: Context, config: ReadWidgetConfig): String? {
         if (config.target == ReadWidgetTarget.CUSTOM) return customFilePath(context, config)
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val vault = prefs.getString("vault_path", "").orEmpty().trim()
+        val vault = VaultStoragePrefs.current(context).rootPath
         if (vault.isBlank()) return null
         val diaryFolder = prefs.getString("diary_folder", "Daily").orEmpty().trim().ifBlank { "Daily" }
         val dateFormat = prefs.getString("date_format", "YYYY-MM-DD").orEmpty().ifBlank { "YYYY-MM-DD" }
@@ -116,7 +126,7 @@ object ReadWidgetConfigStore {
 
     fun isCustomAvailable(context: Context, config: ReadWidgetConfig): Boolean =
         config.target == ReadWidgetTarget.CUSTOM &&
-            customFilePath(context, config)?.let { File(it).isFile } == true
+            customFilePath(context, config)?.let { FileUtil.exists(it) && !FileUtil.isDirectory(it) } == true
 
     private fun targetKey(widgetId: Int): String = "$KEY_PREFIX${widgetId}$TARGET_SUFFIX"
     private fun pathKey(widgetId: Int): String = "$KEY_PREFIX${widgetId}$PATH_SUFFIX"

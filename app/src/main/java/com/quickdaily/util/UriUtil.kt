@@ -5,8 +5,12 @@ import android.net.Uri
 import android.provider.DocumentsContract
 
 /**
- * 从 SAF (Storage Access Framework) 的 content URI 提取实际文件路径。
- * 仅支持主存储 (primary)，用于 Obsidian vault 这种典型场景。
+ * Legacy URI helpers retained for non-vault import compatibility.
+ *
+ * SAF tree/document URIs are storage identities, not filesystem paths. New
+ * vault code keeps the original content URI and uses [VaultStorage]. These
+ * helpers intentionally return null for provider IDs such as `home:` instead
+ * of fabricating `/storage/home/...` paths.
  */
 object UriUtil {
 
@@ -53,7 +57,9 @@ object UriUtil {
                 null
             )?.use { cursor ->
                 if (cursor.moveToFirst()) {
-                    cursor.getString(0)?.takeIf { it.isNotBlank() }
+                    cursor.getString(0)?.takeIf {
+                        it.isNotBlank() && !VaultStoragePrefs.isLegacyHomePath(it)
+                    }
                 } else {
                     null
                 }
@@ -65,7 +71,8 @@ object UriUtil {
 
     internal fun docIdToPath(docId: String): String? {
         if (docId.startsWith("raw:", ignoreCase = true)) {
-            return docId.substringAfter(':').takeIf { it.isNotBlank() }
+            return docId.substringAfter(':')
+                .takeIf { it.isNotBlank() && !VaultStoragePrefs.isLegacyHomePath(it) }
         }
         val split = docId.split(":", limit = 2)
         if (split.size != 2) return null
@@ -85,9 +92,11 @@ object UriUtil {
                     normalizedSubPath
                 } else {
                     "$primaryRoot/${normalizedSubPath.trimStart('/')}"
-                }
+                }.takeUnless(VaultStoragePrefs::isLegacyHomePath)
             }
-            else -> "/storage/$storage/${normalizedSubPath.trimStart('/')}" // SD 卡等外部存储
+            // A provider-specific ID cannot be safely mapped to a physical
+            // path. In particular, mapping `home:` to /storage/home is wrong.
+            else -> null
         }
     }
 }

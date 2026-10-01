@@ -4,6 +4,7 @@ import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.Context
 import android.content.SharedPreferences
+import android.content.res.Configuration
 import android.os.Build
 import androidx.compose.ui.unit.Dp
 import androidx.compose.material3.*
@@ -27,9 +28,13 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.Hyphens
+import androidx.compose.ui.text.style.LineBreak
 import androidx.core.content.getSystemService
 import androidx.core.view.WindowCompat
 import com.quickdaily.BetaLogger
+import com.quickdaily.R
 
 private val LightColorScheme = lightColorScheme(
     primary = Color(0xFF1B6EF3),
@@ -95,6 +100,7 @@ private fun ColorScheme.withAccent(
 internal enum class QuickDailyAccentPreset(
     val key: String,
     val label: String,
+    @androidx.annotation.StringRes val labelRes: Int,
     val previewColor: Color,
     private val lightPrimary: Color,
     private val lightOnPrimary: Color,
@@ -108,6 +114,7 @@ internal enum class QuickDailyAccentPreset(
     BLUE(
         key = "blue",
         label = "蓝色",
+        labelRes = R.string.qd_settings_accent_blue,
         previewColor = Color(0xFF1B6EF3),
         lightPrimary = Color(0xFF1B6EF3),
         lightOnPrimary = Color.White,
@@ -121,6 +128,7 @@ internal enum class QuickDailyAccentPreset(
     PURPLE(
         key = "purple",
         label = "紫色",
+        labelRes = R.string.qd_settings_accent_purple,
         previewColor = Color(0xFF6750A4),
         lightPrimary = Color(0xFF6750A4),
         lightOnPrimary = Color.White,
@@ -134,6 +142,7 @@ internal enum class QuickDailyAccentPreset(
     GREEN(
         key = "green",
         label = "绿色",
+        labelRes = R.string.qd_settings_accent_green,
         previewColor = Color(0xFF006C4C),
         lightPrimary = Color(0xFF006C4C),
         lightOnPrimary = Color.White,
@@ -147,6 +156,7 @@ internal enum class QuickDailyAccentPreset(
     ORANGE(
         key = "orange",
         label = "橙色",
+        labelRes = R.string.qd_settings_accent_orange,
         previewColor = Color(0xFF8C5000),
         lightPrimary = Color(0xFF8C5000),
         lightOnPrimary = Color.White,
@@ -160,6 +170,7 @@ internal enum class QuickDailyAccentPreset(
     PINK(
         key = "pink",
         label = "粉色",
+        labelRes = R.string.qd_settings_accent_pink,
         previewColor = Color(0xFF9C2D6D),
         lightPrimary = Color(0xFF9C2D6D),
         lightOnPrimary = Color.White,
@@ -173,6 +184,7 @@ internal enum class QuickDailyAccentPreset(
     TEAL(
         key = "teal",
         label = "青色",
+        labelRes = R.string.qd_settings_accent_teal,
         previewColor = Color(0xFF006874),
         lightPrimary = Color(0xFF006874),
         lightOnPrimary = Color.White,
@@ -255,10 +267,10 @@ internal object QuickDailyThemePreferences {
     }
 }
 
-internal enum class QuickDailyNightMode(val key: String, val label: String) {
-    SYSTEM("system", "跟随系统"),
-    LIGHT("light", "关闭"),
-    DARK("dark", "开启");
+internal enum class QuickDailyNightMode(val key: String, val label: String, val labelRes: Int) {
+    SYSTEM("system", "\u8ddf\u968f\u7cfb\u7edf", R.string.qd_night_mode_system),
+    LIGHT("light", "\u5173\u95ed", R.string.qd_night_mode_light),
+    DARK("dark", "\u5f00\u542f", R.string.qd_night_mode_dark);
 
     companion object {
         fun fromKey(key: String?): QuickDailyNightMode =
@@ -280,6 +292,7 @@ private data class QuickDailyThemeSnapshot(
 private fun rememberQuickDailyThemeSnapshot(
     context: Context,
     explicitDynamicColor: Boolean?,
+    refreshKey: Any?,
 ): QuickDailyThemeSnapshot {
     val preferences = remember(context) {
         context.getSharedPreferences("QuickDaily", Context.MODE_PRIVATE)
@@ -298,7 +311,7 @@ private fun rememberQuickDailyThemeSnapshot(
         preferences.registerOnSharedPreferenceChangeListener(listener)
         onDispose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
     }
-    return remember(preferencesRevision, explicitDynamicColor) {
+    return remember(preferencesRevision, explicitDynamicColor, refreshKey) {
         QuickDailyThemeSnapshot(
             useMonet = explicitDynamicColor ?: preferences.getBoolean(
                 QuickDailyThemePreferences.KEY_USE_MONET,
@@ -340,6 +353,53 @@ private fun ColorScheme.withDarkBackgroundBrightness(level: Int): ColorScheme = 
     surfaceContainerHighest = surfaceContainerHighest.adjustDarkBackgroundBrightness(level),
 )
 
+private fun resolveQuickDailyColorScheme(
+    context: Context,
+    useMonet: Boolean,
+    accentPreset: QuickDailyAccentPreset,
+    darkTheme: Boolean,
+    darkBackgroundBrightness: Int,
+): ColorScheme {
+    val base = if (useMonet && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        runCatching {
+            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        }.getOrElse { error ->
+            BetaLogger.logException(
+                "Theme/Monet",
+                "dynamic_color_failed context=${context.javaClass.simpleName}",
+                error,
+            )
+            accentPreset.colorScheme(darkTheme)
+        }
+    } else {
+        accentPreset.colorScheme(darkTheme)
+    }
+    return if (darkTheme) {
+        base.withDarkBackgroundBrightness(darkBackgroundBrightness)
+    } else {
+        base
+    }
+}
+
+/** Resolves the same persisted app theme for non-Compose surfaces such as RemoteViews. */
+internal fun quickDailyColorScheme(context: Context): ColorScheme {
+    val colorContext = context.applicationContext
+    val darkTheme = when (QuickDailyThemePreferences.nightMode(colorContext)) {
+        QuickDailyNightMode.SYSTEM ->
+            (colorContext.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+                Configuration.UI_MODE_NIGHT_YES
+        QuickDailyNightMode.LIGHT -> false
+        QuickDailyNightMode.DARK -> true
+    }
+    return resolveQuickDailyColorScheme(
+        context = colorContext,
+        useMonet = QuickDailyThemePreferences.isMonetEnabled(colorContext),
+        accentPreset = QuickDailyThemePreferences.selectedPreset(colorContext),
+        darkTheme = darkTheme,
+        darkBackgroundBrightness = QuickDailyThemePreferences.darkBackgroundBrightness(colorContext),
+    )
+}
+
 // Floater overlay colors for NoteEditActivity floating window
 
 data class FloaterColors(
@@ -367,9 +427,32 @@ fun quickDailyFloaterColors(): FloaterColors {
     )
 }
 
-// Typography tokens matching app font sizes
+// Typography tokens matching app font sizes. Keep translated UI text at word
+// boundaries so narrow English labels do not split inside a word.
+private fun TextStyle.withWholeWordWrapping(): TextStyle = copy(
+    lineBreak = LineBreak.Paragraph,
+    hyphens = Hyphens.None,
+)
 
-val AppTypography = Typography()
+val AppTypography = Typography().let { typography ->
+    typography.copy(
+        displayLarge = typography.displayLarge.withWholeWordWrapping(),
+        displayMedium = typography.displayMedium.withWholeWordWrapping(),
+        displaySmall = typography.displaySmall.withWholeWordWrapping(),
+        headlineLarge = typography.headlineLarge.withWholeWordWrapping(),
+        headlineMedium = typography.headlineMedium.withWholeWordWrapping(),
+        headlineSmall = typography.headlineSmall.withWholeWordWrapping(),
+        titleLarge = typography.titleLarge.withWholeWordWrapping(),
+        titleMedium = typography.titleMedium.withWholeWordWrapping(),
+        titleSmall = typography.titleSmall.withWholeWordWrapping(),
+        bodyLarge = typography.bodyLarge.withWholeWordWrapping(),
+        bodyMedium = typography.bodyMedium.withWholeWordWrapping(),
+        bodySmall = typography.bodySmall.withWholeWordWrapping(),
+        labelLarge = typography.labelLarge.withWholeWordWrapping(),
+        labelMedium = typography.labelMedium.withWholeWordWrapping(),
+        labelSmall = typography.labelSmall.withWholeWordWrapping(),
+    )
+}
 
 @Immutable
 data class QuickDailyMotionPolicy(val reducedMotion: Boolean) {
@@ -434,37 +517,31 @@ data class AppDimensions(
 val LocalAppDimensions = staticCompositionLocalOf { AppDimensions() }
 
 @Composable
-fun QuickDailyTheme(
+internal fun QuickDailyTheme(
     darkTheme: Boolean? = null,
     dynamicColor: Boolean? = null,
+    nightModeOverride: QuickDailyNightMode? = null,
+    refreshKey: Any? = null,
     content: @Composable () -> Unit,
 ) {
     val view = LocalView.current
     val context = LocalContext.current
     val colorContext = remember(context) { context.applicationContext }
     val motionPolicy = rememberQuickDailyMotionPolicy()
-    val themeSnapshot = rememberQuickDailyThemeSnapshot(context, dynamicColor)
-    val resolvedDarkTheme = darkTheme ?: when (themeSnapshot.nightMode) {
+    val themeSnapshot = rememberQuickDailyThemeSnapshot(context, dynamicColor, refreshKey)
+    val resolvedNightMode = nightModeOverride ?: themeSnapshot.nightMode
+    val resolvedDarkTheme = darkTheme ?: when (resolvedNightMode) {
         QuickDailyNightMode.SYSTEM -> isSystemInDarkTheme()
         QuickDailyNightMode.LIGHT -> false
         QuickDailyNightMode.DARK -> true
     }
-    val baseColorScheme = when {
-        themeSnapshot.useMonet && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            runCatching {
-                if (resolvedDarkTheme) dynamicDarkColorScheme(colorContext) else dynamicLightColorScheme(colorContext)
-            }.getOrElse { error ->
-                BetaLogger.logException("Theme/Monet", "dynamic_color_failed context=${colorContext.javaClass.simpleName}", error)
-                themeSnapshot.accentPreset.colorScheme(resolvedDarkTheme)
-            }
-        }
-        else -> themeSnapshot.accentPreset.colorScheme(resolvedDarkTheme)
-    }
-    val colorScheme = if (resolvedDarkTheme) {
-        baseColorScheme.withDarkBackgroundBrightness(themeSnapshot.darkBackgroundBrightness)
-    } else {
-        baseColorScheme
-    }
+    val colorScheme = resolveQuickDailyColorScheme(
+        context = colorContext,
+        useMonet = themeSnapshot.useMonet,
+        accentPreset = themeSnapshot.accentPreset,
+        darkTheme = resolvedDarkTheme,
+        darkBackgroundBrightness = themeSnapshot.darkBackgroundBrightness,
+    )
     if (!view.isInEditMode) {
         DisposableEffect(view, resolvedDarkTheme) {
             val activity = view.context as? Activity

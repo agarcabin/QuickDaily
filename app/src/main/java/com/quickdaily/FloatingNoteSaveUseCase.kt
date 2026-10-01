@@ -9,13 +9,14 @@ import com.quickdaily.util.FileUtil
 import com.quickdaily.util.ImageUtil
 import com.quickdaily.util.RecentTags
 import com.quickdaily.util.VaultPathUtil
+import com.quickdaily.util.VaultStoragePrefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 sealed interface FloatingNoteSaveResult {
     data object Saved : FloatingNoteSaveResult
     data object NoContent : FloatingNoteSaveResult
-    data class Failed(val message: String) : FloatingNoteSaveResult
+    data class Failed(val message: UiText) : FloatingNoteSaveResult
 }
 
 /** The single save path used by NoteEditActivity and FloatingNoteService. */
@@ -31,9 +32,9 @@ class FloatingNoteSaveUseCase(private val context: Context) {
         }
 
         val prefs = context.getSharedPreferences("QuickDaily", Context.MODE_PRIVATE)
-        val vaultPath = prefs.getString("vault_path", "").orEmpty()
+        val vaultPath = VaultStoragePrefs.current(context).rootPath
         if (vaultPath.isBlank() && targetRelativePath.isNullOrBlank()) {
-            return@withContext FloatingNoteSaveResult.Failed("请先设置仓库路径")
+            return@withContext FloatingNoteSaveResult.Failed(UiText.Resource(R.string.qd_editor_vault_path_required))
         }
 
         val diaryFolder = prefs.getString("diary_folder", "Daily").orEmpty()
@@ -42,7 +43,7 @@ class FloatingNoteSaveUseCase(private val context: Context) {
             "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/${DateUtil.todayStr(dateFormat)}.md"
         } else {
             VaultPathUtil.resolveTarget(vaultPath, targetRelativePath)
-                ?: return@withContext FloatingNoteSaveResult.Failed("目标页面不可用")
+                ?: return@withContext FloatingNoteSaveResult.Failed(UiText.Resource(R.string.qd_editor_target_unavailable))
         }
         val anchor = prefs.getString("anchor_text", "").orEmpty().trim()
         val timestampFormat = prefs.getString("timestamp_format", "list_time").orEmpty()
@@ -94,8 +95,7 @@ class FloatingNoteSaveUseCase(private val context: Context) {
         if (existing.isEmpty() || (parsed.hasFrontmatter && parsed.body.isBlank())) {
             val templatePath = prefs.getString("template_path", "").orEmpty()
             if (templatePath.isNotBlank()) {
-                val template = if (templatePath.startsWith("/")) templatePath
-                else "${vaultPath.trimEnd('/')}/$templatePath"
+                val template = VaultPathUtil.resolveTarget(vaultPath, templatePath) ?: templatePath
                 FileUtil.readOrNull(template)?.takeIf { it.isNotEmpty() }?.let {
                     parsed = ContentUtil.parseFrontmatter(it)
                     body = if (parsed.hasFrontmatter) parsed.body else it
@@ -114,7 +114,7 @@ class FloatingNoteSaveUseCase(private val context: Context) {
                 ImageUtil.copyToVault(context, uri, vaultPath, attachStoragePath, "original", "obsidian_wikilink")
             }.getOrNull()
             if (relPath.isNullOrBlank()) {
-                return@withContext FloatingNoteSaveResult.Failed("附件保存失败，请检查存储路径权限")
+                return@withContext FloatingNoteSaveResult.Failed(UiText.Resource(R.string.qd_editor_attachment_save_failed))
             }
             resolvedLine = resolvedLine.replace(uri.toString(), relPath)
         }
@@ -131,7 +131,7 @@ class FloatingNoteSaveUseCase(private val context: Context) {
                     prefs.getString("image_custom_naming_format", "").orEmpty()
                 )
             }.getOrDefault(emptyList())
-            if (links.isEmpty()) return@withContext FloatingNoteSaveResult.Failed("图片保存失败，请检查存储路径权限")
+            if (links.isEmpty()) return@withContext FloatingNoteSaveResult.Failed(UiText.Resource(R.string.qd_editor_image_save_failed))
             links
         } else emptyList()
 
@@ -157,7 +157,7 @@ class FloatingNoteSaveUseCase(private val context: Context) {
         } else newContent
 
         if (!FileUtil.write(path, output)) {
-            return@withContext FloatingNoteSaveResult.Failed("保存失败，请检查仓库路径权限")
+            return@withContext FloatingNoteSaveResult.Failed(UiText.Resource(R.string.qd_editor_save_failed_permission))
         }
         RecentTags.recordFromText(context, text)
         WidgetRefreshHelper.refreshAll(context)

@@ -1,6 +1,7 @@
 package com.quickdaily
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class DiaryConfigTest {
@@ -17,5 +18,16 @@ class DiaryConfigTest {
     fun systemSidebarSupportIsOptInByDefault() {
         assertFalse(DiaryConfig().systemSidebarSupport)
         assertFalse(FloatingNoteEntryPolicy.DEFAULT_SYSTEM_SIDEBAR_SUPPORT)
+    }
+
+    @Test
+    fun widgetBackgroundDefaultsToDarkStyle() {
+        assertEquals(WidgetAppearance.DEFAULT_STYLE, DiaryConfig().widgetStyle)
+        assertEquals(0xFF202124L, DiaryConfig().widgetBackgroundColor)
+    }
+
+    @Test
+    fun completionTimestampFormatDefaultsToTheExistingIsoSuffix() {
+        assertEquals(TaskCompletionTimestampPolicy.DEFAULT_FORMAT, DiaryConfig().taskCompletionTimestampFormat)
     }
 }

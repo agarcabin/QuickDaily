@@ -29,13 +29,13 @@
                 android:textColor="#FFFFFF"
                 android:textSize="13sp"
                 android:textStyle="bold"
-                android:text="QuickDaily" />
+                android:text="" />
 
             <ImageButton
                 android:id="@+id/btn_scope"
                 android:layout_width="28dp"
                 android:layout_height="28dp"
-                android:contentDescription="Select page"
+                android:contentDescription="@null"
                 android:src="@drawable/ic_expand_more_white"
                 android:background="@null"
                 android:scaleType="centerInside" />
@@ -52,27 +52,30 @@
                 android:id="@+id/btn_eye"
                 android:layout_width="28dp"
                 android:layout_height="28dp"
-                android:contentDescription="Toggle reading mode"
+                android:contentDescription="@null"
                 android:src="@drawable/ic_eye_on_white"
                 android:background="@null"
+                android:padding="2dp"
                 android:scaleType="centerInside" />
 
             <ImageButton
                 android:id="@+id/btn_home"
                 android:layout_width="28dp"
                 android:layout_height="28dp"
-                android:contentDescription="Open editor"
+                android:contentDescription="@null"
                 android:src="@drawable/ic_edit_white"
                 android:background="@null"
+                android:padding="2dp"
                 android:scaleType="centerInside" />
 
             <ImageButton
                 android:id="@+id/btn_add"
                 android:layout_width="28dp"
                 android:layout_height="28dp"
-                android:contentDescription="Add note"
+                android:contentDescription="@null"
                 android:src="@drawable/ic_add_white"
                 android:background="@null"
+                android:padding="2dp"
                 android:scaleType="centerInside" />
         </LinearLayout>
     </FrameLayout>
@@ -95,5 +98,5 @@
         android:textColor="#888888"
         android:textSize="12sp"
         android:layout_marginTop="4dp"
-        android:text="请打开 QuickDaily 刷新" />
+        android:text="" />
 </LinearLayout>
