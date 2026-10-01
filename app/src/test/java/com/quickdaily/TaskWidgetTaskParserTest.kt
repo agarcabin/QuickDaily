@@ -105,4 +105,13 @@ class TaskWidgetTaskParserTest {
     fun dateHeaderUsesMonthDayAndChineseWeekday() {
         assertEquals("8月24日，周一", TaskWidgetDateGrouping.labelFor("2026-08-24"))
     }
+
+    @Test
+    fun fileHeaderRemovesMarkdownExtensionRegardlessOfCase() {
+        val header = TaskWidgetTaskParser.fileHeader("项目.Md", isFirstFileHeader = true)
+
+        assertEquals("项目", header.text)
+        assertTrue(header.isFileHeader)
+        assertTrue(header.isFirstFileHeader)
+    }
 }

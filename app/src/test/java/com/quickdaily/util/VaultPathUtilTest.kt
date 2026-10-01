@@ -32,4 +32,11 @@ class VaultPathUtilTest {
 
         assertEquals(external, VaultPathUtil.resolveTarget(vault, external))
     }
+
+    @Test
+    fun safRelativePathsRejectPhysicalAbsolutePaths() {
+        assertEquals("Daily/2026-08-31.md", SafVirtualPath.normalizeRelative("Daily/2026-08-31.md"))
+        assertNull(SafVirtualPath.normalizeRelative("/storage/home/Obsidian/2026-08-31.md"))
+        assertNull(SafVirtualPath.normalizeRelative("C:/notes/2026-08-31.md"))
+    }
 }

@@ -1,0 +1,31 @@
+# Kotlin sources where app-owned user copy must use Android resources or UiText.
+# Add a new UI/service/widget entry point here when it is introduced.
+com/quickdaily/MainActivity.kt
+com/quickdaily/LauncherActivity.kt
+com/quickdaily/FloatingNoteModels.kt
+com/quickdaily/FloatingNoteObsidianLauncher.kt
+com/quickdaily/FloatingNotePickerActivity.kt
+com/quickdaily/FloatingNoteSaveUseCase.kt
+com/quickdaily/FloatingNoteService.kt
+com/quickdaily/NoteEditActivity.kt
+com/quickdaily/WidgetImageCropActivity.kt
+com/quickdaily/ReadWidgetConfigActivity.kt
+com/quickdaily/TaskWidgetConfigActivity.kt
+com/quickdaily/TaskWidgetFolderActionActivity.kt
+com/quickdaily/TaskWidget.kt
+com/quickdaily/QuickDailyReadWidget.kt
+com/quickdaily/QuickNoteWidget.kt
+com/quickdaily/WidgetContentLoader.kt
+com/quickdaily/TaskWidgetService.kt
+com/quickdaily/QuickDailyReadWidgetService.kt
+com/quickdaily/PermissionPolicy.kt
+com/quickdaily/EditorToolbarPolicy.kt
+com/quickdaily/QuickTileService.kt
+com/quickdaily/WikilinkIndexRepository.kt
+com/quickdaily/markdown/MdRenderer.kt
+com/quickdaily/ui/EditorScreen.kt
+com/quickdaily/ui/OnboardingScreen.kt
+com/quickdaily/ui/OnboardingDialogs.kt
+com/quickdaily/ui/SettingsScreen.kt
+com/quickdaily/util/UpdateChecker.kt
+com/quickdaily/util/VaultStorage.kt

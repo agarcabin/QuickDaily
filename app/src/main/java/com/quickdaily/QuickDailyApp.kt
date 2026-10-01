@@ -1,6 +1,7 @@
 package com.quickdaily
 
 import android.app.Application
+import com.quickdaily.util.StorageContextHolder
 
 class QuickDailyApp : Application() {
     companion object {
@@ -11,5 +12,6 @@ class QuickDailyApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        StorageContextHolder.init(this)
     }
 }

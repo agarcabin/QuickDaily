@@ -3,6 +3,8 @@ package com.quickdaily.util
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import com.quickdaily.R
+import com.quickdaily.UiText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -23,7 +25,7 @@ data class ReleaseInfo(
  */
 sealed class UpdateResult {
     /** 正在尝试某个镜像源 */
-    data class Progress(val message: String) : UpdateResult()
+    data class Progress(val message: UiText) : UpdateResult()
 
     /** 发现新版本 */
     data class UpdateAvailable(val info: ReleaseInfo) : UpdateResult()
@@ -39,8 +41,8 @@ sealed class UpdateResult {
 }
 
 data class SourceError(
-    val source: String,
-    val reason: String
+    val source: UiText,
+    val reason: UiText,
 )
 
 object UpdateChecker {
@@ -52,15 +54,15 @@ object UpdateChecker {
     private const val PREF_LAST_SUCCESS_TYPE = "last_success_type"  // "github" or "jsdelivr"
 
     /** 镜像源配置：名称 → URL */
-    private data class Mirror(val name: String, val url: String, val type: String)
+    private data class Mirror(val name: UiText, val url: String, val type: String)
 
     private val ALL_MIRRORS = listOf(
-        Mirror("GitHub代理1", "https://ghproxy.com/https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest", "github"),
-        Mirror("GitHub代理2", "https://mirror.ghproxy.com/https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest", "github"),
-        Mirror("GitHub代理3", "https://github.moeyy.xyz/https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest", "github"),
-        Mirror("GitHub官方", "https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest", "github"),
-        Mirror("jsDelivr主节点", "https://cdn.jsdelivr.net/gh/$REPO_OWNER/$REPO_NAME@main/version.json", "jsdelivr"),
-        Mirror("jsDelivr备用", "https://fastly.jsdelivr.net/gh/$REPO_OWNER/$REPO_NAME@main/version.json", "jsdelivr")
+        Mirror(UiText.Resource(R.string.qd_settings_update_mirror_proxy_1), "https://ghproxy.com/https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest", "github"),
+        Mirror(UiText.Resource(R.string.qd_settings_update_mirror_proxy_2), "https://mirror.ghproxy.com/https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest", "github"),
+        Mirror(UiText.Resource(R.string.qd_settings_update_mirror_proxy_3), "https://github.moeyy.xyz/https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest", "github"),
+        Mirror(UiText.Resource(R.string.qd_settings_update_mirror_github), "https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest", "github"),
+        Mirror(UiText.Resource(R.string.qd_settings_update_mirror_jsdelivr_primary), "https://cdn.jsdelivr.net/gh/$REPO_OWNER/$REPO_NAME@main/version.json", "jsdelivr"),
+        Mirror(UiText.Resource(R.string.qd_settings_update_mirror_jsdelivr_backup), "https://fastly.jsdelivr.net/gh/$REPO_OWNER/$REPO_NAME@main/version.json", "jsdelivr")
     )
 
     /**
@@ -99,7 +101,7 @@ object UpdateChecker {
 suspend fun checkUpdate(
         currentVersion: String,
         context: Context? = null,
-        onProgress: (String) -> Unit = {}
+    onProgress: (UiText) -> Unit = {}
     ): UpdateResult {
         return withContext(Dispatchers.IO) {
             val errors = mutableListOf<SourceError>()
@@ -107,7 +109,10 @@ suspend fun checkUpdate(
             val total = mirrors.size
 
             for ((index, mirror) in mirrors.withIndex()) {
-                val progressMsg = "正在检查更新（方法 ${index + 1}/$total）：${mirror.name}"
+                val progressMsg = UiText.Resource(
+                    R.string.qd_settings_checking_update_method,
+                    listOf(index + 1, total, mirror.name),
+                )
                 onProgress(progressMsg)
 
                 try {
@@ -131,7 +136,12 @@ suspend fun checkUpdate(
                             UpdateResult.UpToDate
                         }
                     } else {
-                        errors.add(SourceError(mirror.name, "未返回有效数据"))
+                        errors.add(
+                            SourceError(
+                                source = mirror.name,
+                                reason = UiText.Resource(R.string.qd_settings_update_no_valid_data),
+                            )
+                        )
                     }
                 } catch (e: Exception) {
                     errors.add(SourceError(mirror.name, describeException(e)))
@@ -180,7 +190,7 @@ suspend fun checkUpdate(
                 if (version.isNotEmpty()) {
                     val releaseUrl = root.optString("url",
                         "https://github.com/$REPO_OWNER/$REPO_NAME/releases/latest")
-                    val body = root.optString("body", "发现新版本 $version")
+                val body = root.optString("body", "发现新版本 $version") // localization-legacy: external release-body fallback
                     return Quadruple(version, releaseUrl, body, "")
                 }
             }
@@ -237,20 +247,21 @@ suspend fun checkUpdate(
     /**
      * 把异常翻译成用户可读的中文原因。
      */
-    private fun describeException(e: Exception): String {
+    private fun describeException(e: Exception): UiText {
         return when (e) {
-            is UnknownHostException -> "无法解析域名（网络未连接或DNS故障）"
-            is SocketTimeoutException -> "连接超时"
-            is java.net.ConnectException -> "连接被拒绝"
-            is javax.net.ssl.SSLException -> "SSL/TLS 握手失败"
-            is org.json.JSONException -> "返回数据格式错误"
-            is java.net.SocketException -> e.message ?: "网络错误"
-            else -> e.message ?: e.javaClass.simpleName
+            is UnknownHostException -> UiText.Resource(R.string.qd_settings_update_dns_failed)
+            is SocketTimeoutException -> UiText.Resource(R.string.qd_settings_update_timeout)
+            is java.net.ConnectException -> UiText.Resource(R.string.qd_settings_update_connection_refused)
+            is javax.net.ssl.SSLException -> UiText.Resource(R.string.qd_settings_update_ssl_failed)
+            is org.json.JSONException -> UiText.Resource(R.string.qd_settings_update_response_invalid)
+            is java.net.SocketException -> e.message?.let(UiText::Raw)
+                ?: UiText.Resource(R.string.qd_settings_update_network_error)
+            else -> UiText.Raw(e.message ?: e.javaClass.simpleName)
         }
     }
 
     /**
-     * 语义化版本比较：将 "v1.2.3" 或 "1.2.3" 拆为 [1,2,3] 逐段比较。
+     * 语义化版本比较：将 "v1.2.3" 或 "1.2.3" 拆为 [1,2,3] 逐段比较。 // localization-legacy: version parsing documentation
      */
     private fun isNewerVersion(remote: String, current: String): Boolean {
         val remoteParts = remote.removePrefix("v").split(".").map { it.toIntOrNull() ?: 0 }

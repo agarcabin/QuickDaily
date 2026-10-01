@@ -43,17 +43,21 @@ import com.quickdaily.ui.theme.QuickDailyTheme
 import com.quickdaily.ui.theme.rememberQuickDailyMotionPolicy
 import com.quickdaily.util.ImageUtil
 import com.quickdaily.util.DiaryAppendUtil
+import com.quickdaily.util.VaultBackend
+import com.quickdaily.util.VaultPathUtil
+import com.quickdaily.util.VaultStoragePrefs
 import com.quickdaily.BetaLogger
 import com.quickdaily.TaskWidget
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-class MainActivity : ComponentActivity() {
+class MainActivity : LocalizedComponentActivity() {
 
     companion object {
         const val EXTRA_REQUEST_FLOATING_PERMISSION = "request_floating_permission"
         const val EXTRA_EDITOR_RELATIVE_PATH = "editor_relative_path"
+        private const val STATE_SCREEN = "main_screen"
 
         fun editorIntent(context: android.content.Context, targetRelativePath: String?): Intent =
             Intent(context, MainActivity::class.java).apply {
@@ -63,6 +67,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private lateinit var appState: AppState
+    private var mainNavigator: Navigator? = null
     var externalLaunching = false  // SAF/权限等外部 Activity 启动中
     private var awaitingFloatingPermission = false
     private var floatingPermissionPromptShown = false
@@ -88,6 +93,8 @@ class MainActivity : ComponentActivity() {
         }
         val firstLaunch = appState.config.value.vaultPath.isBlank()
         val showOnboarding = OnboardingStore.shouldShow(this)
+        val restoredScreen = savedInstanceState?.getString(STATE_SCREEN)
+            ?.let { savedName -> runCatching { Screen.valueOf(savedName) }.getOrNull() }
         awaitingFloatingPermission = intent.getBooleanExtra(EXTRA_REQUEST_FLOATING_PERMISSION, false)
 
         // 标准桌面/侧边栏入口默认进入速记。首次安装、仓库未配置或存储不可用时，
@@ -98,7 +105,7 @@ class MainActivity : ComponentActivity() {
 
         // 处理分享意图（冷启动时走这里）
         if (showOnboarding && (intent.action == Intent.ACTION_SEND || intent.action == Intent.ACTION_SEND_MULTIPLE)) {
-            android.widget.Toast.makeText(this, "完成仓库与权限设置后请重新分享", android.widget.Toast.LENGTH_LONG).show()
+            android.widget.Toast.makeText(this, getString(R.string.qd_main_share_setup_required), android.widget.Toast.LENGTH_LONG).show()
         } else {
             handleShareIntent(intent)
         }
@@ -109,7 +116,9 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
-                    val navigator = remember { Navigator(showOnboarding, firstLaunch) }
+                    val navigator = remember {
+                        Navigator(showOnboarding, firstLaunch, restoredScreen).also { mainNavigator = it }
+                    }
                     val motionPolicy = rememberQuickDailyMotionPolicy()
                     val reducedMotion = motionPolicy.reducedMotion
                     val firstLaunchEntrance = remember(firstLaunch) {
@@ -159,6 +168,12 @@ class MainActivity : ComponentActivity() {
                                 Screen.ONBOARDING -> OnboardingScreen(
                                     appState = appState,
                                     onFinished = {
+                                        // The onboarding flow can be the first
+                                        // place that writes the Vault config.
+                                        // Start today's load explicitly so the
+                                        // editor is never left on its initial
+                                        // empty StateFlow after the transition.
+                                        appState.loadToday()
                                         navigator.screen = Screen.EDITOR
                                     },
                                     onExternalLaunch = { externalLaunching = true },
@@ -201,7 +216,7 @@ class MainActivity : ComponentActivity() {
                         runOnUiThread {
                             android.widget.Toast.makeText(
                                 this@MainActivity,
-                                "发现新版本 ${result.info.version}，请在设置中查看详情",
+                                getString(R.string.qd_main_new_version, result.info.version),
                                 android.widget.Toast.LENGTH_LONG
                             ).show()
                         }
@@ -229,6 +244,7 @@ class MainActivity : ComponentActivity() {
         BetaLogger.log("Lifecycle", "onNewIntent: ${intent.action}")
         if (intent.hasExtra(EXTRA_EDITOR_RELATIVE_PATH)) {
             appState.loadEditorTarget(intent.getStringExtra(EXTRA_EDITOR_RELATIVE_PATH))
+            mainNavigator?.screen = Screen.EDITOR
         }
         if (intent.getBooleanExtra(EXTRA_REQUEST_FLOATING_PERMISSION, false)) {
             awaitingFloatingPermission = true
@@ -239,10 +255,15 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (OnboardingStore.shouldShow(this) && (intent.action == Intent.ACTION_SEND || intent.action == Intent.ACTION_SEND_MULTIPLE)) {
-            android.widget.Toast.makeText(this, "完成仓库与权限设置后请重新分享", android.widget.Toast.LENGTH_LONG).show()
+            android.widget.Toast.makeText(this, getString(R.string.qd_main_share_setup_required), android.widget.Toast.LENGTH_LONG).show()
         } else {
             handleShareIntent(intent)
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        mainNavigator?.screen?.name?.let { outState.putString(STATE_SCREEN, it) }
+        super.onSaveInstanceState(outState)
     }
 
     private fun handleShareIntent(intent: Intent) {
@@ -259,9 +280,9 @@ class MainActivity : ComponentActivity() {
 
     private fun saveSharedDocumentsToDiary(text: String?, uris: List<Uri>) {
         val prefs = getSharedPreferences("QuickDaily", 0)
-        val vaultPath = prefs.getString("vault_path", "").orEmpty()
+        val vaultPath = VaultStoragePrefs.current(this).rootPath
         if (vaultPath.isBlank() || !hasStorageAccess()) {
-            android.widget.Toast.makeText(this, "完成仓库与权限设置后请重新分享", android.widget.Toast.LENGTH_LONG).show()
+            android.widget.Toast.makeText(this, getString(R.string.qd_main_share_setup_required), android.widget.Toast.LENGTH_LONG).show()
             return
         }
         lifecycleScope.launch {
@@ -274,13 +295,13 @@ class MainActivity : ComponentActivity() {
                 )
             }
             if (result.links.isEmpty()) {
-                android.widget.Toast.makeText(this@MainActivity, "文件保存失败，日记未修改", android.widget.Toast.LENGTH_LONG).show()
+                android.widget.Toast.makeText(this@MainActivity, getString(R.string.qd_main_shared_file_save_failed), android.widget.Toast.LENGTH_LONG).show()
                 return@launch
             }
             appendSharedBlockToDiary(text, result.links)
             android.widget.Toast.makeText(
                 this@MainActivity,
-                "已保存 ${result.links.size}/${result.total} 个文件",
+                getString(R.string.qd_main_shared_files_saved, result.links.size, result.total),
                 android.widget.Toast.LENGTH_LONG,
             ).show()
         }
@@ -288,7 +309,7 @@ class MainActivity : ComponentActivity() {
 
     private fun appendSharedBlockToDiary(text: String?, links: List<String>) {
         val prefs = getSharedPreferences("QuickDaily", 0)
-        val vaultPath = prefs.getString("vault_path", "").orEmpty()
+        val vaultPath = VaultStoragePrefs.current(this).rootPath
         val diaryFolder = prefs.getString("diary_folder", "Daily").orEmpty()
         val dateFormat = prefs.getString("date_format", "YYYY-MM-DD").orEmpty()
         val timestampFormat = prefs.getString("timestamp_format", "list_time").orEmpty()
@@ -319,7 +340,7 @@ class MainActivity : ComponentActivity() {
             if (existing.isBlank()) {
                 val template = prefs.getString("template_path", "").orEmpty()
                 if (template.isNotBlank()) {
-                    val templatePath = if (template.startsWith('/')) template else "${vaultPath.trimEnd('/')}/$template"
+                    val templatePath = VaultPathUtil.resolveTarget(vaultPath, template) ?: template
                     existing = com.quickdaily.util.FileUtil.readOrNull(templatePath).orEmpty()
                 }
             }
@@ -351,9 +372,9 @@ class MainActivity : ComponentActivity() {
 
     private fun saveSharedTextToDiary(text: String) {
         val prefs = getSharedPreferences("QuickDaily", 0)
-        val vaultPath = prefs.getString("vault_path", "") ?: ""
+        val vaultPath = VaultStoragePrefs.current(this).rootPath
         if (vaultPath.isBlank()) {
-            android.widget.Toast.makeText(this, "请先设置仓库路径", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(this, getString(R.string.qd_main_vault_required), android.widget.Toast.LENGTH_SHORT).show()
             return
         }
         
@@ -391,8 +412,7 @@ class MainActivity : ComponentActivity() {
         if (existing.isEmpty() || (parsed.hasFrontmatter && parsed.body.isBlank())) {
             val tplPathPref = prefs.getString("template_path", "") ?: ""
             if (tplPathPref.isNotBlank()) {
-                val tplPath = if (tplPathPref.startsWith("/")) tplPathPref
-                else "${vaultPath.trimEnd('/')}/${tplPathPref}"
+                val tplPath = VaultPathUtil.resolveTarget(vaultPath, tplPathPref) ?: tplPathPref
                 val tplContent = com.quickdaily.util.FileUtil.readOrNull(tplPath)
                 if (tplContent != null && tplContent.isNotEmpty()) {
                     existing = tplContent
@@ -453,7 +473,7 @@ class MainActivity : ComponentActivity() {
             appState.reloadIfNewerOnDisk()
         }
 
-        android.widget.Toast.makeText(this, "已保存分享内容到日记", android.widget.Toast.LENGTH_SHORT).show()
+        android.widget.Toast.makeText(this, getString(R.string.qd_main_shared_saved), android.widget.Toast.LENGTH_SHORT).show()
         } finally {
             mutationGuard.close()
         }
@@ -465,9 +485,9 @@ class MainActivity : ComponentActivity() {
      */
     private fun saveSharedImagesToDiary(uris: List<Uri>) {
         val prefs = getSharedPreferences("QuickDaily", 0)
-        val vaultPath = prefs.getString("vault_path", "") ?: ""
+        val vaultPath = VaultStoragePrefs.current(this).rootPath
         if (vaultPath.isBlank()) {
-            android.widget.Toast.makeText(this, "请先设置仓库路径", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(this, getString(R.string.qd_main_vault_required), android.widget.Toast.LENGTH_SHORT).show()
             return
         }
         val storagePath = prefs.getString("image_storage_path", "") ?: ""
@@ -485,7 +505,7 @@ class MainActivity : ComponentActivity() {
         // 处理图片
         val links = ImageUtil.processImages(this, uris, vaultPath, storagePath, namingFormat, linkFormat, customNamingFormat)
         if (links.isEmpty()) {
-            android.widget.Toast.makeText(this, "复制图片失败", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(this, getString(R.string.qd_main_copy_image_failed), android.widget.Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -527,7 +547,7 @@ class MainActivity : ComponentActivity() {
         com.quickdaily.util.FileUtil.write(path, saveContent)
         WidgetRefreshHelper.refreshAll(this)
 
-        android.widget.Toast.makeText(this, "已保存 ${links.size} 张图片到日记", android.widget.Toast.LENGTH_SHORT).show()
+        android.widget.Toast.makeText(this, getString(R.string.qd_main_images_saved, links.size), android.widget.Toast.LENGTH_SHORT).show()
         } finally {
             mutationGuard.close()
         }
@@ -544,6 +564,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun hasStorageAccess(): Boolean {
+        if (VaultStoragePrefs.current(this).backend == VaultBackend.SAF) {
+            return VaultStoragePrefs.validate(this).status == com.quickdaily.util.VaultValidationStatus.VALID
+        }
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             Environment.isExternalStorageManager()
         } else {
@@ -588,6 +611,29 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun checkPermissions() {
+        val storage = VaultStoragePrefs.current(this)
+        if (storage.backend == VaultBackend.SAF) {
+            val validation = VaultStoragePrefs.validate(this)
+            if (validation.status != com.quickdaily.util.VaultValidationStatus.VALID) {
+                android.widget.Toast.makeText(
+                    this,
+                    getString(
+                        R.string.qd_main_validation_reselect,
+                        validation.message.resolve(this).toString(),
+                    ),
+                    android.widget.Toast.LENGTH_LONG,
+                ).show()
+            }
+            return
+        }
+        if (VaultStoragePrefs.isLegacyHomePath(storage.rootPath)) {
+            android.widget.Toast.makeText(
+                this,
+                getString(R.string.qd_main_legacy_path),
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
+            return
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             if (!hasStorageAccess()) {
                 requestManageStorage()
@@ -675,16 +721,16 @@ class MainActivity : ComponentActivity() {
         }
         floatingPermissionPromptShown = true
         android.app.AlertDialog.Builder(this)
-            .setTitle("需要悬浮窗权限")
-            .setMessage("侧边栏速记需要显示在当前应用上方，请允许 QuickDaily 显示悬浮窗。")
-            .setPositiveButton("去授权") { _, _ ->
+            .setTitle(getString(R.string.qd_main_overlay_permission_title))
+            .setMessage(getString(R.string.qd_main_overlay_permission_message))
+            .setPositiveButton(getString(R.string.qd_main_overlay_permission_grant)) { _, _ ->
                 externalLaunching = true
                 startActivity(Intent(
                     Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                     Uri.parse("package:$packageName")
                 ))
             }
-            .setNegativeButton("暂不") { _, _ -> awaitingFloatingPermission = false }
+            .setNegativeButton(getString(R.string.qd_main_overlay_permission_later)) { _, _ -> awaitingFloatingPermission = false }
             .setOnDismissListener { BetaLogger.log("FloatingNote/Permission", "prompt dismissed") }
             .show()
     }
@@ -694,12 +740,16 @@ class MainActivity : ComponentActivity() {
 
 enum class Screen { ONBOARDING, EDITOR, SETTINGS }
 
-class Navigator(showOnboarding: Boolean, firstLaunch: Boolean) {
+class Navigator(
+    showOnboarding: Boolean,
+    firstLaunch: Boolean,
+    restoredScreen: Screen? = null,
+) {
     var screen by androidx.compose.runtime.mutableStateOf(
-        when {
+        restoredScreen ?: when {
             showOnboarding -> Screen.ONBOARDING
             firstLaunch -> Screen.SETTINGS
             else -> Screen.EDITOR
-        }
+        },
     )
 }

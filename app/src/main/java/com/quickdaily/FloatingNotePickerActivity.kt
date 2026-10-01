@@ -16,7 +16,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /** Short-lived bridge because a Service cannot own Activity Result launchers. */
-class FloatingNotePickerActivity : ComponentActivity() {
+class FloatingNotePickerActivity : LocalizedComponentActivity() {
     private var pendingCameraFile: File? = null
     private var pendingCameraUri: Uri? = null
     private var activeTargetPath: String? = null
@@ -53,7 +53,7 @@ class FloatingNotePickerActivity : ComponentActivity() {
                     "images selected=${uris.size} inserted=${successfulLinks.size} target=${activeTargetPath.orEmpty()}",
                 )
                 if (successfulLinks.size < uris.size) {
-                    Toast.makeText(this@FloatingNotePickerActivity, "部分图片保存失败，请检查图片存储路径", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this@FloatingNotePickerActivity, getString(R.string.qd_editor_image_save_partial_failed), Toast.LENGTH_LONG).show()
                 }
                 refreshOverlayAndFinish()
             }
@@ -99,7 +99,7 @@ class FloatingNotePickerActivity : ComponentActivity() {
                 if (link != null) {
                     FloatingNoteDraftStore.insertLink(this@FloatingNotePickerActivity, link, activeTargetPath)
                 } else {
-                    Toast.makeText(this@FloatingNotePickerActivity, "照片保存失败", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@FloatingNotePickerActivity, getString(R.string.qd_editor_record_save_failed), Toast.LENGTH_SHORT).show()
                 }
                 file?.delete()
                 refreshOverlayAndFinish()
@@ -111,7 +111,7 @@ class FloatingNotePickerActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) takePhotoNow() else {
-            Toast.makeText(this, "请允许相机权限后再拍照", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.qd_editor_camera_permission_required), Toast.LENGTH_SHORT).show()
             refreshOverlayAndFinish()
         }
     }
@@ -122,7 +122,7 @@ class FloatingNotePickerActivity : ComponentActivity() {
         if (granted) {
             startService(FloatingNoteService.startRecordingIntent(this))
         } else {
-            Toast.makeText(this, "请允许录音权限后再录音", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.qd_editor_microphone_permission_required), Toast.LENGTH_SHORT).show()
         }
         refreshOverlayAndFinish()
     }
@@ -157,7 +157,7 @@ class FloatingNotePickerActivity : ComponentActivity() {
     private fun takePhotoNow() {
         val file = runCatching { CaptureFileUtil.newImageFile(this) }.getOrNull()
         if (file == null) {
-            Toast.makeText(this, "无法创建照片文件", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.qd_editor_photo_file_failed), Toast.LENGTH_SHORT).show()
             refreshOverlayAndFinish()
             return
         }

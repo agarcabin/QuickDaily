@@ -19,6 +19,28 @@ class OnboardingPolicyTest {
     }
 
     @Test
+    fun blankVaultOnlyDoesNotMasqueradeAsAnExistingInstallation() {
+        assertFalse(
+            OnboardingPolicy.hasLegacyConfiguration(
+                vaultPath = "",
+                presentKeys = setOf("vault_path"),
+            ),
+        )
+        assertTrue(
+            OnboardingPolicy.hasLegacyConfiguration(
+                vaultPath = "/storage/emulated/0/Vault",
+                presentKeys = setOf("vault_path"),
+            ),
+        )
+        assertTrue(
+            OnboardingPolicy.hasLegacyConfiguration(
+                vaultPath = null,
+                presentKeys = setOf("date_format"),
+            ),
+        )
+    }
+
+    @Test
     fun onlyVaultAndAllFilesAccessBlockForwardNavigation() {
         assertTrue(OnboardingPolicy.canAdvance(0, vaultConfigured = false, allFilesAccessGranted = false))
         assertFalse(OnboardingPolicy.canAdvance(1, vaultConfigured = false, allFilesAccessGranted = true))

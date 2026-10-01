@@ -33,6 +33,26 @@ class TaskWidgetConfigTest {
     }
 
     @Test
+    fun customFolderDefaultsToMonthWithoutRecursion() {
+        val config = TaskWidgetConfig(
+            scope = TaskWidgetScope.CUSTOM_FOLDER,
+            customFolderUri = "content://com.android.externalstorage.documents/tree/primary%3ATasks",
+            customFolderName = "Tasks",
+        )
+
+        assertEquals("自定义文件夹任务", config.scope.label)
+        assertEquals(TaskWidgetFolderTimeWindow.MONTH, config.folderTimeWindow)
+        assertFalse(config.folderIncludeSubfolders)
+        assertEquals("Tasks", TaskWidgetConfigStore.displayName(config))
+    }
+
+    @Test
+    fun folderDisplayNameStripsMarkdownExtensionRegardlessOfCase() {
+        assertEquals("Today", TaskWidgetFolderResolver.displayName("Today.Md"))
+        assertEquals("未命名页面", TaskWidgetFolderResolver.displayName(".md"))
+    }
+
+    @Test
     fun customPageHistoryMovesLatestPageToTheFrontAndRemovesIt() {
         val first = TaskWidgetPageHistory.remember(emptyList(), "/notes/出差.md")
         val second = TaskWidgetPageHistory.remember(first, "/notes/旅行.md")

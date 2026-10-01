@@ -31,7 +31,7 @@ import java.io.File
 import java.io.FileOutputStream
 
 /** OEM-independent square cropper used for the Quick Note widget image. */
-class WidgetImageCropActivity : Activity() {
+class WidgetImageCropActivity : LocalizedActivity() {
     private lateinit var image: ImageView
     private var sourceBitmap: Bitmap? = null
     private val matrix = Matrix()
@@ -82,13 +82,13 @@ class WidgetImageCropActivity : Activity() {
                                 OutlinedButton(
                                     onClick = { finish() },
                                     modifier = Modifier.weight(1f),
-                                ) { Text("取消") }
+                                ) { Text(getString(R.string.qd_common_cancel)) }
                                 Button(
                                     onClick = { saveCrop() },
                                     modifier = Modifier
                                         .padding(start = 12.dp)
                                         .weight(1f),
-                                ) { Text("确定") }
+                                ) { Text(getString(R.string.qd_common_confirm)) }
                             }
                         }
                     }
@@ -111,7 +111,7 @@ class WidgetImageCropActivity : Activity() {
             )
             android.widget.Toast.makeText(
                 this,
-                "图片读取失败，请重新选择图片。",
+                getString(R.string.qd_editor_image_read_failed),
                 android.widget.Toast.LENGTH_LONG,
             ).show()
             finish()

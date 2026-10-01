@@ -4,6 +4,9 @@ import android.content.Context
 import android.util.Base64
 import com.quickdaily.util.ContentUtil
 import com.quickdaily.util.TagScanner
+import com.quickdaily.util.SafVirtualPath
+import com.quickdaily.util.VaultStorage
+import com.quickdaily.util.FileUtil
 import java.io.File
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
@@ -65,7 +68,11 @@ object WikilinkIndexRepository {
     fun refresh(context: Context, rootPath: String) {
         val root = rootPath.trim()
         if (root.isBlank()) {
-            state.value = WikilinkIndexState(rootPath = root, indexed = true, error = "请先设置仓库路径")
+            state.value = WikilinkIndexState(
+                rootPath = root,
+                indexed = true,
+                error = LocaleController.localizedContext(context).getString(R.string.qd_editor_vault_path_required),
+            )
             return
         }
         refreshInternal(context.applicationContext, root, force = true)
@@ -79,8 +86,8 @@ object WikilinkIndexRepository {
             state.value = WikilinkIndexState(rootPath = root, loading = true)
             activeJob.set(scope.launch {
                 val result = runCatching {
-                    if (!force) readCache(context, root) ?: scan(root).also { writeCache(context, root, it) }
-                    else scan(root).also { writeCache(context, root, it) }
+                    if (!force) readCache(context, root) ?: scan(context, root).also { writeCache(context, root, it) }
+                    else scan(context, root).also { writeCache(context, root, it) }
                 }
                 val next = result.fold(
                     onSuccess = { scanResult -> scanResult.toState(root) },
@@ -88,7 +95,8 @@ object WikilinkIndexRepository {
                         WikilinkIndexState(
                             rootPath = root,
                             indexed = false,
-                            error = error.message ?: "双链索引失败",
+                            error = error.message ?: LocaleController.localizedContext(context)
+                                .getString(R.string.qd_settings_index_failed),
                         )
                     },
                 )
@@ -118,9 +126,45 @@ object WikilinkIndexRepository {
         }
     }
 
-    private fun scan(rootPath: String): ScanResult {
+    private fun scan(context: Context, rootPath: String): ScanResult {
+        if (SafVirtualPath.isSafPath(rootPath)) {
+            val files = VaultStorage.listMarkdownFiles(context, rootPath, recursive = true)
+            val entries = mutableListOf<String>()
+            val aliases = mutableListOf<WikilinkAlias>()
+            val tags = linkedSetOf<String>()
+            files.forEach { file ->
+                runCatching {
+                    val targetPath = file.relativePath.removeSuffix(".${file.displayName.substringAfterLast('.', "md")}")
+                    entries += targetPath
+                    val content = FileUtil.readOrNull(file.sourcePath).orEmpty()
+                    val parsed = ContentUtil.parseFrontmatter(content)
+                    WikilinkAliasParser.parse(parsed.frontmatter).forEach { alias ->
+                        aliases += WikilinkAlias(alias = alias, targetPath = targetPath)
+                    }
+                    tags += TagScanner.extractTags(content)
+                }
+            }
+            return ScanResult(
+                entries = entries.distinctBy { it.lowercase() }
+                    .sortedWith(compareBy<String> { it.length }.thenBy(String.CASE_INSENSITIVE_ORDER) { it }),
+                aliases = aliases.distinctBy { "${it.alias}\u001f${it.targetPath}" }
+                    .sortedWith(
+                        compareBy<WikilinkAlias> { it.alias.length }
+                            .thenBy(String.CASE_INSENSITIVE_ORDER) { it.alias }
+                            .thenBy(String.CASE_INSENSITIVE_ORDER) { it.targetPath },
+                    ),
+                tags = tags.toList().sortedWith(String.CASE_INSENSITIVE_ORDER),
+            )
+        }
         val root = File(rootPath)
-        if (!root.exists() || !root.isDirectory) error("仓库路径不可读：$rootPath")
+        if (!root.exists() || !root.isDirectory) {
+            error(
+                LocaleController.localizedContext(context).getString(
+                    R.string.qd_settings_vault_path_unreadable,
+                    rootPath,
+                ),
+            )
+        }
 
         val entries = mutableListOf<String>()
         val aliases = mutableListOf<WikilinkAlias>()

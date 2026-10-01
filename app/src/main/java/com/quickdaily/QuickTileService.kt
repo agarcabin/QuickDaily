@@ -29,7 +29,11 @@ class QuickTileService : TileService() {
 
     override fun onStartListening() {
         super.onStartListening()
+        val uiContext = LocaleController.localizedContext(this)
         qsTile?.apply {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                label = uiContext.getString(R.string.qd_tile_label)
+            }
             state = Tile.STATE_ACTIVE
             updateTile()
         }
@@ -59,8 +63,10 @@ class QuickTileService : TileService() {
         } else {
             // 无障碍服务未开启：提示用户并跳转设置页
             Toast.makeText(
-                this,
-                "请先开启 QuickDaily 无障碍服务，磁贴才能正常收起通知面板",
+                LocaleController.localizedContext(this),
+                LocaleController.localizedContext(this).getString(
+                    R.string.qd_tile_accessibility_required,
+                ),
                 Toast.LENGTH_LONG
             ).show()
 

@@ -5,6 +5,9 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
 import com.quickdaily.util.VaultPathUtil
+import com.quickdaily.util.FileUtil
+import com.quickdaily.util.SafVirtualPath
+import com.quickdaily.util.VaultStorage
 import java.io.File
 import java.io.FileOutputStream
 
@@ -134,6 +137,9 @@ internal object SharedPayloadParser {
 internal object SharedDocumentImporter {
     fun import(context: Context, uris: List<Uri>, vaultPath: String, storagePath: String): DocumentImportResult {
         if (uris.isEmpty()) return DocumentImportResult(0, emptyList(), 0)
+        if (SafVirtualPath.isSafPath(vaultPath)) {
+            return importSaf(context, uris, vaultPath, storagePath)
+        }
         val root = runCatching { File(vaultPath).canonicalFile }.getOrNull()
             ?: return DocumentImportResult(uris.size, emptyList(), uris.size)
         val requestedDirectory = VaultPathUtil.resolveTarget(vaultPath, storagePath)
@@ -171,6 +177,44 @@ internal object SharedDocumentImporter {
             }
             val relativePath = destination.relativeTo(root).path.replace('\\', '/')
             links += "![[${relativePath}]]"
+        }
+        return DocumentImportResult(uris.size, links, failed)
+    }
+
+    private fun importSaf(
+        context: Context,
+        uris: List<Uri>,
+        vaultPath: String,
+        storagePath: String,
+    ): DocumentImportResult {
+        val cleanDirectory = storagePath.trim().trim('/').takeIf { it.isNotBlank() }.orEmpty()
+        val links = mutableListOf<String>()
+        var failed = 0
+        uris.forEach { uri ->
+            val mimeType = context.contentResolver.getType(uri)
+            val displayName = displayName(context, uri)
+            if (!SharedDocumentClassifier.isSupported(mimeType, displayName)) {
+                failed++
+                return@forEach
+            }
+            val safeName = SharedDocumentClassifier.sanitizeFileName(displayName, mimeType)
+            var index = 0
+            var relativePath: String
+            var destination: String
+            do {
+                val suffix = if (index == 0) "" else " ($index)"
+                val candidateName = safeName.substringBeforeLast('.', safeName) + suffix +
+                    safeName.substringAfterLast('.', "").let { extension -> if (extension.isBlank()) "" else ".$extension" }
+                relativePath = listOf(cleanDirectory, candidateName).filter(String::isNotBlank).joinToString("/")
+                destination = VaultPathUtil.resolve(vaultPath, relativePath) ?: ""
+                index++
+            } while (destination.isNotBlank() && FileUtil.exists(destination) && index < 1000)
+            if (destination.isBlank() || FileUtil.exists(destination) || !VaultStorage.copyUriToPath(context, uri, destination)) {
+                failed++
+                BetaLogger.log("SharedDocument", "saf_copy_failed uri=$uri destination=$destination")
+                return@forEach
+            }
+            links += "![[${relativePath.replace('\\', '/')}]]"
         }
         return DocumentImportResult(uris.size, links, failed)
     }

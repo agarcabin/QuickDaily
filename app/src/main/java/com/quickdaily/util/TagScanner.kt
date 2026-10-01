@@ -64,6 +64,16 @@ object TagScanner {
     // ── Scan ───────────────────────────────────────────────
 
     private fun scan(vaultPath: String): List<String> {
+        if (SafVirtualPath.isSafPath(vaultPath)) {
+            val context = StorageContextHolder.get() ?: return emptyList()
+            val tags = linkedSetOf<String>()
+            val files = runCatching { VaultStorage.listMarkdownFiles(context, vaultPath, recursive = true) }
+                .getOrElse { return emptyList() }
+            files.forEach { file ->
+                FileUtil.readOrNull(file.sourcePath)?.let { content -> tags.addAll(extractTags(content)) }
+            }
+            return tags.toList().sorted()
+        }
         val vaultDir = File(vaultPath)
         if (!vaultDir.isDirectory || !vaultDir.exists()) return emptyList()
 

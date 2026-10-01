@@ -65,15 +65,42 @@ class QuickDailyReadWidget : AppWidgetProvider() {
         } else if (ACTION_MIDNIGHT_REFRESH == intent.action) {
             refreshAllWidgets(context, immediate = true)
         } else if (ACTION_TOGGLE_TASK == intent.action) {
+            val fillWidgetId = intent.getIntExtra(
+                WidgetFillInContract.EXTRA_WIDGET_ID,
+                intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, INVALID_WIDGET_ID),
+            )
+            val kind = intent.getStringExtra(WidgetFillInContract.EXTRA_KIND)
+            val generation = intent.getLongExtra(WidgetFillInContract.EXTRA_GENERATION, 0L)
+            if (kind != null && kind != WidgetFillInContract.KIND_READ) {
+                BetaLogger.log("ReadWidget", "toggle ignored wrong widget kind=$kind widgetId=$fillWidgetId")
+                return
+            }
+            if (fillWidgetId >= 0 && !WidgetGeneration.isCurrent(
+                    context,
+                    WidgetFillInContract.KIND_READ,
+                    fillWidgetId,
+                    generation,
+                )
+            ) {
+                BetaLogger.log(
+                    "ReadWidget",
+                    "toggle ignored stale generation=$generation current=${WidgetGeneration.current(context, WidgetFillInContract.KIND_READ, fillWidgetId)} widgetId=$fillWidgetId",
+                )
+                refreshAllWidgets(context, immediate = true)
+                return
+            }
             val path = intent.getStringExtra(TaskWidget.EXTRA_TASK_PATH).orEmpty()
             val lineIndex = intent.getIntExtra(TaskWidget.EXTRA_TASK_LINE, -1)
             val expectedRaw = intent.getStringExtra(TaskWidget.EXTRA_TASK_RAW).orEmpty()
+            val expectedSeparator = if (intent.hasExtra(TaskWidget.EXTRA_TASK_SEPARATOR)) {
+                intent.getStringExtra(TaskWidget.EXTRA_TASK_SEPARATOR).orEmpty()
+            } else null
             if (path.isNotBlank() && lineIndex >= 0) {
                 val pendingResult = goAsync()
                 WidgetAsyncWorkRunner.launch(
                     finishable = WidgetAsyncFinishable { pendingResult.finish() },
                 ) {
-                    toggleTask(context.applicationContext, path, lineIndex, expectedRaw)
+                    toggleTask(context.applicationContext, path, lineIndex, expectedRaw, expectedSeparator)
                 }
             } else {
                 BetaLogger.log("ReadWidget", "toggle ignored invalid path=$path line=$lineIndex")
@@ -112,10 +139,25 @@ class QuickDailyReadWidget : AppWidgetProvider() {
                 val ids = manager.getAppWidgetIds(component)
                 BetaLogger.log("ReadWidget", "refreshNow widgetCount=${ids.size} widgetIds=${ids.joinToString()}")
                 for (id in ids) {
+                    val generation = WidgetGeneration.next(
+                        context,
+                        WidgetFillInContract.KIND_READ,
+                        id,
+                    )
                     val config = ReadWidgetConfigStore.load(context, id)
                     val result = WidgetContentLoader.loadRead(context, config)
                     logWidgetResult("ReadWidget[$id]", result)
-                    updateWidget(context, manager, id, result)
+                    if (!WidgetGeneration.isCurrent(
+                            context,
+                            WidgetFillInContract.KIND_READ,
+                            id,
+                            generation,
+                        )
+                    ) {
+                        BetaLogger.log("ReadWidget", "discard stale refresh widgetId=$id generation=$generation")
+                        continue
+                    }
+                    updateWidget(context, manager, id, result, generation)
                 }
                 if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) {
                     manager.notifyAppWidgetViewDataChanged(ids, R.id.content_list)
@@ -131,12 +173,14 @@ class QuickDailyReadWidget : AppWidgetProvider() {
             path: String,
             lineIndex: Int,
             expectedRaw: String,
+            expectedSeparator: String?,
         ) {
             val result = TaskToggleUseCase.toggle(
                 context = context,
                 path = path,
                 lineIndex = lineIndex,
                 expectedRaw = expectedRaw,
+                expectedSeparator = expectedSeparator,
                 logTag = "ReadWidget",
             )
             if (result.succeeded) {
@@ -150,9 +194,16 @@ class QuickDailyReadWidget : AppWidgetProvider() {
             ctx: Context,
             manager: AppWidgetManager,
             widgetId: Int,
-            result: WidgetLoadResult<List<ReadWidgetItem>>?
+            result: WidgetLoadResult<List<ReadWidgetItem>>?,
+            generation: Long? = null,
         ) {
+            val uiContext = LocaleController.localizedContext(ctx)
             val config = ReadWidgetConfigStore.load(ctx, widgetId)
+            val renderGeneration = generation ?: WidgetGeneration.next(
+                ctx,
+                WidgetFillInContract.KIND_READ,
+                widgetId,
+            )
             val views = RemoteViews(ctx.packageName, R.layout.widget_diary_read)
             val appearance = WidgetAppearance.colors(ctx)
             val size = WidgetSizePolicy.forWidget(manager, widgetId)
@@ -211,27 +262,41 @@ class QuickDailyReadWidget : AppWidgetProvider() {
             views.setImageViewResource(R.id.btn_eye,
                 if (renderMd) R.drawable.ic_eye_on_white else R.drawable.ic_eye_off_white)
             WidgetAppearance.applyIcon(views, R.id.btn_eye, appearance.iconForeground)
+            views.setTextViewText(R.id.widget_title, ReadWidgetConfigStore.displayName(uiContext, config))
+            views.setContentDescription(R.id.btn_scope, uiContext.getString(R.string.qd_widget_select_page))
+            views.setContentDescription(R.id.btn_eye, uiContext.getString(R.string.qd_widget_toggle_reading_mode))
+            views.setContentDescription(R.id.btn_home, uiContext.getString(R.string.qd_widget_open_editor))
+            views.setContentDescription(R.id.btn_add, uiContext.getString(R.string.qd_widget_add_note))
 
             // Title
-            views.setTextViewText(R.id.widget_title, ReadWidgetConfigStore.displayName(config))
             views.setTextColor(R.id.widget_title, appearance.foreground)
             views.setTextColor(R.id.empty_view, appearance.muted)
-            val effectiveResult = result ?: WidgetLoadResult.Empty("正在加载…")
-            val status = when (effectiveResult) {
-                is WidgetLoadResult.Success -> "暂无日记"
-                is WidgetLoadResult.Empty -> effectiveResult.message
-                is WidgetLoadResult.Failure -> effectiveResult.message
+            val effectiveResult = result ?: WidgetLoadResult.Empty(UiText.Resource(R.string.qd_widget_loading))
+            val status: CharSequence = when (effectiveResult) {
+                is WidgetLoadResult.Success -> uiContext.getString(R.string.qd_widget_no_diary)
+                is WidgetLoadResult.Empty -> effectiveResult.message.resolve(uiContext)
+                is WidgetLoadResult.Failure -> effectiveResult.message.resolve(uiContext)
             }
             views.setTextViewText(R.id.empty_view, status)
 
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
                 val items = (effectiveResult as? WidgetLoadResult.Success)?.value.orEmpty()
-                views.setRemoteAdapter(R.id.content_list, ReadWidgetViews.collection(ctx, items, size))
+                views.setRemoteAdapter(
+                    R.id.content_list,
+                    ReadWidgetViews.collection(
+                        context = ctx,
+                        items = items,
+                        size = size,
+                        widgetId = widgetId,
+                        generation = renderGeneration,
+                    ),
+                )
             } else {
                 // API 26-30 fallback: bind the RemoteViewsService with BIND_REMOTEVIEWS.
                 val serviceIntent = Intent(ctx, QuickDailyReadWidgetService::class.java).apply {
-                    data = Uri.parse("quickdaily://read-widget/$widgetId")
+                    data = Uri.parse("quickdaily://read-widget/$widgetId/$renderGeneration")
                     putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+                    putExtra(WidgetFillInContract.EXTRA_GENERATION, renderGeneration)
                 }
                 views.setRemoteAdapter(R.id.content_list, serviceIntent)
             }

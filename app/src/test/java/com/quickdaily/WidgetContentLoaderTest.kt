@@ -44,7 +44,7 @@ class WidgetContentLoaderTest {
             bodyLineOffset = 3,
         ).filter { it.type == "task" }
 
-        assertEquals(listOf(0, 1), tasks.map { it.lineIndex })
+        assertEquals(listOf(3, 4), tasks.map { it.lineIndex })
         assertEquals(listOf("- [ ] Parent", "  - [ ] Child"), tasks.map { it.rawLine })
     }
 

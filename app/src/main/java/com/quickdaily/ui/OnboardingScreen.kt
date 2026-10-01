@@ -68,6 +68,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.contentDescription
@@ -80,6 +81,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.quickdaily.AppState
+import com.quickdaily.BetaLogger
 import com.quickdaily.DiaryConfig
 import com.quickdaily.OnboardingPolicy
 import com.quickdaily.OnboardingStore
@@ -92,9 +94,10 @@ import com.quickdaily.QuickNoteWidget
 import com.quickdaily.ShortcutPinResultReceiver
 import com.quickdaily.TaskWidget
 import com.quickdaily.WidgetIconCatalog
-import com.quickdaily.util.UriUtil
+import com.quickdaily.util.VaultStoragePrefs
 import com.quickdaily.ui.theme.rememberQuickDailyMotionPolicy
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
@@ -127,51 +130,56 @@ fun OnboardingScreen(
 
     suspend fun detectObsidian(path: String) {
         if (path.isBlank()) return
-        detectionMessage = "正在读取 Obsidian 配置…"
-        val daily = appState.loadObsidianConfig(path)
-        val obsidianApp = appState.loadObsidianAppConfig(path)
-        val current = appState.config.value
-        val updated = if (daily != null) {
-            current.copy(
-                vaultPath = path,
-                diaryFolder = daily.diaryFolder,
-                dateFormat = daily.dateFormat,
-                templatePath = daily.templatePath,
-                imageStoragePath = obsidianApp?.attachmentFolderPath
-                    ?.let { if (it == "/") "" else it.trimStart('/') }
-                    ?: current.imageStoragePath,
-                imageLinkFormat = if (obsidianApp?.useMarkdownLinks == true) "described" else current.imageLinkFormat,
-            )
-        } else {
-            current.copy(vaultPath = path)
+        detectionMessage = context.getString(com.quickdaily.R.string.qd_onboarding_reading_config)
+        val detection = try {
+            val daily = appState.loadObsidianConfig(path)
+            val obsidianApp = appState.loadObsidianAppConfig(path)
+            appState.updateConfig { current ->
+                if (daily != null) {
+                    current.copy(
+                        vaultPath = path,
+                        diaryFolder = daily.diaryFolder,
+                        dateFormat = daily.dateFormat,
+                        templatePath = daily.templatePath,
+                        imageStoragePath = obsidianApp?.attachmentFolderPath
+                            ?.let { if (it == "/") "" else it.trimStart('/') }
+                            ?: current.imageStoragePath,
+                        imageLinkFormat = if (obsidianApp?.useMarkdownLinks == true) "described" else current.imageLinkFormat,
+                    )
+                } else {
+                    current.copy(vaultPath = path)
+                }
+            }
+            val manageFiles = PermissionPolicy.all().firstOrNull { it.id == PermissionPolicy.MANAGE_FILES_ID }
+            val permissionMissing = manageFiles?.let {
+                safePermissionStatus(context, it) == PermissionStatus.NOT_GRANTED
+            } == true
+            daily to permissionMissing
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            BetaLogger.logException("Onboarding", "detect_config_failed path=$path", error)
+            detectionMessage = context.getString(com.quickdaily.R.string.qd_onboarding_config_read_failed)
+            return
         }
-        appState.saveConfig(updated)
+        val (daily, permissionMissing) = detection
         detectionMessage = if (daily != null) {
-            "已读取日记、模板和附件配置"
-        } else if (PermissionPolicy.status(
-                context,
-                PermissionPolicy.all().first { it.id == PermissionPolicy.MANAGE_FILES_ID },
-            ) == PermissionStatus.NOT_GRANTED
-        ) {
-            "仓库已保存；授予文件权限后将自动重试读取配置"
+            context.getString(com.quickdaily.R.string.qd_onboarding_config_read_success)
+        } else if (permissionMissing) {
+            context.getString(com.quickdaily.R.string.qd_onboarding_config_retry_after_permission)
         } else {
-            "未检测到日记配置，将使用当前默认值"
+            context.getString(com.quickdaily.R.string.qd_onboarding_config_not_found)
         }
     }
 
     val vaultPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri ?: return@rememberLauncherForActivityResult
-        runCatching {
-            context.contentResolver.takePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-            )
-        }
-        val path = UriUtil.treeUriToPath(uri)
-        if (path == null) {
-            detectionMessage = "无法识别所选目录，请重新选择 Vault 根目录"
+        val path = VaultStoragePrefs.saveSaf(context, uri)
+        val validation = VaultStoragePrefs.validate(context)
+        if (path == null || validation.status != com.quickdaily.util.VaultValidationStatus.VALID) {
+            detectionMessage = validation.message.resolve(context).toString()
         } else {
-            appState.saveConfig(appState.config.value.copy(vaultPath = path))
+            appState.updateConfig { current -> current.copy(vaultPath = path) }
             scope.launch { detectObsidian(path) }
         }
     }
@@ -220,7 +228,7 @@ fun OnboardingScreen(
                     onClick = { skipDialogOpen = true },
                     modifier = Modifier.height(48.dp),
                 ) {
-                    Text("跳过引导")
+                    Text(stringResource(com.quickdaily.R.string.qd_onboarding_skip))
                 }
             }
         },
@@ -234,7 +242,7 @@ fun OnboardingScreen(
                 ) {
                     if (!canAdvance && page == 1) {
                         Text(
-                            "请先选择库目录后继续",
+                            stringResource(com.quickdaily.R.string.qd_onboarding_select_vault_first),
                             color = MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.labelMedium,
                             modifier = Modifier
@@ -244,7 +252,7 @@ fun OnboardingScreen(
                         )
                     } else if (!canAdvance && page == 2) {
                         Text(
-                            "请先授予所有文件访问权限后继续",
+                            stringResource(com.quickdaily.R.string.qd_onboarding_grant_storage_first),
                             color = MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.labelMedium,
                             modifier = Modifier
@@ -260,6 +268,11 @@ fun OnboardingScreen(
                     ) {
                         repeat(OnboardingPolicy.PAGE_COUNT) { indicatorPage ->
                             val selectedPage = indicatorPage == page
+                            val pageDescription = stringResource(
+                                com.quickdaily.R.string.qd_onboarding_page_indicator,
+                                indicatorPage + 1,
+                                OnboardingPolicy.PAGE_COUNT,
+                            )
                             Spacer(
                                 modifier = Modifier
                                     .padding(horizontal = 4.dp)
@@ -270,7 +283,7 @@ fun OnboardingScreen(
                                         else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
                                     )
                                     .semantics {
-                                        contentDescription = "第 ${indicatorPage + 1} 页，共 ${OnboardingPolicy.PAGE_COUNT} 页"
+                                        contentDescription = pageDescription
                                         selected = selectedPage
                                     },
                             )
@@ -284,7 +297,7 @@ fun OnboardingScreen(
                             OutlinedButton(
                                 onClick = { goTo(page - 1) },
                                 modifier = Modifier.weight(1f).height(48.dp),
-                            ) { Text("上一步") }
+                            ) { Text(stringResource(com.quickdaily.R.string.qd_onboarding_previous)) }
                         }
                         Button(
                             onClick = {
@@ -297,7 +310,17 @@ fun OnboardingScreen(
                             },
                             enabled = canAdvance,
                             modifier = Modifier.weight(1f).height(48.dp),
-                        ) { Text(if (page == OnboardingPolicy.PAGE_COUNT - 1) "开始使用" else "下一步") }
+                        ) {
+                            Text(
+                                stringResource(
+                                    if (page == OnboardingPolicy.PAGE_COUNT - 1) {
+                                        com.quickdaily.R.string.qd_onboarding_start
+                                    } else {
+                                        com.quickdaily.R.string.qd_onboarding_next
+                                    },
+                                ),
+                            )
+                        }
                     }
                 }
             }
@@ -343,7 +366,14 @@ fun OnboardingScreen(
                         1 -> VaultPage(
                             config = config,
                             message = detectionMessage,
-                            onPickVault = { onExternalLaunch(); vaultPicker.launch(null) },
+                            onPickVault = {
+                                onExternalLaunch()
+                                runCatching { vaultPicker.launch(null) }
+                                    .onFailure { error ->
+                                        BetaLogger.logException("Onboarding", "vault_picker_launch_failed", error)
+                                        detectionMessage = context.getString(com.quickdaily.R.string.qd_onboarding_picker_failed)
+                                    }
+                            },
                         )
                         2 -> PermissionPage(
                             context = context,
@@ -351,13 +381,20 @@ fun OnboardingScreen(
                             onExternalLaunch = onExternalLaunch,
                             onNotificationRequest = {
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                    notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    runCatching { notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
+                                        .onFailure { error ->
+                                            BetaLogger.logException("Onboarding", "notification_permission_launch_failed", error)
+                                        }
                                 }
                             },
                             onLegacyStorageRequest = {
-                                legacyStorageLauncher.launch(
-                                    arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE),
-                                )
+                                runCatching {
+                                    legacyStorageLauncher.launch(
+                                        arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                                    )
+                                }.onFailure { error ->
+                                    BetaLogger.logException("Onboarding", "storage_permission_launch_failed", error)
+                                }
                             },
                         )
                         else -> WidgetPage(context, refreshKey)
@@ -379,45 +416,90 @@ fun OnboardingScreen(
 }
 
 private fun onboardingStoragePermissionGranted(context: Context): Boolean {
+    val vault = VaultStoragePrefs.current(context)
+    if (vault.backend == com.quickdaily.util.VaultBackend.SAF) {
+        return VaultStoragePrefs.validate(context).status == com.quickdaily.util.VaultValidationStatus.VALID
+    }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-        val spec = PermissionPolicy.all().first { it.id == PermissionPolicy.MANAGE_FILES_ID }
-        return PermissionPolicy.status(context, spec) == PermissionStatus.GRANTED
+        val spec = PermissionPolicy.all().firstOrNull { it.id == PermissionPolicy.MANAGE_FILES_ID }
+            ?: return false
+        return safePermissionStatus(context, spec) == PermissionStatus.GRANTED
     }
     return PermissionPolicy.all()
         .filter { it.id == "read_external_storage" || it.id == "write_external_storage" }
         .filter(PermissionPolicy::isApplicable)
-        .all { PermissionPolicy.status(context, it) == PermissionStatus.GRANTED }
+        .all { safePermissionStatus(context, it) == PermissionStatus.GRANTED }
 }
+
+private fun safePermissionStatus(context: Context, spec: PermissionSpec): PermissionStatus =
+    runCatching { PermissionPolicy.status(context, spec) }
+        .getOrDefault(PermissionStatus.NOT_GRANTED)
+
+private fun Context.startOnboardingSettings(intent: Intent): Boolean =
+    try {
+        startActivity(intent)
+        true
+    } catch (error: Exception) {
+        BetaLogger.logException("Onboarding", "settings_launch_failed action=${intent.action}", error)
+        android.widget.Toast.makeText(
+            this,
+            getString(com.quickdaily.R.string.qd_onboarding_settings_failed),
+            android.widget.Toast.LENGTH_LONG,
+        ).show()
+        false
+    }
 
 @Composable
 private fun WelcomePage() {
-    OnboardingHeader(Icons.Default.Speed, "欢迎使用 QuickDaily", "Obsidian 的外置小部件与速录悬浮窗")
-    FeatureCard("本地优先", "内容直接写入 Obsidian Vault，不需要任何联网权限，安全性有保障。")
-    FeatureCard("速度优先", "冷启动最快约 300ms，保存后立即结束进程，最大程度保证速度和轻量化。")
+    OnboardingHeader(
+        Icons.Default.Speed,
+        stringResource(com.quickdaily.R.string.qd_onboarding_welcome_title),
+        stringResource(com.quickdaily.R.string.qd_onboarding_welcome_subtitle),
+    )
     FeatureCard(
-        "录入优先",
-        "小部件、下拉磁贴和系统侧边启动器都可以直接拉起录入悬浮窗；文字、文档、图片等文件也可以直接分享至 QD 保存。",
+        stringResource(com.quickdaily.R.string.qd_onboarding_feature_local_title),
+        stringResource(com.quickdaily.R.string.qd_onboarding_feature_local_body),
+    )
+    FeatureCard(
+        stringResource(com.quickdaily.R.string.qd_onboarding_feature_speed_title),
+        stringResource(com.quickdaily.R.string.qd_onboarding_feature_speed_body),
+    )
+    FeatureCard(
+        stringResource(com.quickdaily.R.string.qd_onboarding_feature_capture_title),
+        stringResource(com.quickdaily.R.string.qd_onboarding_feature_capture_body),
     )
 }
 
 @Composable
 private fun VaultPage(config: DiaryConfig, message: String, onPickVault: () -> Unit) {
-    OnboardingHeader(Icons.Default.FolderOpen, "连接 Obsidian 仓库", "选择 Vault 根目录即可开始")
+    OnboardingHeader(
+        Icons.Default.FolderOpen,
+        stringResource(com.quickdaily.R.string.qd_onboarding_vault_title),
+        stringResource(com.quickdaily.R.string.qd_onboarding_vault_subtitle),
+    )
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("当前仓库", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(com.quickdaily.R.string.qd_onboarding_current_vault), style = MaterialTheme.typography.titleMedium)
             Text(
-                config.vaultPath.ifBlank { "尚未选择" },
+                config.vaultPath.ifBlank { stringResource(com.quickdaily.R.string.qd_onboarding_vault_unselected) },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             FilledTonalButton(onClick = onPickVault, modifier = Modifier.fillMaxWidth().height(48.dp)) {
                 Icon(Icons.Default.FolderOpen, contentDescription = null)
                 Spacer(Modifier.size(8.dp))
-                Text(if (config.vaultPath.isBlank()) "选择仓库" else "重新选择")
+                Text(
+                    stringResource(
+                        if (config.vaultPath.isBlank()) {
+                            com.quickdaily.R.string.qd_onboarding_select_vault
+                        } else {
+                            com.quickdaily.R.string.qd_onboarding_reselect_vault
+                        },
+                    ),
+                )
             }
             if (message.isNotBlank()) {
                 Text(
@@ -430,7 +512,7 @@ private fun VaultPage(config: DiaryConfig, message: String, onPickVault: () -> U
         }
     }
     Text(
-        "QuickDaily 会尝试读取 Obsidian 配置，读取不到时仍可使用默认值。",
+        stringResource(com.quickdaily.R.string.qd_onboarding_vault_note),
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -444,7 +526,11 @@ private fun PermissionPage(
     onNotificationRequest: () -> Unit,
     onLegacyStorageRequest: () -> Unit,
 ) {
-    OnboardingHeader(Icons.Default.Security, "授予权限", "完成核心权限后继续，其他权限可稍后开启")
+    OnboardingHeader(
+        Icons.Default.Security,
+        stringResource(com.quickdaily.R.string.qd_onboarding_permissions_title),
+        stringResource(com.quickdaily.R.string.qd_onboarding_permissions_subtitle),
+    )
     val ids = buildList {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             add(PermissionPolicy.MANAGE_FILES_ID)
@@ -459,30 +545,40 @@ private fun PermissionPage(
     ids.mapNotNull { id -> PermissionPolicy.all().firstOrNull { it.id == id } }
         .filter(PermissionPolicy::isApplicable)
         .forEach { spec ->
-            val status = remember(spec.id, refreshKey) { PermissionPolicy.status(context, spec) }
+            val status = remember(spec.id, refreshKey) { safePermissionStatus(context, spec) }
             val importance = when (spec.id) {
-                PermissionPolicy.MANAGE_FILES_ID, "read_external_storage", "write_external_storage" -> "核心"
-                PermissionPolicy.ACCESSIBILITY_ID -> "可选"
-                else -> "推荐"
+                PermissionPolicy.MANAGE_FILES_ID, "read_external_storage", "write_external_storage" ->
+                    stringResource(com.quickdaily.R.string.qd_onboarding_importance_core)
+                PermissionPolicy.ACCESSIBILITY_ID -> stringResource(com.quickdaily.R.string.qd_onboarding_importance_optional)
+                else -> stringResource(com.quickdaily.R.string.qd_onboarding_importance_recommended)
             }
             PermissionCard(spec, status, importance) {
                 when (spec.kind) {
-                    PermissionKind.RUNTIME -> onNotificationRequest()
+                    PermissionKind.RUNTIME -> when (spec.id) {
+                        "post_notifications" -> onNotificationRequest()
+                        "read_external_storage", "write_external_storage" -> onLegacyStorageRequest()
+                        else -> Unit
+                    }
                     PermissionKind.MANAGE_FILES -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                        onExternalLaunch()
-                        context.startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                            data = android.net.Uri.parse("package:${context.packageName}")
-                        })
+                        val launched = context.startOnboardingSettings(
+                            Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                                data = android.net.Uri.parse("package:${context.packageName}")
+                            },
+                        )
+                        if (launched) onExternalLaunch()
                     } else onLegacyStorageRequest()
                     PermissionKind.OVERLAY -> {
-                        onExternalLaunch()
-                        context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
-                            data = android.net.Uri.parse("package:${context.packageName}")
-                        })
+                        val launched = context.startOnboardingSettings(
+                            Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                                data = android.net.Uri.parse("package:${context.packageName}")
+                            },
+                        )
+                        if (launched) onExternalLaunch()
                     }
                     PermissionKind.ACCESSIBILITY -> {
-                        onExternalLaunch()
-                        context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                        if (context.startOnboardingSettings(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))) {
+                            onExternalLaunch()
+                        }
                     }
                     PermissionKind.SYSTEM -> Unit
                 }
@@ -503,12 +599,20 @@ private fun PermissionCard(
     ) {
         ListItem(
             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-            headlineContent = { Text("${spec.title} · $importance") },
+            headlineContent = {
+                Text("${stringResource(spec.titleRes)} · $importance")
+            },
             supportingContent = {
                 Column {
-                    Text(spec.description)
+                    Text(stringResource(spec.descriptionRes))
                     Text(
-                        if (status == PermissionStatus.GRANTED) "已授权" else "未授权",
+                        stringResource(
+                            if (status == PermissionStatus.GRANTED) {
+                                com.quickdaily.R.string.qd_onboarding_permission_granted
+                            } else {
+                                com.quickdaily.R.string.qd_onboarding_permission_not_granted
+                            },
+                        ),
                         color = if (status == PermissionStatus.GRANTED) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                     )
                 }
@@ -518,7 +622,17 @@ private fun PermissionCard(
                     onClick = onRequest,
                     enabled = status == PermissionStatus.NOT_GRANTED,
                     modifier = Modifier.height(48.dp),
-                ) { Text(if (status == PermissionStatus.GRANTED) "已完成" else "去授权") }
+                ) {
+                    Text(
+                        stringResource(
+                            if (status == PermissionStatus.GRANTED) {
+                                com.quickdaily.R.string.qd_onboarding_permission_done
+                            } else {
+                                com.quickdaily.R.string.qd_onboarding_permission_request
+                            },
+                        ),
+                    )
+                }
             },
         )
     }
@@ -526,12 +640,16 @@ private fun PermissionCard(
 
 @Composable
 private fun WidgetPage(context: Context, refreshKey: Int) {
-    OnboardingHeader(Icons.Default.Widgets, "添加小部件", "把速记入口放到桌面，随时打开 QuickDaily")
+    OnboardingHeader(
+        Icons.Default.Widgets,
+        stringResource(com.quickdaily.R.string.qd_onboarding_widgets_title),
+        stringResource(com.quickdaily.R.string.qd_onboarding_widgets_subtitle),
+    )
     WidgetPinCard(
         context = context,
         provider = QuickNoteWidget::class.java,
-        title = "快速录入小部件",
-        description = "在桌面快速打开速记",
+        title = stringResource(com.quickdaily.R.string.qd_onboarding_quick_widget_title),
+        description = stringResource(com.quickdaily.R.string.qd_onboarding_quick_widget_description),
         requestCode = 105,
         icon = painterResource(WidgetIconCatalog.quickEntry),
         refreshKey = refreshKey,
@@ -539,8 +657,8 @@ private fun WidgetPage(context: Context, refreshKey: Int) {
     WidgetPinCard(
         context = context,
         provider = TaskWidget::class.java,
-        title = "任务小部件",
-        description = "在桌面查看、添加和勾选任务",
+        title = stringResource(com.quickdaily.R.string.qd_onboarding_task_widget_title),
+        description = stringResource(com.quickdaily.R.string.qd_onboarding_task_widget_description),
         requestCode = 103,
         icon = painterResource(WidgetIconCatalog.task),
         refreshKey = refreshKey,
@@ -548,8 +666,8 @@ private fun WidgetPage(context: Context, refreshKey: Int) {
     WidgetPinCard(
         context = context,
         provider = QuickDailyReadWidget::class.java,
-        title = "便签小部件",
-        description = "在桌面查看今日日记内容",
+        title = stringResource(com.quickdaily.R.string.qd_onboarding_diary_widget_title),
+        description = stringResource(com.quickdaily.R.string.qd_onboarding_diary_widget_description),
         requestCode = 101,
         icon = painterResource(WidgetIconCatalog.note),
         refreshKey = refreshKey,
@@ -577,7 +695,15 @@ private fun WidgetPinCard(
             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
             leadingContent = { Icon(painter = icon, contentDescription = null) },
             headlineContent = { Text(title) },
-            supportingContent = { Text(if (added) "$description\n已添加到桌面" else description) },
+            supportingContent = {
+                Text(
+                    if (added) {
+                        stringResource(com.quickdaily.R.string.qd_onboarding_widget_added, description)
+                    } else {
+                        description
+                    },
+                )
+            },
             trailingContent = {
                 TextButton(
                     enabled = !added,
@@ -590,17 +716,42 @@ private fun WidgetPinCard(
                                     .setAction(ShortcutPinResultReceiver.ACTION_PIN_SUCCEEDED),
                                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
                             )
-                            manager.requestPinAppWidget(component, null, callback)
+                            runCatching {
+                                manager.requestPinAppWidget(component, null, callback)
+                            }.onFailure { error ->
+                                BetaLogger.logException(
+                                    "Onboarding",
+                                    "widget_pin_failed provider=${provider.name}",
+                                    error,
+                                )
+                                android.widget.Toast.makeText(
+                                    context,
+                                    context.getString(com.quickdaily.R.string.qd_onboarding_widget_pin_failed),
+                                    android.widget.Toast.LENGTH_LONG,
+                                ).show()
+                            }
                         } else {
-                            android.widget.Toast.makeText(context, "请长按桌面，从小部件列表手动添加", android.widget.Toast.LENGTH_LONG).show()
-                            context.startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME))
+                            android.widget.Toast.makeText(
+                                context,
+                                context.getString(com.quickdaily.R.string.qd_onboarding_widget_manual_add),
+                                android.widget.Toast.LENGTH_LONG,
+                            ).show()
+                            runCatching {
+                                context.startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME))
+                            }.onFailure { error ->
+                                BetaLogger.logException("Onboarding", "home_launch_failed", error)
+                            }
                         }
                     },
                     modifier = Modifier.height(48.dp),
                 ) {
                     Icon(if (added) Icons.Default.CheckCircle else Icons.Default.Shortcut, contentDescription = null)
                     Spacer(Modifier.size(4.dp))
-                    Text(if (added) "已添加" else "添加")
+                    Text(
+                        stringResource(
+                            if (added) com.quickdaily.R.string.qd_onboarding_added else com.quickdaily.R.string.qd_onboarding_add,
+                        ),
+                    )
                 }
             },
         )

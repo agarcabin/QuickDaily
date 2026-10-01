@@ -55,6 +55,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
@@ -85,6 +86,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.stateDescription
@@ -139,9 +142,13 @@ import com.quickdaily.WidgetAppearance
 import com.quickdaily.ShortcutPinResultReceiver
 import com.quickdaily.WidgetImageCropActivity
 import com.quickdaily.WidgetRefreshCoordinator
+import com.quickdaily.LocaleController
 import com.quickdaily.util.DateUtil
 import com.quickdaily.util.ShortcutHelper
 import com.quickdaily.util.UriUtil
+import com.quickdaily.util.SafVirtualPath
+import com.quickdaily.util.VaultStoragePrefs
+import com.quickdaily.util.VaultValidationStatus
 import kotlinx.coroutines.launch
 
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -177,12 +184,22 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 
-internal enum class SettingsTab(val title: String) {
-    QUICK_CAPTURE("速录设置"),
-    WIDGETS("小部件"),
-    APPEARANCE("外观设置"),
-    OTHER("其他"),
+internal enum class SettingsTab(@androidx.annotation.StringRes val titleRes: Int) {
+    QUICK_CAPTURE(R.string.qd_tab_quick_capture),
+    WIDGETS(R.string.qd_tab_widgets),
+    APPEARANCE(R.string.qd_tab_appearance),
+    OTHER(R.string.qd_tab_other),
 }
+
+// localization-legacy-begin: version logs are deferred from phase one.
+private const val CHANGELOG_1_9_7_BETA = """QuickDaily 1.9.7-beta
+• 新增 中文与 English 多语言支持，可在设置中手动切换
+• 优化 切换语言后保留当前设置页面
+• 优化 英文界面按完整单词换行"""
+
+private const val CHANGELOG_1_9_6_BETA = """QuickDaily 1.9.6-beta
+• 新增 渲染模式和便签小部件渲染双链，双链使用当前主题色
+• 新增 编辑器设置中的屏蔽指定文本，仅影响只读渲染显示并保留原文"""
 
 private const val CHANGELOG_1_9_3_BETA = """QuickDaily 1.9.3-beta
 • 新增 首次使用引导与悬浮窗控件教学
@@ -192,7 +209,12 @@ private const val CHANGELOG_1_9_3_BETA = """QuickDaily 1.9.3-beta
 • 优化 设置页三级折叠结构、仓库配置与任务完成日期格式
 • 优化 设置页下拉框、锚点文本、小部件外观与提示音试听"""
 
-private const val DEFAULT_ANCHOR_TEXT = "## 今日速记"
+private const val DEFAULT_ANCHOR_TEXT = "## 今日速记" // localization-legacy: user/template content
+
+private data class HiddenTextDraftRow(
+    val id: Long,
+    val text: String,
+)
 
 private const val CHANGELOG_1_9_2_BETA = """QuickDaily 1.9.2-beta
 • 新增 悬浮窗设置可选择保存后拉起 Obsidian；仅在 Obsidian 不在后台运行时拉起并自动回到桌面，默认关闭"""
@@ -248,6 +270,8 @@ private const val CHANGELOG_1_9 = """1.9:
 • 修复 便签小部件内容更新不及时的问题
 • 修复 澎湃系统图速记添加附件时概率闪退的问题"""
 
+// localization-legacy-end
+
 private typealias ConfigChange = DiaryConfig.() -> DiaryConfig
 private typealias OnConfigChange = (ConfigChange) -> Unit
 
@@ -279,7 +303,7 @@ private data class SettingsConfigReadOutcome(
     val appConfig: com.quickdaily.ObsidianAppConfig?,
 )
 
-private data class TimestampOption(val key: String, val label: String)
+private data class TimestampOption(val key: String, @androidx.annotation.StringRes val labelRes: Int)
 
 private const val EXTERNAL_STORAGE_DOCUMENTS_AUTHORITY = "com.android.externalstorage.documents"
 
@@ -334,39 +358,39 @@ private fun documentDisplayName(context: android.content.Context, uri: Uri): Str
 }
 
 private val timestampOptions = listOf(
-    TimestampOption("none", "无时间戳"),
-    TimestampOption("time_only", "仅时间"),
-    TimestampOption("time_only_seconds", "时间（含秒）"),
-    TimestampOption("list", "无序列表"),
-    TimestampOption("ordered", "有序列表"),
-    TimestampOption("list_time", "列表+时间"),
-    TimestampOption("list_time_seconds", "列表+时间（秒）"),
-    TimestampOption("date_time", "日期+时间"),
-    TimestampOption("list_date_time", "列表+日期+时间"),
+    TimestampOption("none", R.string.qd_timestamp_none),
+    TimestampOption("time_only", R.string.qd_timestamp_time_only),
+    TimestampOption("time_only_seconds", R.string.qd_timestamp_time_only_seconds),
+    TimestampOption("list", R.string.qd_timestamp_list),
+    TimestampOption("ordered", R.string.qd_timestamp_ordered),
+    TimestampOption("list_time", R.string.qd_timestamp_list_time),
+    TimestampOption("list_time_seconds", R.string.qd_timestamp_list_time_seconds),
+    TimestampOption("date_time", R.string.qd_timestamp_date_time),
+    TimestampOption("list_date_time", R.string.qd_timestamp_list_date_time),
 )
 
-private data class NamingOption(val key: String, val label: String)
+private data class NamingOption(val key: String, @androidx.annotation.StringRes val labelRes: Int)
 private val namingOptions = listOf(
-    NamingOption("original", "图片原名"),
-    NamingOption("timestamp_original", "时间戳+原名"),
-    NamingOption("custom", "自定义名称"),
+    NamingOption("original", R.string.qd_naming_original),
+    NamingOption("timestamp_original", R.string.qd_naming_timestamp_original),
+    NamingOption("custom", R.string.qd_naming_custom),
 )
 
 private val linkOptions = listOf(
-    "described" to "Markdown：![image_name](路径)",
-    "obsidian_wikilink" to "Obsidian：![[image_name]]",
+    "described" to R.string.qd_link_markdown,
+    "obsidian_wikilink" to R.string.qd_link_obsidian,
 )
 
 private val timestampOrderOptions = listOf(
-    "above" to "最上",
-    "below" to "最下",
+    "above" to R.string.qd_settings_timestamp_above,
+    "below" to R.string.qd_settings_timestamp_below,
 )
 
 private val widgetStyleOptions = listOf(
-    "light" to "白色",
-    "dark" to "黑色",
-    "custom" to "自定义",
-    "system" to "跟随系统",
+    "light" to R.string.qd_widget_style_light,
+    "dark" to R.string.qd_widget_style_dark,
+    "custom" to R.string.qd_widget_style_custom,
+    "system" to R.string.qd_widget_style_system,
 )
 
 @Composable
@@ -378,6 +402,7 @@ private fun CollapsibleSettingsSection(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     var expanded by rememberSaveable(title) { mutableStateOf(initiallyExpanded) }
+    val context = LocalContext.current
     val motionPolicy = LocalQuickDailyMotion.current
     Column(modifier = modifier.fillMaxWidth()) {
         Surface(
@@ -386,7 +411,13 @@ private fun CollapsibleSettingsSection(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 56.dp)
-                .semantics { stateDescription = if (expanded) "已展开" else "已折叠" },
+                .semantics {
+                    stateDescription = if (expanded) {
+                        context.getString(R.string.qd_settings_expanded)
+                    } else {
+                        context.getString(R.string.qd_settings_collapsed)
+                    }
+                },
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
@@ -507,7 +538,7 @@ private fun SettingsDropdownMenuItem(
             {
                 Icon(
                     Icons.Default.Check,
-                    contentDescription = "已选择",
+                    contentDescription = stringResource(R.string.qd_settings_selected),
                     tint = MaterialTheme.colorScheme.onPrimaryContainer,
                 )
             }
@@ -530,6 +561,7 @@ private fun ResettableSlider(
     steps: Int = 0,
     stateDescription: String? = null,
 ) {
+    val context = LocalContext.current
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -577,12 +609,12 @@ private fun ResettableSlider(
                 onClick = onReset,
                 modifier = Modifier
                     .size(48.dp)
-                    .semantics { contentDescription = "重置为默认值" },
+                    .semantics { contentDescription = context.getString(R.string.qd_settings_reset_default) },
             ) {
                 Icon(Icons.Default.Refresh, contentDescription = null)
             }
             Text(
-                "重置",
+                stringResource(R.string.qd_common_reset),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -701,6 +733,13 @@ fun SettingsScreen(
 
     // ── Local edit state ──
     var vaultPath by remember { mutableStateOf(initialConfig.vaultPath) }
+    var obsidianVaultId by remember {
+        mutableStateOf(
+            context.getSharedPreferences("QuickDaily", android.content.Context.MODE_PRIVATE)
+                .getString(VaultStoragePrefs.OBSIDIAN_VAULT_ID_KEY, "")
+                .orEmpty(),
+        )
+    }
     var obsidianConfigUri by remember { mutableStateOf(initialConfig.obsidianConfigUri) }
     var useCustomObsidianConfigPath by remember { mutableStateOf(initialConfig.useCustomObsidianConfigPath) }
     var diaryFolder by remember { mutableStateOf(initialConfig.diaryFolder) }
@@ -767,7 +806,7 @@ fun SettingsScreen(
             val customResult = outcome.customResult
             if (customResult?.status == ObsidianConfigReadStatus.INVALID_JSON) {
                 obsidianDetected = false
-                obsidianMsg = "自定义配置文件 JSON 无效，已保留当前配置"
+                obsidianMsg = context.getString(R.string.qd_settings_config_invalid)
                 return@launch
             }
             val obsCfg = outcome.obsidianConfig
@@ -783,9 +822,9 @@ fun SettingsScreen(
                 }
                 obsidianDetected = true
                 obsidianMsg = when {
-                    customResult?.status == ObsidianConfigReadStatus.SUCCESS -> "已读取自定义 Obsidian 配置"
-                    selectedUri != null -> "自定义配置文件不可用，已回退默认路径并读取"
-                    else -> "已读取 Obsidian 配置"
+                    customResult?.status == ObsidianConfigReadStatus.SUCCESS -> context.getString(R.string.qd_settings_custom_config_loaded)
+                    selectedUri != null -> context.getString(R.string.qd_settings_custom_config_fallback)
+                    else -> context.getString(R.string.qd_settings_obsidian_config_loaded)
                 }
                 if (!isCurrentConfigRead(request)) {
                     BetaLogger.log(
@@ -794,22 +833,24 @@ fun SettingsScreen(
                     )
                     return@launch
                 }
-                appState.saveConfig(appState.config.value.copy(
-                    vaultPath = request.vaultPath,
-                    obsidianConfigUri = request.customUri,
-                    useCustomObsidianConfigPath = request.useCustomConfig,
-                    diaryFolder = diaryFolder.trim().ifBlank { "Daily" },
-                    dateFormat = dateFormat.trim().ifBlank { "YYYY-MM-DD" },
-                    templatePath = templatePath.trim(),
-                    imageStoragePath = imageStoragePath.trim(),
-                    imageLinkFormat = if (appCfg?.useMarkdownLinks == true) "described" else appState.config.value.imageLinkFormat,
-                ))
+                appState.updateConfig { current ->
+                    current.copy(
+                        vaultPath = request.vaultPath,
+                        obsidianConfigUri = request.customUri,
+                        useCustomObsidianConfigPath = request.useCustomConfig,
+                        diaryFolder = diaryFolder.trim().ifBlank { "Daily" },
+                        dateFormat = dateFormat.trim().ifBlank { "YYYY-MM-DD" },
+                        templatePath = templatePath.trim(),
+                        imageStoragePath = imageStoragePath.trim(),
+                        imageLinkFormat = if (appCfg?.useMarkdownLinks == true) "described" else current.imageLinkFormat,
+                    )
+                }
             } else {
                 obsidianDetected = false
                 obsidianMsg = if (selectedUri != null) {
-                    "自定义配置文件不可用，默认路径也未找到"
+                    context.getString(R.string.qd_settings_custom_config_missing)
                 } else {
-                    "未找到 .obsidian/daily-notes.json"
+                    context.getString(R.string.qd_settings_default_config_missing)
                 }
             }
         }
@@ -842,7 +883,7 @@ fun SettingsScreen(
                 val settledAt = SystemClock.elapsedRealtime()
                 BetaLogger.log(
                     "Settings/Pager",
-                    "settled_page=$page title=${tabs.getOrNull(page)?.title.orEmpty()} deferred_work=start",
+                    "settled_page=$page title=${tabs.getOrNull(page)?.let { context.getString(it.titleRes) }.orEmpty()} deferred_work=start",
                 )
                 withFrameNanos { }
                 yield()
@@ -858,14 +899,9 @@ fun SettingsScreen(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri: Uri? ->
         uri?.let {
-            try {
-                context.contentResolver.takePersistableUriPermission(
-                    it, Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                            Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                )
-            } catch (_: Exception) { }
-            val path = UriUtil.treeUriToPath(it)
-            if (path != null) {
+            val path = VaultStoragePrefs.saveSaf(context, it)
+            val validation = VaultStoragePrefs.validate(context)
+            if (path != null && validation.status == VaultValidationStatus.VALID) {
                 vaultPath = path
                 obsidianConfigUri = ""
                 useCustomObsidianConfigPath = false
@@ -875,6 +911,8 @@ fun SettingsScreen(
                     requestedUseCustomConfig = false,
                 )
                 WikilinkIndexRepository.refresh(context, path)
+            } else {
+                obsidianMsg = validation.message.resolve(context).toString()
             }
         }
     }
@@ -889,13 +927,18 @@ fun SettingsScreen(
                             Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 )
             } catch (_: Exception) { }
-            val path = UriUtil.treeUriToPath(it)
-            if (path != null) {
-                imageStoragePath = if (vaultPath.isNotBlank() && path.startsWith(vaultPath)) {
+            val relative = VaultStoragePrefs.relativePathForTreeUri(vaultPath, it)
+            if (relative != null) {
+                imageStoragePath = relative
+            } else if (SafVirtualPath.parse(vaultPath) == null) {
+                val path = UriUtil.treeUriToPath(it)
+                if (path != null) imageStoragePath = if (vaultPath.isNotBlank() && path.startsWith(vaultPath)) {
                     path.removePrefix(vaultPath).trimStart('/')
                 } else {
                     path
                 }
+            } else {
+                obsidianMsg = context.getString(R.string.qd_settings_attachment_folder_invalid)
             }
         }
     }
@@ -909,23 +952,19 @@ fun SettingsScreen(
     ) { uri: Uri? ->
 
         uri?.let {
-
-            val path = com.quickdaily.util.UriUtil.treeUriToPath(it)
-
-            if (path != null) {
-
-                diaryFolder = if (vaultPath.isNotBlank() && path.startsWith(vaultPath)) {
-
+            val relative = VaultStoragePrefs.relativePathForTreeUri(vaultPath, it)
+            if (relative != null) {
+                diaryFolder = relative
+            } else if (SafVirtualPath.parse(vaultPath) == null) {
+                val path = com.quickdaily.util.UriUtil.treeUriToPath(it)
+                if (path != null) diaryFolder = if (vaultPath.isNotBlank() && path.startsWith(vaultPath)) {
                     path.removePrefix(vaultPath).trimStart('/')
-
                 } else {
-
                     path
-
                 }
-
+            } else {
+                obsidianMsg = context.getString(R.string.qd_settings_diary_folder_invalid)
             }
-
         }
 
     }
@@ -945,8 +984,11 @@ fun SettingsScreen(
             )
         } catch (_: Exception) { }
 
-        val path = UriUtil.documentUriToPath(uri)
-        templatePath = if (path != null) {
+        val virtualPath = VaultStoragePrefs.virtualPathForDocumentUri(context, vaultPath, uri)
+        val path = if (virtualPath == null) UriUtil.documentUriToPath(uri) else virtualPath
+        templatePath = if (virtualPath != null) {
+            SafVirtualPath.parse(virtualPath)?.relativePath.orEmpty().ifBlank { virtualPath }
+        } else if (path != null) {
             templatePathRelativeToVault(vaultPath, path)
         } else {
             documentDisplayName(context, uri) ?: uri.toString()
@@ -965,11 +1007,13 @@ fun SettingsScreen(
         } catch (_: Exception) { }
         obsidianConfigUri = uri.toString()
         useCustomObsidianConfigPath = true
-        appState.saveConfig(appState.config.value.copy(
-            vaultPath = vaultPath.trim(),
-            obsidianConfigUri = uri.toString(),
-            useCustomObsidianConfigPath = true
-        ))
+        appState.updateConfig { current ->
+            current.copy(
+                vaultPath = vaultPath.trim(),
+                obsidianConfigUri = uri.toString(),
+                useCustomObsidianConfigPath = true,
+            )
+        }
         launchObsidianConfigRead(
             requestedVaultPath = vaultPath,
             requestedCustomUri = uri.toString(),
@@ -985,7 +1029,7 @@ fun SettingsScreen(
            val savedPath = result.data?.getStringExtra(WidgetImageCropActivity.EXTRA_RESULT_PATH)
            if (savedPath != null && File(savedPath).isFile) {
            widgetImageUri = "file://$savedPath"
-           appState.saveConfig(appState.config.value.copy(widgetImageUri = widgetImageUri))
+           appState.updateConfig { current -> current.copy(widgetImageUri = widgetImageUri) }
            QuickNoteWidget.updateAllWidgets(context)
            ShortcutHelper.updateAllShortcuts(context)
            }
@@ -1010,7 +1054,7 @@ fun SettingsScreen(
            if (!readable) {
                android.widget.Toast.makeText(
                    context,
-                   "图片读取失败，请重新选择图片。",
+                   context.getString(R.string.qd_settings_image_read_failed),
                    android.widget.Toast.LENGTH_LONG,
                ).show()
                return@rememberLauncherForActivityResult
@@ -1051,62 +1095,37 @@ fun SettingsScreen(
                )
                android.widget.Toast.makeText(
                    context,
-                   "图片读取失败，请重新选择图片。",
+                   context.getString(R.string.qd_settings_image_read_failed),
                    android.widget.Toast.LENGTH_LONG,
                ).show()
            }
        }
    }
    
-    fun buildConfig(): DiaryConfig {
-        // A setting row persists through onConfigChange immediately. Read the
-        // latest flow value here so the top-bar Save action cannot overwrite a
-        // just-toggled value with a stale composition snapshot.
-        val currentConfig = appState.config.value
-        return DiaryConfig(
+    fun buildConfig(currentConfig: DiaryConfig): DiaryConfig = currentConfig.copy(
         vaultPath = vaultPath.trim(),
         obsidianConfigUri = obsidianConfigUri.trim(),
         useCustomObsidianConfigPath = useCustomObsidianConfigPath,
-         diaryFolder = diaryFolder.trim().ifBlank { "Daily" },
+        diaryFolder = diaryFolder.trim().ifBlank { "Daily" },
         dateFormat = dateFormat.trim().ifBlank { "YYYY-MM-DD" },
         templatePath = templatePath.trim(),
         anchorText = anchorText,
-        timestampFormat = currentConfig.timestampFormat,
-        addAnchorIfMissing = currentConfig.addAnchorIfMissing,
-        timestampOrder = currentConfig.timestampOrder,
-        enterToSave = currentConfig.enterToSave,
-        openObsidianAfterFloatingSave = currentConfig.openObsidianAfterFloatingSave,
-        saveDraftOnFloatingClose = currentConfig.saveDraftOnFloatingClose,
         widgetImageUri = widgetImageUri,
-        autoCheckUpdate = currentConfig.autoCheckUpdate,
-        filterFrontmatter = currentConfig.filterFrontmatter,
         imageStoragePath = imageStoragePath.trim(),
-        imageNamingFormat = currentConfig.imageNamingFormat,
-          imageLinkFormat = currentConfig.imageLinkFormat,
-          imageCustomNamingFormat = currentConfig.imageCustomNamingFormat,
-          tagAutocomplete = true,
-          wikilinkAutocomplete = true,
-          systemSidebarSupport = currentConfig.systemSidebarSupport,
-         homeEntryMode = currentConfig.homeEntryMode,
-         toolbarOrder = currentConfig.toolbarOrder,
-         toolbarVisible = currentConfig.toolbarVisible,
-         loggingEnabled = currentConfig.loggingEnabled,
-        taskPeriod = currentConfig.taskPeriod,
-        taskCompletionSoundMode = currentConfig.taskCompletionSoundMode,
-        taskCompletionTimestamp = currentConfig.taskCompletionTimestamp,
-        taskCompletionTimestampFormat = currentConfig.taskCompletionTimestampFormat,
-        taskShowCompleted = currentConfig.taskShowCompleted,
-        taskShowFullContent = currentConfig.taskShowFullContent,
-        taskGroupByDate = currentConfig.taskGroupByDate,
-        widgetStyle = currentConfig.widgetStyle,
-        widgetBackgroundColor = currentConfig.widgetBackgroundColor,
-        widgetOpacity = currentConfig.widgetOpacity,
-        floatingOpacity = currentConfig.floatingOpacity,
-        )
-    }
+    )
 
     fun saveFull() {
-        appState.saveConfig(buildConfig())
+        appState.updateConfig(::buildConfig)
+    }
+
+    fun saveHiddenTexts(values: List<String>) {
+        val result = appState.updateConfig { current ->
+            current.copy(hiddenDisplayTexts = values)
+        }
+        if (result.hiddenDisplayTextsChanged) {
+            WidgetRefreshCoordinator.refreshRead(context, immediate = true)
+            WidgetRefreshCoordinator.refreshTasks(context, immediate = true)
+        }
     }
 
     fun savePathsAndRefreshIndex() {
@@ -1129,15 +1148,15 @@ fun SettingsScreen(
         modifier = Modifier.nestedScroll(topBarScrollBehavior.nestedScrollConnection),
         topBar = {
             LargeTopAppBar(
-                title = { Text("设置") },
+                title = { Text(stringResource(R.string.qd_editor_settings)) },
                 navigationIcon = {
                     IconButton(onClick = ::saveAndBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.qd_onboarding_previous))
                     }
                 },
                 actions = {
                     IconButton(onClick = ::saveAndBack) {
-                        Icon(Icons.Default.Check, "保存")
+                        Icon(Icons.Default.Check, stringResource(R.string.qd_common_save))
                     }
                 },
                 scrollBehavior = topBarScrollBehavior,
@@ -1157,12 +1176,17 @@ fun SettingsScreen(
                 .padding(padding)
                 .then(if (windowSize.isLarge) Modifier.widthIn(max = 1200.dp) else Modifier),
         ) {
-            PrimaryTabRow(selectedTabIndex = pagerState.currentPage) {
+            PrimaryScrollableTabRow(
+                selectedTabIndex = pagerState.currentPage,
+                containerColor = Color.Transparent,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                edgePadding = 0.dp,
+            ) {
                 tabs.forEachIndexed { index, tab ->
                     Tab(
                         selected = pagerState.currentPage == index,
                         onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
-                        text = { Text(tab.title) }
+                        text = { Text(stringResource(tab.titleRes)) }
                     )
                 }
             }
@@ -1178,7 +1202,8 @@ fun SettingsScreen(
                         configState = configState,
                         anchorText = anchorText,
                         onAnchorTextChange = { anchorText = it },
-                        onConfigChange = { change -> appState.saveConfig(change(appState.config.value)) },
+                        onConfigChange = { change -> appState.updateConfig(change) },
+                        onHiddenTextsSave = ::saveHiddenTexts,
                         onRefreshWikilinkIndex = { WikilinkIndexRepository.refresh(context, vaultPath) },
                         onSave = ::saveAndBack,
                         isActive = settledPage == page,
@@ -1187,7 +1212,7 @@ fun SettingsScreen(
                         StructuredWidgetsTab(
                             configState = configState,
                             onConfigChange = { change ->
-                                appState.saveConfig(change(appState.config.value))
+                                appState.updateConfig(change)
                                 QuickNoteWidget.updateAllWidgets(context)
                                 WidgetRefreshCoordinator.refreshAll(context)
                             },
@@ -1201,7 +1226,7 @@ fun SettingsScreen(
                             configState = configState,
                             widgetImageUri = widgetImageUri,
                             onConfigChange = { change ->
-                                appState.saveConfig(change(appState.config.value))
+                                appState.updateConfig(change)
                                 QuickNoteWidget.updateAllWidgets(context)
                                 WidgetRefreshCoordinator.refreshAll(context)
                                 FloatingNoteAppearance.refresh(context)
@@ -1212,7 +1237,7 @@ fun SettingsScreen(
                             },
                             onResetImage = {
                                 widgetImageUri = ""
-                                appState.saveConfig(appState.config.value.copy(widgetImageUri = ""))
+                                appState.updateConfig { current -> current.copy(widgetImageUri = "") }
                                 WidgetImageFileResolver.clearInternalCrops(context)
                                 QuickNoteWidget.updateAllWidgets(context)
                                 ShortcutHelper.updateAllShortcuts(context)
@@ -1223,6 +1248,7 @@ fun SettingsScreen(
                     }
                     SettingsTab.OTHER -> OtherTab(
                         vaultPath = vaultPath,
+                        obsidianVaultId = obsidianVaultId,
                         obsidianConfigUri = obsidianConfigUri,
                         useCustomObsidianConfigPath = useCustomObsidianConfigPath,
                         diaryFolder = diaryFolder,
@@ -1233,6 +1259,13 @@ fun SettingsScreen(
                         obsidianDetected = obsidianDetected,
                         obsidianMsg = obsidianMsg,
                         onVaultPathChange = { vaultPath = it },
+                        onObsidianVaultIdChange = {
+                            obsidianVaultId = it
+                            context.getSharedPreferences("QuickDaily", android.content.Context.MODE_PRIVATE)
+                                .edit()
+                                .putString(VaultStoragePrefs.OBSIDIAN_VAULT_ID_KEY, it.trim())
+                                .apply()
+                        },
                         onDiaryFolderChange = { diaryFolder = it },
                         onDateFormatChange = { dateFormat = it },
                         onTemplatePathChange = { templatePath = it },
@@ -1279,17 +1312,17 @@ fun SettingsScreen(
                         updateErrors = updateErrors,
                         isLatest = isLatest,
                         context = context,
-                        onConfigChange = { change -> appState.saveConfig(change(appState.config.value)) },
+                        onConfigChange = { change -> appState.updateConfig(change) },
                         onCheckUpdate = {
                             isCheckingUpdate = true
                             updateInfo = null
                             updateErrors = emptyList()
                             isLatest = false
-                            updateStatus = "正在检查更新..."
+                            updateStatus = context.getString(R.string.qd_settings_checking_update)
                             scope.launch {
                                 val result = com.quickdaily.util.UpdateChecker.checkUpdate(
                                     currentVersion = BuildConfig.VERSION_NAME, context = context
-                                ) { progress -> updateStatus = progress }
+                                ) { progress -> updateStatus = progress.resolve(context).toString() }
                                 when (result) {
                                     is com.quickdaily.util.UpdateResult.UpdateAvailable -> {
                                         updateInfo = result.info; updateStatus = ""
@@ -1319,6 +1352,7 @@ fun SettingsScreen(
 @Composable
 private fun DiaryStorageTab(
     vaultPath: String,
+    obsidianVaultId: String,
     obsidianConfigUri: String,
     useCustomObsidianConfigPath: Boolean,
     diaryFolder: String,
@@ -1329,6 +1363,7 @@ private fun DiaryStorageTab(
     obsidianDetected: Boolean,
     obsidianMsg: String,
     onVaultPathChange: (String) -> Unit,
+    onObsidianVaultIdChange: (String) -> Unit,
     onDiaryFolderChange: (String) -> Unit,
     onDateFormatChange: (String) -> Unit,
     onTemplatePathChange: (String) -> Unit,
@@ -1363,20 +1398,37 @@ private fun DiaryStorageTab(
             ),
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("仓库配置", style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(R.string.qd_settings_vault_config), style = MaterialTheme.typography.titleSmall)
                 OutlinedTextField(
                     value = vaultPath,
                     onValueChange = onVaultPathChange,
-                    label = { Text("Obsidian 仓库路径") },
+                    label = { Text(stringResource(R.string.qd_settings_vault_path)) },
                     placeholder = { Text("/storage/emulated/0/Documents/Vault") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     leadingIcon = { Icon(Icons.Default.Storage, null, Modifier.size(20.dp)) },
                     trailingIcon = {
                         IconButton(onClick = onPickVault) {
-                            Icon(Icons.Default.FolderOpen, "选择文件夹")
+                            Icon(Icons.Default.FolderOpen, stringResource(R.string.qd_settings_choose_folder))
                         }
                     }
+                )
+
+                OutlinedTextField(
+                    value = obsidianVaultId,
+                    onValueChange = onObsidianVaultIdChange,
+                    label = { Text(stringResource(R.string.qd_settings_vault_id)) },
+                    supportingText = {
+                        Text(
+                            if (SafVirtualPath.parse(vaultPath) != null) {
+                                stringResource(R.string.qd_settings_vault_id_saf_help)
+                            } else {
+                                stringResource(R.string.qd_settings_vault_id_path_help)
+                            },
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
                 )
 
                 SettingsDivider()
@@ -1384,7 +1436,7 @@ private fun DiaryStorageTab(
                 Button(onClick = onReadObsidianConfig, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.Folder, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("从 Obsidian 读取配置")
+                    Text(stringResource(R.string.qd_settings_read_obsidian))
                 }
 
                 SettingsDivider()
@@ -1394,13 +1446,13 @@ private fun DiaryStorageTab(
                         .fillMaxWidth()
                         .clickable { onCustomObsidianConfigPathChange(!useCustomObsidianConfigPath) },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    headlineContent = { Text("是否启用自定义配置路径") },
+                    headlineContent = { Text(stringResource(R.string.qd_settings_custom_config_title)) },
                     supportingContent = {
                         Text(
                             settingSwitchDescription(
                                 enabled = useCustomObsidianConfigPath,
-                                enabledText = "开启后使用自定义 Obsidian 配置文件路径。",
-                                disabledText = "关闭后使用仓库默认路径 /.obsidian/daily-notes.json。",
+                                enabledText = stringResource(R.string.qd_settings_custom_config_enabled),
+                                disabledText = stringResource(R.string.qd_settings_custom_config_disabled),
                             ),
                         )
                     },
@@ -1421,11 +1473,11 @@ private fun DiaryStorageTab(
                         OutlinedButton(onClick = onPickObsidianConfig, modifier = Modifier.weight(1f)) {
                             Icon(Icons.Default.FileOpen, null, Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text(if (obsidianConfigUri.isBlank()) "选择配置文件" else "重新选择")
+                            Text(stringResource(if (obsidianConfigUri.isBlank()) R.string.qd_settings_select_config else R.string.qd_settings_reselect))
                         }
                         if (obsidianConfigUri.isNotBlank()) {
                             IconButton(onClick = onClearObsidianConfig) {
-                                Icon(Icons.Default.Clear, "清除自定义配置文件")
+                                Icon(Icons.Default.Clear, stringResource(R.string.qd_settings_clear_custom_file))
                             }
                         }
                     }
@@ -1433,7 +1485,7 @@ private fun DiaryStorageTab(
 
                 SettingsDivider()
                 Text(
-                    text = "Obsidian 配置文件路径：",
+                    text = stringResource(R.string.qd_settings_config_path),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = SettingsContentInset),
@@ -1442,7 +1494,7 @@ private fun DiaryStorageTab(
                 val configPathText = if (!useCustomObsidianConfigPath) {
                     defaultConfigPath
                 } else if (obsidianConfigUri.isBlank()) {
-                    "未选择（使用仓库默认路径 $defaultConfigPath）"
+                    context.getString(R.string.qd_settings_default_config_path, defaultConfigPath)
                 } else {
                     val uri = Uri.parse(obsidianConfigUri)
                     UriUtil.documentUriToPath(context, uri)
@@ -1472,17 +1524,17 @@ private fun DiaryStorageTab(
             ),
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("日记文件配置", style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(R.string.qd_settings_diary_config), style = MaterialTheme.typography.titleSmall)
                 OutlinedTextField(
                     value = diaryFolder,
                     onValueChange = onDiaryFolderChange,
-                    label = { Text("日记文件夹路径") },
+                    label = { Text(stringResource(R.string.qd_settings_diary_folder)) },
                     placeholder = { Text("Daily") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     trailingIcon = {
                         IconButton(onClick = onPickDiaryFolder) {
-                            Icon(Icons.Default.FolderOpen, "选择文件夹")
+                            Icon(Icons.Default.FolderOpen, stringResource(R.string.qd_settings_choose_folder))
                         }
                     }
                 )
@@ -1490,7 +1542,7 @@ private fun DiaryStorageTab(
                 OutlinedTextField(
                     value = dateFormat,
                     onValueChange = onDateFormatChange,
-                    label = { Text("日记文件名格式") },
+                    label = { Text(stringResource(R.string.qd_settings_diary_filename)) },
                     placeholder = { Text("YYYY-MM-DD") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
@@ -1499,21 +1551,21 @@ private fun DiaryStorageTab(
                 OutlinedTextField(
                     value = templatePath,
                     onValueChange = onTemplatePathChange,
-                    label = { Text("日记模板路径") },
-                    placeholder = { Text("Templates/daily.md（可选）") },
+                    label = { Text(stringResource(R.string.qd_settings_diary_template)) },
+                    placeholder = { Text(stringResource(R.string.qd_settings_diary_template_hint)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     leadingIcon = { Icon(Icons.Default.Description, null, Modifier.size(20.dp)) },
                     trailingIcon = {
                         IconButton(onClick = onPickTemplate) {
-                            Icon(Icons.Default.FileOpen, "选择文件")
+                            Icon(Icons.Default.FileOpen, stringResource(R.string.qd_settings_choose_file))
                         }
                     }
                 )
 
                 SettingsDivider()
                 Text(
-                    text = "\u4eca\u65e5\u65e5\u8bb0\u6587\u4ef6\u8def\u5f84\uff1a$todayPath",
+                    text = stringResource(R.string.qd_settings_today_diary_path, todayPath),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                     modifier = Modifier.padding(horizontal = SettingsContentInset),
@@ -1529,43 +1581,43 @@ private fun DiaryStorageTab(
             ),
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("附件配置", style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(R.string.qd_settings_attachment_config), style = MaterialTheme.typography.titleSmall)
                 DropdownSetting(
-                    label = "图片命名格式",
+                    label = stringResource(R.string.qd_settings_image_naming),
                     selectedKey = config.imageNamingFormat,
-                    options = namingOptions.map { it.key to it.label },
+                    options = namingOptions.map { it.key to stringResource(it.labelRes) },
                     onSelect = { onConfigChange { copy(imageNamingFormat = it) } }
                 )
                 AnimatedSettingsVisibility(visible = config.imageNamingFormat == "custom") {
                     OutlinedTextField(
                         value = config.imageCustomNamingFormat,
                         onValueChange = { onConfigChange { copy(imageCustomNamingFormat = it) } },
-                        label = { Text("自定义命名格式") },
+                        label = { Text(stringResource(R.string.qd_settings_custom_naming)) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         trailingIcon = {
                             IconButton(onClick = { onConfigChange { copy(imageCustomNamingFormat = "yyyy-MM-dd_HHmmss_{filename}{ext}") } }) {
-                                Icon(Icons.Default.Refresh, "重置为默认")
+                                Icon(Icons.Default.Refresh, stringResource(R.string.qd_settings_reset_default_short))
                             }
                         }
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "可用占位符（点击可复制）",
+                        stringResource(R.string.qd_settings_placeholders),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary
                     )
                     Spacer(Modifier.height(4.dp))
                     val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
                     val tokens = listOf(
-                        "{filename}" to "原文件名（不含扩展名）",
-                        "{ext}" to "扩展名（如 .jpg、.mp3）",
-                        "yyyy" to "年份（4位）",
-                        "MM" to "月份（2位）",
-                        "dd" to "日（2位）",
-                        "HH" to "小时（24小时制）",
-                        "mm" to "分钟",
-                        "ss" to "秒钟"
+                        "{filename}" to stringResource(R.string.qd_settings_token_filename),
+                        "{ext}" to stringResource(R.string.qd_settings_token_extension),
+                        "yyyy" to stringResource(R.string.qd_settings_token_year),
+                        "MM" to stringResource(R.string.qd_settings_token_month),
+                        "dd" to stringResource(R.string.qd_settings_token_day),
+                        "HH" to stringResource(R.string.qd_settings_token_hour),
+                        "mm" to stringResource(R.string.qd_settings_token_minute),
+                        "ss" to stringResource(R.string.qd_settings_token_second)
                     )
                     Column {
                         tokens.forEach { (token, desc) ->
@@ -1578,7 +1630,11 @@ private fun DiaryStorageTab(
                                     .clickable {
                                         try {
                                             clipboard.setPrimaryClip(android.content.ClipData.newPlainText(token, token))
-                                            android.widget.Toast.makeText(context, "已复制 $token", android.widget.Toast.LENGTH_SHORT).show()
+                                            android.widget.Toast.makeText(
+                                                context,
+                                                context.getString(R.string.qd_settings_copied_token, token),
+                                                android.widget.Toast.LENGTH_SHORT,
+                                            ).show()
                                         } catch (_: Exception) { }
                                     }
                             )
@@ -1587,23 +1643,23 @@ private fun DiaryStorageTab(
                 }
                 SettingsDivider()
                 DropdownSetting(
-                    label = "图片链接格式",
+                    label = stringResource(R.string.qd_settings_image_link),
                     selectedKey = config.imageLinkFormat,
-                    options = linkOptions,
+                    options = linkOptions.map { it.first to stringResource(it.second) },
                     onSelect = { onConfigChange { copy(imageLinkFormat = it) } }
                 )
                 SettingsDivider()
                 OutlinedTextField(
                     value = imageStoragePath,
                     onValueChange = onImageStoragePathChange,
-                    label = { Text("附件储存目录") },
-                    placeholder = { Text("assets/images（相对仓库路径）") },
+                    label = { Text(stringResource(R.string.qd_settings_attachment_folder)) },
+                    placeholder = { Text(stringResource(R.string.qd_settings_attachment_folder_hint)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     leadingIcon = { Icon(Icons.Default.PhotoLibrary, null, Modifier.size(20.dp)) },
                     trailingIcon = {
                         IconButton(onClick = onPickImageStorage) {
-                            Icon(Icons.Default.FolderOpen, "选择文件夹")
+                            Icon(Icons.Default.FolderOpen, stringResource(R.string.qd_settings_choose_folder))
                         }
                     }
                 )
@@ -1615,7 +1671,7 @@ private fun DiaryStorageTab(
                 }
                 SettingsDivider()
                 Text(
-                    text = "附件储存路径示例：$vaultPath/$imageStoragePath/$exampleName",
+                    text = stringResource(R.string.qd_settings_attachment_example, vaultPath, imageStoragePath, exampleName),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                     modifier = Modifier.padding(horizontal = SettingsContentInset),
@@ -1625,7 +1681,7 @@ private fun DiaryStorageTab(
         Button(onClick = onSave, modifier = Modifier.fillMaxWidth(), enabled = vaultEnabled) {
             Icon(Icons.Default.Check, null, Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
-            Text("保存并返回")
+            Text(stringResource(R.string.qd_settings_save_return))
         }
     }
 }
@@ -1661,12 +1717,12 @@ private fun AnchorTextDialog(
                     .padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text("编辑锚点文本", style = MaterialTheme.typography.titleLarge)
+                Text(stringResource(R.string.qd_settings_anchor_dialog), style = MaterialTheme.typography.titleLarge)
                 OutlinedTextField(
                     value = value,
                     onValueChange = onValueChange,
-                    label = { Text("锚点文本") },
-                    supportingText = { Text("锚点文本支持换行，可留空。") },
+                    label = { Text(stringResource(R.string.qd_settings_anchor_text)) },
+                    supportingText = { Text(stringResource(R.string.qd_settings_anchor_help)) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 4,
                     maxLines = 8,
@@ -1675,9 +1731,116 @@ private fun AnchorTextDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
                 ) {
-                    TextButton(onClick = onDismiss) { Text("取消") }
-                    TextButton(onClick = onSave) { Text("保存") }
-                    TextButton(onClick = onReset) { Text("重置") }
+                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.qd_common_cancel)) }
+                    TextButton(onClick = onSave) { Text(stringResource(R.string.qd_common_save)) }
+                    TextButton(onClick = onReset) { Text(stringResource(R.string.qd_common_reset)) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HiddenTextDialog(
+    rows: List<HiddenTextDraftRow>,
+    onRowsChange: (List<HiddenTextDraftRow>) -> Unit,
+    onAdd: () -> Unit,
+    onDelete: (Long) -> Unit,
+    onDismiss: () -> Unit,
+    onSave: () -> Unit,
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .widthIn(max = 560.dp)
+                .heightIn(max = 520.dp)
+                .imePadding(),
+            shape = MaterialTheme.shapes.extraLarge,
+            tonalElevation = 6.dp,
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(stringResource(R.string.qd_settings_hidden_dialog), style = MaterialTheme.typography.titleLarge)
+                Text(
+                    stringResource(R.string.qd_settings_hidden_help),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 64.dp, max = 300.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    rows.forEachIndexed { index, row ->
+                        key(row.id) {
+                            val deleteLabel = stringResource(R.string.qd_settings_delete_hidden_item, index + 1)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.Top,
+                            ) {
+                                OutlinedTextField(
+                                    value = row.text,
+                                    onValueChange = { value ->
+                                        onRowsChange(
+                                            rows.map { current ->
+                                                if (current.id == row.id) current.copy(text = value) else current
+                                            },
+                                        )
+                                    },
+                                    label = { Text(stringResource(R.string.qd_settings_hidden_item, index + 1)) },
+                                    modifier = Modifier.weight(1f),
+                                    minLines = 3,
+                                    maxLines = 6,
+                                )
+                                IconButton(
+                                    onClick = { onDelete(row.id) },
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .semantics {
+                                            contentDescription = deleteLabel
+                                        },
+                                ) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = null,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (rows.isEmpty()) {
+                        Text(
+                            stringResource(R.string.qd_settings_no_hidden_items),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                OutlinedButton(
+                    onClick = onAdd,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp),
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.qd_settings_add_one))
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.qd_common_cancel)) }
+                    Button(onClick = onSave) { Text(stringResource(R.string.qd_common_save)) }
                 }
             }
         }
@@ -1710,13 +1873,13 @@ private fun CompletionTimestampDialog(
                     .padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text("编辑完成时间戳格式", style = MaterialTheme.typography.titleLarge)
+                Text(stringResource(R.string.qd_settings_timestamp_dialog), style = MaterialTheme.typography.titleLarge)
                 OutlinedTextField(
                     value = value,
                     onValueChange = onValueChange,
-                    label = { Text("完成时间戳格式") },
+                    label = { Text(stringResource(R.string.qd_settings_completion_timestamp)) },
                     supportingText = {
-                        Text("可使用 YYYY、YY、MM、M、DD、D、HH、H、mm、m、ss、s 等 Obsdian 通用日期格式。")
+                        Text(stringResource(R.string.qd_settings_timestamp_help))
                     },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
@@ -1725,9 +1888,9 @@ private fun CompletionTimestampDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
                 ) {
-                    TextButton(onClick = onDismiss) { Text("取消") }
-                    TextButton(onClick = onSave) { Text("保存") }
-                    TextButton(onClick = onReset) { Text("重置") }
+                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.qd_common_cancel)) }
+                    TextButton(onClick = onSave) { Text(stringResource(R.string.qd_common_save)) }
+                    TextButton(onClick = onReset) { Text(stringResource(R.string.qd_common_reset)) }
                 }
             }
         }
@@ -1743,6 +1906,7 @@ private fun CompletionTimestampSetting(
 ) {
     var dialogOpen by rememberSaveable { mutableStateOf(false) }
     var draft by rememberSaveable { mutableStateOf(format) }
+    val editTimestampDescription = stringResource(R.string.qd_settings_timestamp_edit)
 
     Row(
         modifier = Modifier
@@ -1760,15 +1924,15 @@ private fun CompletionTimestampSetting(
                     dialogOpen = true
                 }
                 .semantics {
-                    contentDescription = "编辑完成时间戳格式"
+                    contentDescription = editTimestampDescription
                 },
         ) {
-            Text("完成时间戳", style = MaterialTheme.typography.bodyLarge)
+            Text(stringResource(R.string.qd_settings_completion_timestamp_title), style = MaterialTheme.typography.bodyLarge)
             Text(
                 if (enabled) {
-                    "开启后完成任务时将追加写入「$format」，点击此处文本可编辑自定义时间戳的格式。"
+                    stringResource(R.string.qd_settings_timestamp_enabled, format)
                 } else {
-                    "关闭后完成任务时不会再追加写入时间戳。"
+                    stringResource(R.string.qd_settings_timestamp_disabled)
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1823,7 +1987,8 @@ private fun TimestampPreviewSection(
         }
     }
 
-    val previewText = remember(timestampFormat, addAnchorIfMissing, anchorText) {
+    val sampleText = stringResource(R.string.qd_settings_sample_text)
+    val previewText = remember(timestampFormat, addAnchorIfMissing, anchorText, sampleText) {
         if (timestampFormat == "none") {
             ""
         } else {
@@ -1834,15 +1999,15 @@ private fun TimestampPreviewSection(
                     appendLine(anchorText)
                 }
                 append(when (timestampFormat) {
-                    "time_only" -> "$now 这是一段文本"
-                    "time_only_seconds" -> "$nowSec 这是一段文本"
-                    "list" -> "- 这是一段文本"
-                    "ordered" -> "1. 这是一段文本"
-                    "list_time" -> "- $now 这是一段文本"
-                    "list_time_seconds" -> "- $nowSec 这是一段文本"
-                    "date_time" -> "${DateUtil.nowDateTimeChineseStr()} 这是一段文本"
-                    "list_date_time" -> "- ${DateUtil.nowDateTimeChineseStr()} 这是一段文本"
-                    else -> "- 这是一段文本"
+                    "time_only" -> "$now $sampleText"
+                    "time_only_seconds" -> "$nowSec $sampleText"
+                    "list" -> "- $sampleText"
+                    "ordered" -> "1. $sampleText"
+                    "list_time" -> "- $now $sampleText"
+                    "list_time_seconds" -> "- $nowSec $sampleText"
+                    "date_time" -> "${DateUtil.nowDateTimeChineseStr()} $sampleText"
+                    "list_date_time" -> "- ${DateUtil.nowDateTimeChineseStr()} $sampleText"
+                    else -> "- $sampleText"
                 })
             }
         }
@@ -1862,10 +2027,10 @@ private fun TimestampPreviewSection(
             .padding(horizontal = SettingsContentInset, vertical = 8.dp)
             .semantics { liveRegion = LiveRegionMode.Polite },
     ) {
-        Text("时间戳示例：", style = MaterialTheme.typography.labelSmall)
+                        Text(stringResource(R.string.qd_settings_timestamp_example), style = MaterialTheme.typography.labelSmall)
         if (timestampFormat == "none") {
             Text(
-                "当前未启用时间戳。",
+                stringResource(R.string.qd_settings_timestamp_off),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -1886,6 +2051,7 @@ private fun StructuredEditorSettingsTab(
     anchorText: String,
     onAnchorTextChange: (String) -> Unit,
     onConfigChange: OnConfigChange,
+    onHiddenTextsSave: (List<String>) -> Unit,
     onRefreshWikilinkIndex: () -> Unit,
     onSave: () -> Unit,
     isActive: Boolean,
@@ -1898,36 +2064,46 @@ private fun StructuredEditorSettingsTab(
     }
     var anchorDialogOpen by rememberSaveable { mutableStateOf(false) }
     var anchorDraft by rememberSaveable { mutableStateOf(anchorText) }
+    var hiddenDialogOpen by rememberSaveable { mutableStateOf(false) }
+    var hiddenDraft by remember { mutableStateOf<List<HiddenTextDraftRow>>(emptyList()) }
+    var nextHiddenRowId by remember { mutableLongStateOf(0L) }
     var timestampPreviewFocusNonce by rememberSaveable { mutableIntStateOf(0) }
+
+    fun openHiddenDialog() {
+        hiddenDraft = config.hiddenDisplayTexts
+            .map { text -> HiddenTextDraftRow(nextHiddenRowId++, text) }
+            .ifEmpty { listOf(HiddenTextDraftRow(nextHiddenRowId++, "")) }
+        hiddenDialogOpen = true
+    }
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(
             modifier = Modifier.fillMaxWidth().widthIn(max = 720.dp)
                 .verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            CollapsibleSettingsSection("编辑器设置") {
+            CollapsibleSettingsSection(stringResource(R.string.qd_settings_editor)) {
                 ElevatedCard(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         CompactDropdownSetting(
-                            label = "启动首页",
-                            supportingText = "该选项只影响从桌面图标启动的行为。",
+                            label = stringResource(R.string.qd_settings_home_entry),
+                            supportingText = stringResource(R.string.qd_settings_home_entry_help),
                             selectedKey = config.homeEntryMode,
-                            options = HomeEntryMode.entries.map { it.key to it.label },
+                            options = HomeEntryMode.entries.map { it.key to stringResource(it.labelRes) },
                             onSelect = { key -> onConfigChange { copy(homeEntryMode = key) } },
                         )
                         SettingsDivider(modifier = Modifier.padding(vertical = 8.dp))
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("过滤 Front matter") },
+                            headlineContent = { Text(stringResource(R.string.qd_settings_filter_frontmatter)) },
                             supportingContent = {
                                 Text(
                                     settingSwitchDescription(
                                         enabled = config.filterFrontmatter,
-                                        enabledText = "开启后将隐藏页面中的 yaml 元数据。",
-                                        disabledText = "关闭后将正常显示页面中的 yaml 元数据。",
+                                        enabledText = stringResource(R.string.qd_settings_filter_enabled),
+                                        disabledText = stringResource(R.string.qd_settings_filter_disabled),
                                     ),
                                 )
                             },
@@ -1943,24 +2119,57 @@ private fun StructuredEditorSettingsTab(
                         SettingsDivider()
                         ListItem(
                             modifier = Modifier.clickable(
+                                role = Role.Button,
+                                onClickLabel = stringResource(R.string.qd_settings_hidden_dialog),
+                                onClick = ::openHiddenDialog,
+                            ),
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            headlineContent = { Text(stringResource(R.string.qd_settings_hidden_dialog)) },
+                            supportingContent = {
+                                Text(
+                                    if (config.hiddenDisplayTexts.isEmpty()) {
+                                        stringResource(R.string.qd_settings_hidden_not_set)
+                                    } else {
+                                        stringResource(R.string.qd_settings_hidden_set_count, config.hiddenDisplayTexts.size)
+                                    },
+                                )
+                            },
+                            trailingContent = {
+                                IconButton(onClick = ::openHiddenDialog) {
+                                    Icon(Icons.Default.EditNote, contentDescription = stringResource(R.string.qd_settings_hidden_dialog))
+                                }
+                            },
+                        )
+                        SettingsDivider()
+                        ListItem(
+                            modifier = Modifier.clickable(
                                 enabled = vaultPath.isNotBlank() && !wikilinkIndex.loading,
                                 role = Role.Button,
-                                onClickLabel = "刷新双链和标签补全索引",
+                                onClickLabel = stringResource(R.string.qd_settings_refresh_index),
                                 onClick = onRefreshWikilinkIndex,
                             ),
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("双链标签的补全索引") },
+                            headlineContent = { Text(stringResource(R.string.qd_settings_index_title)) },
                             supportingContent = {
                                 Text(
                                     when {
-                                        vaultPath.isBlank() -> "请先设置仓库路径"
-                                        wikilinkIndex.rootPath == vaultPath && wikilinkIndex.loading -> "正在扫描 Markdown 页面和标签"
+                                        vaultPath.isBlank() -> stringResource(R.string.qd_settings_index_vault_required)
+                                        wikilinkIndex.rootPath == vaultPath && wikilinkIndex.loading -> stringResource(R.string.qd_settings_index_scanning)
                                         wikilinkIndex.rootPath == vaultPath && wikilinkIndex.error != null -> wikilinkIndex.error!!
                                         wikilinkIndex.rootPath == vaultPath && wikilinkIndex.indexed && wikilinkIndex.tagsIndexed ->
-                                            "已索引 ${wikilinkIndex.entries.size} 个页面，${wikilinkIndex.aliasCount} 个别称，${wikilinkIndex.tags.size} 个标签"
+                                            stringResource(
+                                                R.string.qd_settings_index_summary_full,
+                                                wikilinkIndex.entries.size,
+                                                wikilinkIndex.aliasCount,
+                                                wikilinkIndex.tags.size,
+                                            )
                                         wikilinkIndex.rootPath == vaultPath && wikilinkIndex.indexed ->
-                                            "已索引 ${wikilinkIndex.entries.size} 个页面，${wikilinkIndex.aliasCount} 个别称；标签索引请手动刷新"
-                                        else -> "尚未刷新当前仓库的双链和标签索引"
+                                            stringResource(
+                                                R.string.qd_settings_index_summary_without_tags,
+                                                wikilinkIndex.entries.size,
+                                                wikilinkIndex.aliasCount,
+                                            )
+                                        else -> stringResource(R.string.qd_settings_index_not_refreshed)
                                     }
                                 )
                             },
@@ -1968,14 +2177,14 @@ private fun StructuredEditorSettingsTab(
                                 IconButton(
                                     onClick = onRefreshWikilinkIndex,
                                     enabled = vaultPath.isNotBlank() && !wikilinkIndex.loading,
-                                ) { Icon(Icons.Default.Refresh, contentDescription = "刷新双链和标签补全索引") }
+                                ) { Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.qd_settings_refresh_index)) }
                             },
                         )
                     }
                 }
             }
 
-            CollapsibleSettingsSection("悬浮窗设置") {
+            CollapsibleSettingsSection(stringResource(R.string.qd_settings_floating)) {
                 ElevatedCard(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
@@ -1983,13 +2192,13 @@ private fun StructuredEditorSettingsTab(
                     Column(modifier = Modifier.padding(16.dp)) {
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("回车触发保存") },
+                            headlineContent = { Text(stringResource(R.string.qd_settings_enter_to_save)) },
                             supportingContent = {
                                 Text(
                                     settingSwitchDescription(
                                         enabled = config.enterToSave,
-                                        enabledText = "开启后可在悬浮窗中按回车键直接触发保存，动作更快捷，但回车换行功能失效。",
-                                        disabledText = "关闭后在悬浮窗中可以使用回车键正常换行。",
+                                        enabledText = stringResource(R.string.qd_settings_enter_to_save_enabled),
+                                        disabledText = stringResource(R.string.qd_settings_enter_to_save_disabled),
                                     ),
                                 )
                             },
@@ -1998,13 +2207,13 @@ private fun StructuredEditorSettingsTab(
                         SettingsDivider()
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("保存时拉起Obsidian") },
+                            headlineContent = { Text(stringResource(R.string.qd_settings_open_obsidian_after_save)) },
                             supportingContent = {
                                 Text(
                                     settingSwitchDescription(
                                         enabled = config.openObsidianAfterFloatingSave,
-                                        enabledText = "开启后保存成功时将自动后台拉起 Obsidian，适合使用 ob 本体进行同步的用户。",
-                                        disabledText = "关闭后保存成功时不再自动拉起 Obsidian，后台更纯净。",
+                                        enabledText = stringResource(R.string.qd_settings_open_obsidian_enabled),
+                                        disabledText = stringResource(R.string.qd_settings_open_obsidian_disabled),
                                     ),
                                 )
                             },
@@ -2015,13 +2224,13 @@ private fun StructuredEditorSettingsTab(
                         SettingsDivider()
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("退出时保存草稿") },
+                            headlineContent = { Text(stringResource(R.string.qd_settings_save_draft_on_exit)) },
                             supportingContent = {
                                 Text(
                                     if (config.saveDraftOnFloatingClose) {
-                                        "开启后当悬浮窗退出时将默认保存到 Obsidian。"
+                                        stringResource(R.string.qd_settings_save_draft_enabled)
                                     } else {
-                                        "关闭后草稿内容将保存在悬浮窗当中，直至手动保存。"
+                                        stringResource(R.string.qd_settings_save_draft_disabled)
                                     },
                                 )
                             },
@@ -2032,13 +2241,13 @@ private fun StructuredEditorSettingsTab(
                         SettingsDivider()
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("系统侧边启动器支持") },
+                            headlineContent = { Text(stringResource(R.string.qd_settings_system_sidebar)) },
                             supportingContent = {
                                 Text(
                                     settingSwitchDescription(
                                         enabled = config.systemSidebarSupport,
-                                        enabledText = "开启后可使用系统侧边栏启动器拉起速录悬浮窗，但会增加些许启动和关闭时间。",
-                                        disabledText = "关闭后系统侧边栏启动器同步首页启动动作，启动速度更快。",
+                                        enabledText = stringResource(R.string.qd_settings_system_sidebar_enabled),
+                                        disabledText = stringResource(R.string.qd_settings_system_sidebar_disabled),
                                     ),
                                 )
                             },
@@ -2050,17 +2259,17 @@ private fun StructuredEditorSettingsTab(
                 }
             }
 
-            CollapsibleSettingsSection("时间戳设置") {
+            CollapsibleSettingsSection(stringResource(R.string.qd_settings_timestamp_section)) {
                 ElevatedCard(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                 ) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         CompactDropdownSetting(
-                            label = "时间戳格式",
-                            supportingText = "选择时间戳的显示方式。",
+                            label = stringResource(R.string.qd_settings_timestamp_format),
+                            supportingText = stringResource(R.string.qd_settings_timestamp_format_help),
                             selectedKey = config.timestampFormat,
-                            options = timestampOptions.map { it.key to it.label },
+                            options = timestampOptions.map { it.key to stringResource(it.labelRes) },
                             onSelect = { key ->
                                 onConfigChange { copy(timestampFormat = key) }
                                 timestampPreviewFocusNonce++
@@ -2068,10 +2277,10 @@ private fun StructuredEditorSettingsTab(
                         )
                         SettingsDivider()
                         CompactDropdownSetting(
-                            label = "时间戳插入顺序",
-                            supportingText = "可以选择最新加入的时间戳，插入到文本的最上方或者最下方。",
+                            label = stringResource(R.string.qd_settings_timestamp_order),
+                            supportingText = stringResource(R.string.qd_settings_timestamp_order_help),
                             selectedKey = config.timestampOrder,
-                            options = timestampOrderOptions,
+                            options = timestampOrderOptions.map { it.first to stringResource(it.second) },
                             onSelect = { key ->
                                 onConfigChange { copy(timestampOrder = key) }
                                 timestampPreviewFocusNonce++
@@ -2081,15 +2290,15 @@ private fun StructuredEditorSettingsTab(
                         ListItem(
                             modifier = Modifier.clickable(
                                 role = Role.Button,
-                                onClickLabel = "编辑锚点文本",
+                                onClickLabel = stringResource(R.string.qd_settings_anchor_dialog),
                                 onClick = {
                                     anchorDraft = anchorText
                                     anchorDialogOpen = true
                                 },
                             ),
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("锚点文本") },
-                            supportingContent = { Text("当前锚点文本为：$anchorText") },
+                            headlineContent = { Text(stringResource(R.string.qd_settings_anchor_text)) },
+                            supportingContent = { Text(stringResource(R.string.qd_settings_current_anchor, anchorText)) },
                             trailingContent = {
                                 IconButton(
                                     onClick = {
@@ -2097,7 +2306,7 @@ private fun StructuredEditorSettingsTab(
                                         anchorDialogOpen = true
                                     },
                                 ) {
-                                    Icon(Icons.Default.EditNote, contentDescription = "编辑锚点文本")
+                                    Icon(Icons.Default.EditNote, contentDescription = stringResource(R.string.qd_settings_anchor_dialog))
                                 }
                             },
                         )
@@ -2117,13 +2326,13 @@ private fun StructuredEditorSettingsTab(
                         SettingsDivider()
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("无锚点时自动添加") },
+                            headlineContent = { Text(stringResource(R.string.qd_settings_auto_anchor)) },
                             supportingContent = {
                                 Text(
                                     settingSwitchDescription(
                                         enabled = config.addAnchorIfMissing,
-                                        enabledText = "开启后保存时会在未找到锚点文本时自动添加锚点文本。",
-                                        disabledText = "关闭后保存时不会自动添加缺失的锚点文本。",
+                                        enabledText = stringResource(R.string.qd_settings_auto_anchor_enabled),
+                                        disabledText = stringResource(R.string.qd_settings_auto_anchor_disabled),
                                     ),
                                 )
                             },
@@ -2151,13 +2360,32 @@ private fun StructuredEditorSettingsTab(
             Button(onClick = onSave, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                 Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("保存并返回")
+                Text(stringResource(R.string.qd_settings_save_return))
             }
             Spacer(Modifier.height(24.dp))
         }
     }
+
+    if (hiddenDialogOpen) {
+        HiddenTextDialog(
+            rows = hiddenDraft,
+            onRowsChange = { hiddenDraft = it },
+            onAdd = {
+                hiddenDraft = hiddenDraft + HiddenTextDraftRow(nextHiddenRowId++, "")
+            },
+            onDelete = { id ->
+                hiddenDraft = hiddenDraft.filterNot { it.id == id }
+            },
+            onDismiss = { hiddenDialogOpen = false },
+            onSave = {
+                onHiddenTextsSave(hiddenDraft.map(HiddenTextDraftRow::text))
+                hiddenDialogOpen = false
+            },
+        )
+    }
 }
 
+// localization-legacy-begin: retained inactive settings implementation
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EditorSettingsTab(
@@ -2208,7 +2436,7 @@ private fun EditorSettingsTab(
                     label = "时间戳格式",
                     supportingText = "选择时间戳的显示方式。",
                     selectedKey = config.timestampFormat,
-                    options = timestampOptions.map { it.key to it.label },
+                    options = timestampOptions.map { it.key to stringResource(it.labelRes) },
                     onSelect = {
                         onConfigChange { copy(timestampFormat = it) }
                         timestampPreviewFocusNonce++
@@ -2337,7 +2565,7 @@ private fun EditorSettingsTab(
                                 index = index,
                                 count = HomeEntryMode.entries.size,
                             ),
-                        ) { Text(mode.label) }
+                        ) { Text(stringResource(mode.labelRes)) }
                     }
                 }
                 SettingsDivider(modifier = Modifier.padding(vertical = 12.dp))
@@ -2533,10 +2761,12 @@ private fun EditorSettingsTab(
         Button(onClick = onSave, modifier = Modifier.fillMaxWidth()) {
             Icon(Icons.Default.Check, null, Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
-            Text("保存并返回")
+            Text(stringResource(R.string.qd_settings_save_return))
         }
     }
 }
+
+// localization-legacy-end
 
 @Composable
 private fun EditorToolbarSettingsEntry(
@@ -2549,15 +2779,15 @@ private fun EditorToolbarSettingsEntry(
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         modifier = Modifier.clickable(
             role = Role.Button,
-            onClickLabel = "打开工具栏编辑",
+            onClickLabel = stringResource(R.string.qd_settings_toolbar_open),
             onClick = { dialogOpen = true },
         ),
-        headlineContent = { Text("工具栏编辑") },
+        headlineContent = { Text(stringResource(R.string.qd_settings_toolbar_edit)) },
         supportingContent = {
-            Text("当前已显示 ${config.toolbarVisible.size} 项工具，点击调整工具项目的启用和顺序。")
+            Text(pluralStringResource(R.plurals.qd_toolbar_visible_count, config.toolbarVisible.size, config.toolbarVisible.size))
         },
         trailingContent = {
-            Icon(Icons.Default.Tune, contentDescription = "打开工具栏编辑")
+            Icon(Icons.Default.Tune, contentDescription = stringResource(R.string.qd_settings_toolbar_open))
         },
     )
 
@@ -2672,13 +2902,13 @@ private fun EditorToolbarSettingsDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Text("工具栏编辑", style = MaterialTheme.typography.titleLarge)
+                    Text(stringResource(R.string.qd_settings_toolbar_edit), style = MaterialTheme.typography.titleLarge)
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, contentDescription = "关闭")
+                        Icon(Icons.Default.Close, contentDescription = stringResource(R.string.qd_common_close))
                     }
                 }
                 Text(
-                    "长按左侧手柄拖动调整顺序，开关控制显示隐藏。多出的无法显示的工具，可以通过左滑工具栏来到第二页。修改会立即保存。",
+                    stringResource(R.string.qd_settings_toolbar_help),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -2733,7 +2963,7 @@ private fun EditorToolbarSettingsDialog(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.DragHandle,
-                                            contentDescription = "长按拖动排序",
+                                            contentDescription = stringResource(R.string.qd_settings_toolbar_drag),
                                         )
                                     }
                                 },
@@ -2747,15 +2977,15 @@ private fun EditorToolbarSettingsDialog(
                                             tint = MaterialTheme.colorScheme.primary,
                                             modifier = Modifier.size(20.dp),
                                         )
-                                        Text(action.label)
+                                        Text(stringResource(action.labelRes))
                                     }
                                 },
                                 supportingContent = {
                                     Text(
                                         when (val position = visiblePositions[action.id]) {
-                                            null -> "已被隐藏"
-                                            1 -> "当前顺序第 1 项"
-                                            else -> "第 $position 项"
+                                            null -> stringResource(R.string.qd_settings_toolbar_hidden)
+                                            1 -> stringResource(R.string.qd_settings_toolbar_position_first)
+                                            else -> stringResource(R.string.qd_settings_toolbar_position, position)
                                         }
                                     )
                                 },
@@ -2780,7 +3010,7 @@ private fun EditorToolbarSettingsDialog(
                     OutlinedButton(onClick = { resetToolbarConfig() }) {
                         Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("重置")
+                        Text(stringResource(R.string.qd_common_reset))
                     }
                 }
             }
@@ -2830,9 +3060,9 @@ private fun WidgetPinEntry(
     val component = remember(provider) { android.content.ComponentName(context, provider) }
     val added = remember(component, refreshKey) { manager.getAppWidgetIds(component).isNotEmpty() }
     val status = when {
-        added -> "已添加"
-        !manager.isRequestPinAppWidgetSupported -> "当前桌面不支持一键添加，请长按桌面手动添加"
-        else -> "未添加"
+        added -> stringResource(R.string.qd_settings_widget_added)
+        !manager.isRequestPinAppWidgetSupported -> stringResource(R.string.qd_settings_widget_unsupported)
+        else -> stringResource(R.string.qd_settings_widget_not_added)
     }
     ListItem(
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
@@ -2845,7 +3075,7 @@ private fun WidgetPinEntry(
             OutlinedButton(
                 onClick = { requestPinWidget(context, provider, requestCode) },
                 modifier = Modifier.heightIn(min = 48.dp),
-            ) { Text("添加到桌面") }
+            ) { Text(stringResource(R.string.qd_settings_add_to_home)) }
         },
     )
 }
@@ -2873,17 +3103,17 @@ private fun StructuredWidgetsTab(
                 .verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            CollapsibleSettingsSection("任务小部件") {
+            CollapsibleSettingsSection(stringResource(R.string.qd_settings_task_widget)) {
                 ElevatedCard(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         CompactDropdownSetting(
-                            label = "完成提示音",
-                            supportingText = "完成任务时播放提示音。",
+                            label = stringResource(R.string.qd_settings_completion_sound),
+                            supportingText = stringResource(R.string.qd_settings_completion_sound_help),
                             selectedKey = config.taskCompletionSoundMode,
-                            options = TaskCompletionSoundMode.entries.map { it.key to it.label },
+                            options = TaskCompletionSoundMode.entries.map { it.key to stringResource(it.labelRes) },
                             onSelect = { key ->
                                 val mode = TaskCompletionSoundMode.fromKey(key)
                                 onConfigChange { copy(taskCompletionSoundMode = mode.key) }
@@ -2904,13 +3134,13 @@ private fun StructuredWidgetsTab(
                         SettingsDivider()
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("按日期分类") },
+                            headlineContent = { Text(stringResource(R.string.qd_settings_group_by_date)) },
                             supportingContent = {
                                 Text(
                                     if (config.taskGroupByDate) {
-                                        "开启后本周和本月任务会按日期分组；只有今日任务时不显示日期。"
+                                        stringResource(R.string.qd_settings_group_by_date_enabled)
                                     } else {
-                                        "关闭后本周和本月任务将按当前顺序连续显示。"
+                                        stringResource(R.string.qd_settings_group_by_date_disabled)
                                     },
                                 )
                             },
@@ -2924,13 +3154,13 @@ private fun StructuredWidgetsTab(
                         SettingsDivider()
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("显示已完成任务") },
+                            headlineContent = { Text(stringResource(R.string.qd_settings_show_completed)) },
                             supportingContent = {
                                 Text(
                                     settingSwitchDescription(
                                         enabled = config.taskShowCompleted,
-                                        enabledText = "开启后已完成的任务将继续保留在任务小部件中。",
-                                        disabledText = "关闭后已完成的任务将在任务小部件中暂时隐藏，不影响便签小部件。",
+                                        enabledText = stringResource(R.string.qd_settings_show_completed_enabled),
+                                        disabledText = stringResource(R.string.qd_settings_show_completed_disabled),
                                     ),
                                 )
                             },
@@ -2941,13 +3171,13 @@ private fun StructuredWidgetsTab(
                         SettingsDivider()
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text("显示任务所有内容") },
+                            headlineContent = { Text(stringResource(R.string.qd_settings_show_full_content)) },
                             supportingContent = {
                                 Text(
                                     settingSwitchDescription(
                                         enabled = config.taskShowFullContent,
-                                        enabledText = "开启后将显示任务的完整文本，即使字数超出了数量限制。",
-                                        disabledText = "关闭后任务内容至多显示两行，保障列表清晰整洁。",
+                                        enabledText = stringResource(R.string.qd_settings_show_full_content_enabled),
+                                        disabledText = stringResource(R.string.qd_settings_show_full_content_disabled),
                                     ),
                                 )
                             },
@@ -2959,18 +3189,18 @@ private fun StructuredWidgetsTab(
                 }
             }
 
-            CollapsibleSettingsSection("小部件快速添加") {
+            CollapsibleSettingsSection(stringResource(R.string.qd_settings_quick_add_widgets)) {
                 ElevatedCard(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text("小部件", style = MaterialTheme.typography.titleSmall)
-                        WidgetPinEntry("便签小部件", painterResource(WidgetIconCatalog.note), QuickDailyReadWidget::class.java, 1, context, widgetStatusRefreshKey)
+                        Text(stringResource(R.string.qd_settings_widgets), style = MaterialTheme.typography.titleSmall)
+                        WidgetPinEntry(stringResource(R.string.qd_read_widget_label), painterResource(WidgetIconCatalog.note), QuickDailyReadWidget::class.java, 1, context, widgetStatusRefreshKey)
                         SettingsDivider()
-                        WidgetPinEntry("任务小部件", painterResource(WidgetIconCatalog.task), TaskWidget::class.java, 3, context, widgetStatusRefreshKey)
+                        WidgetPinEntry(stringResource(R.string.qd_task_widget_label), painterResource(WidgetIconCatalog.task), TaskWidget::class.java, 3, context, widgetStatusRefreshKey)
                         SettingsDivider()
-                        WidgetPinEntry("快速录入小部件", painterResource(WidgetIconCatalog.quickEntry), QuickNoteWidget::class.java, 2, context, widgetStatusRefreshKey)
+                        WidgetPinEntry(stringResource(R.string.qd_quicknote_widget_label), painterResource(WidgetIconCatalog.quickEntry), QuickNoteWidget::class.java, 2, context, widgetStatusRefreshKey)
                     }
                 }
                 ElevatedCard(
@@ -2978,7 +3208,7 @@ private fun StructuredWidgetsTab(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text("快捷方式", style = MaterialTheme.typography.titleSmall)
+                        Text(stringResource(R.string.qd_settings_shortcuts), style = MaterialTheme.typography.titleSmall)
                         ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             leadingContent = {
@@ -2987,12 +3217,12 @@ private fun StructuredWidgetsTab(
                                     contentDescription = null,
                                 )
                             },
-                            headlineContent = { Text("快速录入图标") },
+                            headlineContent = { Text(stringResource(R.string.qd_settings_quick_capture_icon)) },
                             trailingContent = {
                                 OutlinedButton(
                                     onClick = { ShortcutHelper.pinShortcutToDesktop(context) },
                                     modifier = Modifier.heightIn(min = 48.dp),
-                                ) { Text("添加到桌面") }
+                                ) { Text(stringResource(R.string.qd_settings_add_to_home)) }
                             },
                         )
                     }
@@ -3002,7 +3232,7 @@ private fun StructuredWidgetsTab(
             Button(onClick = onSave, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                 Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("保存并返回")
+                Text(stringResource(R.string.qd_settings_save_return))
             }
             Spacer(Modifier.height(24.dp))
         }
@@ -3061,7 +3291,7 @@ private fun WidgetsTab(
     ) {
         if (showHeading) {
             Text(
-                if (appearanceOnly) "桌面小部件外观" else "小部件快速添加",
+                stringResource(if (appearanceOnly) R.string.qd_settings_widget_appearance else R.string.qd_settings_widget_quick_add_heading),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -3075,12 +3305,12 @@ private fun WidgetsTab(
             ),
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("小部件背景色", style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(R.string.qd_settings_widget_background), style = MaterialTheme.typography.titleSmall)
                 CompactDropdownSetting(
-                    label = "小部件背景色",
-                    supportingText = "应用于所有桌面小部件。",
+                    label = stringResource(R.string.qd_settings_widget_background),
+                    supportingText = stringResource(R.string.qd_settings_widget_background_help),
                     selectedKey = appearanceStyle,
-                    options = widgetStyleOptions,
+                    options = widgetStyleOptions.map { it.first to stringResource(it.second) },
                     onSelect = { style ->
                         appearanceStyle = style
                         when (style) {
@@ -3093,7 +3323,7 @@ private fun WidgetsTab(
                 AnimatedSettingsVisibility(visible = appearanceStyle == "custom") {
                     SettingsDivider()
                     val red = ((appearanceColor shr 16) and 0xFF).toInt()
-                    SliderSettingLabel("红色 $red")
+                    SliderSettingLabel(stringResource(R.string.qd_settings_red, red))
                     ResettableSlider(
                         modifier = Modifier.padding(horizontal = SettingsContentInset),
                         value = red / 255f,
@@ -3108,10 +3338,10 @@ private fun WidgetsTab(
                             appearanceColor = SettingsSliderDefaults.resetRed(appearanceColor)
                             commitAppearance()
                         },
-                        stateDescription = "红色 $red",
+                        stateDescription = stringResource(R.string.qd_settings_red, red),
                     )
                     val green = ((appearanceColor shr 8) and 0xFF).toInt()
-                    SliderSettingLabel("绿色 $green")
+                    SliderSettingLabel(stringResource(R.string.qd_settings_green, green))
                     ResettableSlider(
                         modifier = Modifier.padding(horizontal = SettingsContentInset),
                         value = green / 255f,
@@ -3126,10 +3356,10 @@ private fun WidgetsTab(
                             appearanceColor = SettingsSliderDefaults.resetGreen(appearanceColor)
                             commitAppearance()
                         },
-                        stateDescription = "绿色 $green",
+                        stateDescription = stringResource(R.string.qd_settings_green, green),
                     )
                     val blue = (appearanceColor and 0xFF).toInt()
-                    SliderSettingLabel("蓝色 $blue")
+                    SliderSettingLabel(stringResource(R.string.qd_settings_blue, blue))
                     ResettableSlider(
                         modifier = Modifier.padding(horizontal = SettingsContentInset),
                         value = blue / 255f,
@@ -3144,11 +3374,11 @@ private fun WidgetsTab(
                             appearanceColor = SettingsSliderDefaults.resetBlue(appearanceColor)
                             commitAppearance()
                         },
-                        stateDescription = "蓝色 $blue",
+                        stateDescription = stringResource(R.string.qd_settings_blue, blue),
                     )
                 }
                 SettingsDivider()
-                SliderSettingLabel("小部件背景透明度 ${appearanceOpacity}%")
+                SliderSettingLabel(stringResource(R.string.qd_settings_widget_opacity, appearanceOpacity))
                 ResettableSlider(
                     modifier = Modifier.padding(horizontal = SettingsContentInset),
                     value = appearanceOpacity / 100f,
@@ -3158,9 +3388,9 @@ private fun WidgetsTab(
                         appearanceOpacity = WidgetAppearance.DEFAULT_OPACITY_PERCENT
                         commitAppearance()
                     },
-                    startLabel = "更透明",
-                    endLabel = "更深色",
-                    stateDescription = "小部件背景透明度 $appearanceOpacity%",
+                    startLabel = stringResource(R.string.qd_settings_more_transparent),
+                    endLabel = stringResource(R.string.qd_settings_darker),
+                    stateDescription = stringResource(R.string.qd_settings_widget_opacity, appearanceOpacity),
                 )
                 SettingsDivider()
                 QuickEntryIconSetting(
@@ -3181,7 +3411,7 @@ private fun WidgetsTab(
             ),
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-               Text("小部件", style = MaterialTheme.typography.titleSmall)
+               Text(stringResource(R.string.qd_settings_widgets), style = MaterialTheme.typography.titleSmall)
 
                 Button(
                     onClick = {
@@ -3204,7 +3434,7 @@ private fun WidgetsTab(
                 ) {
                     Icon(painterResource(WidgetIconCatalog.note), null, Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("便签小部件")
+                    Text(stringResource(R.string.qd_read_widget_label))
                 }
 
                 Button(
@@ -3217,7 +3447,7 @@ private fun WidgetsTab(
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text("快速录入图标")
+                    Text(stringResource(R.string.qd_settings_quick_capture_icon))
                 }
 
                 Button(
@@ -3241,7 +3471,7 @@ private fun WidgetsTab(
                 ) {
                     Icon(painterResource(WidgetIconCatalog.quickEntry), null, Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("快速录入小部件")
+                    Text(stringResource(R.string.qd_quicknote_widget_label))
                 }
 
                 Button(
@@ -3265,12 +3495,12 @@ private fun WidgetsTab(
                 ) {
                     Icon(painterResource(WidgetIconCatalog.task), null, Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("任务小部件")
+                    Text(stringResource(R.string.qd_task_widget_label))
                 }
             }
         }
 
-        Text("任务小部件", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+        Text(stringResource(R.string.qd_settings_task_widget), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
         ElevatedCard(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -3278,10 +3508,14 @@ private fun WidgetsTab(
             ),
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                val taskPeriodOptions = listOf("today" to "今日任务", "week" to "本周任务", "month" to "本月任务")
+                val taskPeriodOptions = listOf(
+                    "today" to stringResource(R.string.qd_widget_scope_today),
+                    "week" to stringResource(R.string.qd_widget_scope_week),
+                    "month" to stringResource(R.string.qd_widget_scope_month),
+                )
                 CompactDropdownSetting(
-                    label = "任务显示时间段",
-                    supportingText = "选择桌面任务小部件显示的任务范围。",
+                    label = stringResource(R.string.qd_settings_task_period),
+                    supportingText = stringResource(R.string.qd_settings_task_period_help),
                     selectedKey = config.taskPeriod,
                     options = taskPeriodOptions,
                     onSelect = { key -> onConfigChange { copy(taskPeriod = key) } },
@@ -3289,10 +3523,10 @@ private fun WidgetsTab(
 
                 SettingsDivider()
                 CompactDropdownSetting(
-                    label = "完成提示音",
-                    supportingText = "在任务小部件中完成任务时播放提示音。",
+                    label = stringResource(R.string.qd_settings_completion_sound),
+                    supportingText = stringResource(R.string.qd_settings_task_sound_help),
                     selectedKey = config.taskCompletionSoundMode,
-                    options = TaskCompletionSoundMode.entries.map { it.key to it.label },
+                    options = TaskCompletionSoundMode.entries.map { it.key to stringResource(it.labelRes) },
                     onSelect = { key ->
                         val mode = TaskCompletionSoundMode.fromKey(key)
                         onConfigChange { copy(taskCompletionSoundMode = mode.key) }
@@ -3313,13 +3547,13 @@ private fun WidgetsTab(
                 SettingsDivider()
                 ListItem(
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    headlineContent = { Text("按日期分类") },
+                    headlineContent = { Text(stringResource(R.string.qd_settings_group_by_date)) },
                     supportingContent = {
                         Text(
                             if (config.taskGroupByDate) {
-                                "开启后本周和本月任务会按日期分组；只有今日任务时不显示日期。"
+                                stringResource(R.string.qd_settings_group_by_date_enabled)
                             } else {
-                                "关闭后本周和本月任务将按当前顺序连续显示。"
+                                stringResource(R.string.qd_settings_group_by_date_disabled)
                             },
                         )
                     },
@@ -3333,13 +3567,13 @@ private fun WidgetsTab(
                 SettingsDivider()
                 ListItem(
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    headlineContent = { Text("显示已完成任务") },
+                    headlineContent = { Text(stringResource(R.string.qd_settings_show_completed)) },
                     supportingContent = {
                         Text(
                             if (config.taskShowCompleted) {
-                                "开启后已完成的任务将继续保留在任务小部件中。"
+                                stringResource(R.string.qd_settings_show_completed_enabled)
                             } else {
-                                "关闭后已完成的任务将在任务小部件中暂时隐藏，不影响便签小部件。"
+                                stringResource(R.string.qd_settings_show_completed_disabled)
                             },
                         )
                     },
@@ -3355,13 +3589,13 @@ private fun WidgetsTab(
                 SettingsDivider()
                 ListItem(
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    headlineContent = { Text("显示任务所有内容") },
+                    headlineContent = { Text(stringResource(R.string.qd_settings_show_full_content)) },
                     supportingContent = {
                         Text(
                             if (config.taskShowFullContent) {
-                                "开启后将显示任务的完整文本，即使字数超出了数量限制。"
+                                stringResource(R.string.qd_settings_show_full_content_enabled)
                             } else {
-                                "关闭后任务内容至多显示两行，保障列表清晰整洁。"
+                                stringResource(R.string.qd_settings_show_full_content_disabled)
                             },
                         )
                     },
@@ -3383,7 +3617,7 @@ private fun WidgetsTab(
         Button(onClick = onSave, modifier = Modifier.fillMaxWidth()) {
             Icon(Icons.Default.Check, null, Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
-            Text("保存并返回")
+            Text(stringResource(R.string.qd_settings_save_return))
         }
        }
     }
@@ -3396,9 +3630,9 @@ private fun QuickEntryIconSetting(
     onPickImage: () -> Unit,
     onResetImage: () -> Unit,
 ) {
-    Text("快速录入小部件 · 自定义图标内容", style = MaterialTheme.typography.titleSmall)
+    Text(stringResource(R.string.qd_settings_quick_icon_title), style = MaterialTheme.typography.titleSmall)
     Text(
-        "选择一张图片作为快速录入小部件和快速录入图标的内容",
+        stringResource(R.string.qd_settings_quick_icon_help),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
     )
@@ -3416,14 +3650,14 @@ private fun QuickEntryIconSetting(
             if (previewBitmap != null) {
                 Image(
                     bitmap = previewBitmap.asImageBitmap(),
-                    contentDescription = "当前图标",
+                    contentDescription = stringResource(R.string.qd_settings_current_icon),
                     modifier = Modifier.fillMaxSize().padding(4.dp),
                     contentScale = ContentScale.Fit,
                 )
             } else {
                 Image(
                     painter = painterResource(R.drawable.ic_add_white),
-                    contentDescription = "快速录入小部件默认加号图标",
+                    contentDescription = stringResource(R.string.qd_settings_default_quick_icon),
                     modifier = Modifier.fillMaxSize().padding(20.dp),
                     contentScale = ContentScale.Fit,
                     colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary),
@@ -3440,7 +3674,7 @@ private fun QuickEntryIconSetting(
             ) {
                 Icon(Icons.Default.AddAPhoto, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(4.dp))
-                Text(if (widgetImageUri.isNotEmpty()) "更换图片" else "选择图片")
+                Text(stringResource(if (widgetImageUri.isNotEmpty()) R.string.qd_settings_change_image else R.string.qd_settings_choose_image))
             }
             OutlinedButton(
                 onClick = onResetImage,
@@ -3448,10 +3682,11 @@ private fun QuickEntryIconSetting(
             ) {
                 Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(4.dp))
-                Text("重置默认")
+                Text(stringResource(R.string.qd_settings_reset_image))
             }
         }
     }
+
 }
 
 // ══════════════════════════════════════════════════════════
@@ -3480,25 +3715,25 @@ private fun StructuredAppearanceTab(
                 .verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            CollapsibleSettingsSection("编辑器外观") {
+            CollapsibleSettingsSection(stringResource(R.string.qd_settings_editor_appearance)) {
                 AppearanceSettingsSection(context = context, showHeading = false)
             }
 
-            CollapsibleSettingsSection("悬浮窗外观") {
+            CollapsibleSettingsSection(stringResource(R.string.qd_settings_overlay_appearance)) {
                 ElevatedCard(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                 ) {
                     Column(Modifier.fillMaxWidth().padding(16.dp)) {
                         CompactDropdownSetting(
-                            label = "\u591c\u95f4\u6a21\u5f0f",
-                             supportingText = "\u4ec5\u7528\u4e8e\u63a7\u5236\u60ac\u6d6e\u7a97\u7684\u6df1\u8272\u4e3b\u9898\u3002",
+                            label = stringResource(R.string.qd_settings_night_mode),
+                            supportingText = stringResource(R.string.qd_settings_overlay_night_mode_help),
                             selectedKey = floatingNightModeKey,
                             options = listOf(
                                 QuickDailyNightMode.DARK,
                                 QuickDailyNightMode.LIGHT,
                                 QuickDailyNightMode.SYSTEM,
-                            ).map { it.key to it.label },
+                            ).map { it.key to stringResource(it.labelRes) },
                             onSelect = { key ->
                                 floatingNightModeKey = key
                                 FloatingNoteAppearance.setNightMode(
@@ -3509,7 +3744,7 @@ private fun StructuredAppearanceTab(
                         )
                         SettingsDivider()
                         Spacer(Modifier.height(12.dp))
-                        SliderSettingLabel("悬浮窗透明度 ${floatingOpacity}%")
+                        SliderSettingLabel(stringResource(R.string.qd_settings_overlay_opacity, floatingOpacity))
                         ResettableSlider(
                             modifier = Modifier.padding(horizontal = SettingsContentInset),
                             value = floatingOpacity / 100f,
@@ -3523,15 +3758,15 @@ private fun StructuredAppearanceTab(
                                 onConfigChange { copy(floatingOpacity = floatingOpacity) }
                                 FloatingNoteAppearance.refresh(context)
                             },
-                            startLabel = "更透明",
-                            endLabel = "更深色",
-                            stateDescription = "透明度 $floatingOpacity%",
+                            startLabel = stringResource(R.string.qd_settings_more_transparent),
+                            endLabel = stringResource(R.string.qd_settings_darker),
+                            stateDescription = stringResource(R.string.qd_settings_opacity, floatingOpacity),
                         )
                     }
                 }
             }
 
-            CollapsibleSettingsSection("桌面小部件外观") {
+            CollapsibleSettingsSection(stringResource(R.string.qd_settings_widget_appearance)) {
                 WidgetsTab(
                     widgetImageUri = widgetImageUri,
                     configState = configState,
@@ -3549,13 +3784,14 @@ private fun StructuredAppearanceTab(
             Button(onClick = onSave, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                 Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("保存并返回")
+                Text(stringResource(R.string.qd_settings_save_return))
             }
             Spacer(Modifier.height(24.dp))
         }
     }
 }
 
+// localization-legacy-begin: retained inactive appearance implementation
 @Composable
 private fun AppearanceTab(
     context: android.content.Context,
@@ -3591,7 +3827,7 @@ private fun AppearanceTab(
                         QuickDailyNightMode.DARK,
                         QuickDailyNightMode.LIGHT,
                         QuickDailyNightMode.SYSTEM,
-                    ).map { it.key to it.label },
+                    ).map { it.key to stringResource(it.labelRes) },
                     onSelect = { key ->
                         floatingNightModeKey = key
                         FloatingNoteAppearance.setNightMode(
@@ -3637,9 +3873,59 @@ private fun AppearanceTab(
         Button(onClick = onSave, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
             Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
-            Text("保存并返回")
+            Text(stringResource(R.string.qd_settings_save_return))
         }
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+// localization-legacy-end
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun LanguageSettingsSection(context: android.content.Context) {
+    val selectedTag = LocaleController.selection(context)
+    val selectedLabel = LocaleController.displayName(context, selectedTag)
+    CollapsibleSettingsSection(
+        title = stringResource(R.string.qd_settings_language_title),
+        initiallyExpanded = false,
+        summary = selectedLabel,
+    ) {
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            ),
+        ) {
+            Column {
+                Text(
+                    text = stringResource(R.string.qd_settings_language_summary),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(16.dp),
+                )
+                LocaleController.supportedLanguages.forEach { language ->
+                    val label = stringResource(language.displayNameRes)
+                    ListItem(
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                        headlineContent = { Text(label) },
+                        trailingContent = {
+                            RadioButton(
+                                selected = selectedTag == language.tag,
+                                onClick = null,
+                            )
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                if (selectedTag != language.tag) {
+                                    LocaleController.setSelection(context, language.tag)
+                                    (context as? Activity)?.recreate()
+                                }
+                            },
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -3647,6 +3933,7 @@ private fun AppearanceTab(
 @Composable
 private fun OtherTab(
     vaultPath: String,
+    obsidianVaultId: String,
     obsidianConfigUri: String,
     useCustomObsidianConfigPath: Boolean,
     diaryFolder: String,
@@ -3657,6 +3944,7 @@ private fun OtherTab(
     obsidianDetected: Boolean,
     obsidianMsg: String,
     onVaultPathChange: (String) -> Unit,
+    onObsidianVaultIdChange: (String) -> Unit,
     onDiaryFolderChange: (String) -> Unit,
     onDateFormatChange: (String) -> Unit,
     onTemplatePathChange: (String) -> Unit,
@@ -3705,13 +3993,16 @@ private fun OtherTab(
             .verticalScroll(otherScrollState).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        LanguageSettingsSection(context)
+
         CollapsibleSettingsSection(
-            title = "路径配置",
+            title = stringResource(R.string.qd_settings_path_config),
             initiallyExpanded = false,
-            summary = vaultPath.ifBlank { "当前未设置 Vault" },
+            summary = vaultPath.ifBlank { stringResource(R.string.qd_settings_vault_not_set) },
         ) {
             DiaryStorageTab(
                 vaultPath = vaultPath,
+                obsidianVaultId = obsidianVaultId,
                 obsidianConfigUri = obsidianConfigUri,
                 useCustomObsidianConfigPath = useCustomObsidianConfigPath,
                 diaryFolder = diaryFolder,
@@ -3722,6 +4013,7 @@ private fun OtherTab(
                 obsidianDetected = obsidianDetected,
                 obsidianMsg = obsidianMsg,
                 onVaultPathChange = onVaultPathChange,
+                onObsidianVaultIdChange = onObsidianVaultIdChange,
                 onDiaryFolderChange = onDiaryFolderChange,
                 onDateFormatChange = onDateFormatChange,
                 onTemplatePathChange = onTemplatePathChange,
@@ -3743,14 +4035,14 @@ private fun OtherTab(
         }
 
         CollapsibleSettingsSection(
-            title = "权限申请",
+            title = stringResource(R.string.qd_settings_permissions),
             initiallyExpanded = false,
         ) {
             PermissionRequestSection(context, showHeading = false)
         }
 
         CollapsibleSettingsSection(
-            title = "更新设置",
+            title = stringResource(R.string.qd_settings_updates),
             initiallyExpanded = false,
         ) {
         ElevatedCard(
@@ -3761,13 +4053,13 @@ private fun OtherTab(
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 ListItem(colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    headlineContent = { Text("启动时自动检查更新") },
+                    headlineContent = { Text(stringResource(R.string.qd_settings_auto_check_updates)) },
                     supportingContent = {
                         Text(
                             settingSwitchDescription(
                                 enabled = config.autoCheckUpdate,
-                                enabledText = "开启后每次启动应用时自动检测 GitHub 最新版本",
-                                disabledText = "关闭后启动应用时不会自动检查更新",
+                                enabledText = stringResource(R.string.qd_settings_auto_check_updates_enabled),
+                                disabledText = stringResource(R.string.qd_settings_auto_check_updates_disabled),
                             ),
                         )
                     },
@@ -3781,25 +4073,34 @@ private fun OtherTab(
                 Button(onClick = onCheckUpdate, modifier = Modifier.fillMaxWidth(), enabled = !isCheckingUpdate) {
                     Icon(Icons.Default.Update, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text(if (isCheckingUpdate) updateStatus.ifEmpty { "检查中..." } else "检查更新")
+                    Text(if (isCheckingUpdate) updateStatus.ifEmpty { stringResource(R.string.qd_settings_checking) } else stringResource(R.string.qd_settings_check_updates))
                 }
                 if (isCheckingUpdate && updateStatus.isNotEmpty()) {
                     Text(updateStatus, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                 }
                 if (updateInfo != null) {
-                    Text("发现新版本：", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+                    Text(stringResource(R.string.qd_settings_new_version), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
                     Text(updateInfo.body, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                     Button(onClick = { com.quickdaily.util.UpdateChecker.openReleasePage(context, updateInfo.releaseUrl) }, modifier = Modifier.fillMaxWidth()) {
-                        Text("前往下载")
+                        Text(stringResource(R.string.qd_settings_download))
                     }
                 }
                 if (isLatest) {
-                    Text("当前已是最新版本（${BuildConfig.VERSION_NAME}）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                    Text(stringResource(R.string.qd_settings_latest_version, BuildConfig.VERSION_NAME), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                 }
                 if (updateErrors.isNotEmpty()) {
-                    Text("检查更新失败，已尝试  个镜像源：", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                   updateErrors.forEach { err ->
-                        Text("• ", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f), modifier = Modifier.padding(start = 8.dp))
+                    Text(stringResource(R.string.qd_settings_update_failed), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    updateErrors.forEach { err ->
+                        Text(
+                            stringResource(
+                                R.string.qd_settings_update_error_item,
+                                err.source.resolve(context),
+                                err.reason.resolve(context),
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
+                            modifier = Modifier.padding(start = 8.dp),
+                        )
                     }
                 }
             }
@@ -3807,7 +4108,7 @@ private fun OtherTab(
         }
 
         CollapsibleSettingsSection(
-            title = "反馈",
+            title = stringResource(R.string.qd_settings_feedback),
             initiallyExpanded = false,
         ) {
         ElevatedCard(
@@ -3818,14 +4119,14 @@ private fun OtherTab(
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 ListItem(colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    headlineContent = { Text("记录日志") },
+                    headlineContent = { Text(stringResource(R.string.qd_settings_logging)) },
                     supportingContent = {
                         Text(
                             settingSwitchDescription(
                                 enabled = config.loggingEnabled,
-                                enabledText = "开启后记录操作日志，可能带来一定程度的性能损耗",
-                                disabledText = "关闭后不记录操作日志",
-                            ) + "提交完 BUG 后请手动关闭。",
+                                enabledText = stringResource(R.string.qd_settings_logging_enabled),
+                                disabledText = stringResource(R.string.qd_settings_logging_disabled),
+                            ) + stringResource(R.string.qd_settings_logging_reminder),
                         )
                     },
                     trailingContent = {
@@ -3841,27 +4142,28 @@ private fun OtherTab(
                     onClick = onRestartOnboarding,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                 ) {
-                    Text("重置新手引导")
+                    Text(stringResource(R.string.qd_settings_reset_onboarding))
                 }
             }
         }
 
         AnimatedSettingsVisibility(visible = config.loggingEnabled) {
             Text(
-                "完整调试日志可能包含部分日记正文和本地路径，请仅在定位 BUG 时开启。",
+                stringResource(R.string.qd_settings_debug_log_warning),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error
             )
             Button(onClick = { com.quickdaily.BetaLogger.shareLog(context) }, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.BugReport, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("分享 Beta 日志")
+                Text(stringResource(R.string.qd_settings_share_beta_log))
             }
         }
         }
 
+        // localization-legacy-begin: version log, community links, and sponsor content are deferred from phase one.
         CollapsibleSettingsSection(
-            title = "关于",
+            title = stringResource(R.string.qd_settings_about),
             initiallyExpanded = true,
         ) {
         ElevatedCard(
@@ -3898,7 +4200,7 @@ private fun OtherTab(
 
                 Text("更新内容：", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
                 if (showAllChangelog) {
-                Text(CHANGELOG_1_9_3_BETA + "\n\n" + CHANGELOG_1_9_2_BETA + "\n\n" + CHANGELOG_1_9_1_BETA + "\n\n" + CHANGELOG_1_9 + "\n\n" +
+                Text(CHANGELOG_1_9_7_BETA + "\n\n" + CHANGELOG_1_9_6_BETA + "\n\n" + CHANGELOG_1_9_3_BETA + "\n\n" + CHANGELOG_1_9_2_BETA + "\n\n" + CHANGELOG_1_9_1_BETA + "\n\n" + CHANGELOG_1_9 + "\n\n" +
                     "1.8:\n" +
                     "• 新增 小部件大小调整支持自适应\n" +
                     "• 新增 任务小部件滴声开关\n" +
@@ -3981,7 +4283,7 @@ private fun OtherTab(
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                 } else {
                 Text(
-                        CHANGELOG_1_9_3_BETA,
+                        CHANGELOG_1_9_7_BETA,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     )
@@ -3990,14 +4292,22 @@ private fun OtherTab(
                     onClick = { showAllChangelog = !showAllChangelog },
                     modifier = Modifier.align(Alignment.Start),
                 ) {
-                    Text(if (showAllChangelog) "收起内容" else "更多内容")
+                    Text(
+                        stringResource(
+                            if (showAllChangelog) {
+                                R.string.qd_settings_changelog_collapse
+                            } else {
+                                R.string.qd_settings_changelog_more
+                            },
+                        )
+                    )
                 }
             }
         }
         }
 
         CollapsibleSettingsSection(
-            title = "支持",
+            title = stringResource(R.string.qd_settings_support),
             initiallyExpanded = true,
         ) {
         SponsorListCard(
@@ -4108,11 +4418,13 @@ private fun OtherTab(
             }
         }
         }
+        // localization-legacy-end
         Spacer(Modifier.height(24.dp))
     }
     }
 }
 
+// localization-legacy-begin: sponsor content is deferred from phase one.
 @Composable
 private fun SponsorListCard(
     context: android.content.Context,
@@ -4138,11 +4450,6 @@ private fun SponsorListCard(
     val bubbleTailWidthPx = with(density) { 20.dp.toPx() }
     val bubbleTailHeightPx = with(density) { 10.dp.toPx() }
     val bubbleTailContentGap = 8.dp
-
-    LaunchedEffect(selectedId) {
-        bubbleSize = IntSize.Zero
-        bubbleWindowBounds = null
-    }
 
     fun recordBounds(id: String, coordinates: LayoutCoordinates) {
         val position = coordinates.positionInWindow()
@@ -4183,11 +4490,20 @@ private fun SponsorListCard(
                             entry = entry,
                             selected = selectedId == entry.id,
                             unread = readState[entry.id] != true,
-                            onClick = {
-                                SponsorReadState.markRead(context, entry.id)
-                                readState[entry.id] = true
-                                selectedId = if (selectedId == entry.id) null else entry.id
-                            },
+                             onClick = {
+                                 SponsorReadState.markRead(context, entry.id)
+                                 readState[entry.id] = true
+                                 if (selectedId == entry.id) {
+                                     selectedId = null
+                                 } else {
+                                     // Reset before the new Popup is measured. Resetting from a
+                                     // LaunchedEffect after measurement can leave the size at zero,
+                                     // which makes the tail clamp to the bubble's left edge.
+                                     bubbleSize = IntSize.Zero
+                                     bubbleWindowBounds = null
+                                     selectedId = entry.id
+                                 }
+                             },
                             modifier = Modifier.onGloballyPositioned { coordinates ->
                                 recordBounds(entry.id, coordinates)
                             },
@@ -4216,6 +4532,11 @@ private fun SponsorListCard(
                             marginPx = windowMarginPx,
                             windowWidth = effectiveWindowWidth,
                         )
+                        // Keep the measured window bounds only for deciding
+                        // whether the tail is on the top or bottom. The
+                        // horizontal offset below deliberately uses the
+                        // position-provider result instead of Popup-local
+                        // coordinates, which fixes the second avatar case.
                         val bubbleTailOnTop = bubbleWindowBounds?.let { bounds ->
                             SponsorBubbleTailPolicy.tailOnTop(
                                 avatarTop = anchor.top,
@@ -4262,10 +4583,13 @@ private fun SponsorListCard(
                                     .semantics { liveRegion = LiveRegionMode.Polite },
                                 shape = SponsorSpeechBubbleShape(
                                     tailOnTop = bubbleTailOnTop,
-                                    tailOffsetPx = (
-                                        ((anchor.left + anchor.right) / 2) -
-                                            (bubbleWindowBounds?.left ?: bubbleLeft)
-                                        ).toFloat(),
+                                    tailOffsetPx = sponsorBubbleTailOffset(
+                                        avatarLeft = anchor.left,
+                                        avatarRight = anchor.right,
+                                        bubbleLeft = bubbleLeft,
+                                        bubbleWidthPx = bubbleSize.width,
+                                        tailWidthPx = bubbleTailWidthPx,
+                                    ),
                                     tailWidthPx = bubbleTailWidthPx,
                                     tailHeightPx = bubbleTailHeightPx,
                                     cornerRadiusPx = with(density) { 12.dp.toPx() },
@@ -4484,6 +4808,8 @@ private fun SponsorPlaceholder(
     }
 }
 
+// localization-legacy-end
+
 @Composable
 private fun AppearanceSettingsSection(
     context: android.content.Context,
@@ -4507,7 +4833,7 @@ private fun AppearanceSettingsSection(
 
     if (showHeading) {
         Text(
-            "编辑器外观",
+            stringResource(R.string.qd_settings_editor_appearance),
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.primary,
         )
@@ -4523,13 +4849,13 @@ private fun AppearanceSettingsSection(
         ) {
             ListItem(
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                headlineContent = { Text("莫奈取色") },
+                headlineContent = { Text(stringResource(R.string.qd_settings_monet_color)) },
                 supportingContent = {
                     Text(
                         when {
-                            !monetSupported -> "当前 Android 版本不支持莫奈，使用下方预设强调色"
-                            useMonet -> "开启后跟随系统壁纸动态生成 Material 3 色板。"
-                            else -> "关闭后使用预设强调色。"
+                            !monetSupported -> stringResource(R.string.qd_settings_monet_unsupported)
+                            useMonet -> stringResource(R.string.qd_settings_monet_enabled)
+                            else -> stringResource(R.string.qd_settings_monet_disabled)
                         },
                     )
                 },
@@ -4547,9 +4873,9 @@ private fun AppearanceSettingsSection(
             AnimatedSettingsVisibility(visible = !(useMonet && monetSupported)) {
                 SettingsDivider()
                 Column(modifier = Modifier.padding(horizontal = SettingsContentInset, vertical = 12.dp)) {
-                    Text("预设强调色", style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.qd_settings_preset_accent), style = MaterialTheme.typography.titleSmall)
                     Text(
-                        "选择一个预设作为应用强调色，将同步于编辑页、悬浮窗和桌面小部件。",
+                        stringResource(R.string.qd_settings_preset_accent_help),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -4566,7 +4892,7 @@ private fun AppearanceSettingsSection(
                                     useMonet = false
                                     QuickDailyThemePreferences.selectAccentPreset(context, preset)
                                 },
-                                label = { Text(preset.label) },
+                                label = { Text(stringResource(preset.labelRes)) },
                                 leadingIcon = {
                                     androidx.compose.foundation.layout.Box(
                                         modifier = Modifier
@@ -4583,14 +4909,14 @@ private fun AppearanceSettingsSection(
             SettingsDivider()
             Column(modifier = Modifier.padding(vertical = 12.dp)) {
                 CompactDropdownSetting(
-                    label = "夜间模式",
-                    supportingText = "仅用于控制编辑器页面的深色主题。",
+                    label = stringResource(R.string.qd_settings_night_mode),
+                    supportingText = stringResource(R.string.qd_settings_editor_night_mode_help),
                     selectedKey = nightModeKey,
                     options = listOf(
                         QuickDailyNightMode.DARK,
                         QuickDailyNightMode.LIGHT,
                         QuickDailyNightMode.SYSTEM,
-                    ).map { it.key to it.label },
+                    ).map { it.key to stringResource(it.labelRes) },
                     onSelect = { key ->
                         nightModeKey = key
                         QuickDailyThemePreferences.setNightMode(context, QuickDailyNightMode.fromKey(key))
@@ -4600,7 +4926,7 @@ private fun AppearanceSettingsSection(
                     SettingsDivider()
                     Column {
                         Spacer(Modifier.height(12.dp))
-                        SliderSettingLabel("\u591c\u95f4\u6a21\u5f0f\u80cc\u666f\u4eae\u5ea6 ${darkBackgroundBrightness}%")
+                        SliderSettingLabel(stringResource(R.string.qd_settings_night_brightness, darkBackgroundBrightness))
                         ResettableSlider(
                             modifier = Modifier.padding(horizontal = SettingsContentInset),
                             value = darkBackgroundBrightness / 100f,
@@ -4621,9 +4947,9 @@ private fun AppearanceSettingsSection(
                                 )
                             },
                             valueRange = 0f..1f,
-                            startLabel = "更暗",
-                            endLabel = "更亮",
-                            stateDescription = "\u591c\u95f4\u6a21\u5f0f\u80cc\u666f\u4eae\u5ea6 $darkBackgroundBrightness%",
+                            startLabel = stringResource(R.string.qd_settings_darker),
+                            endLabel = stringResource(R.string.qd_settings_brighter),
+                            stateDescription = stringResource(R.string.qd_settings_night_brightness, darkBackgroundBrightness),
                         )
                     }
                 }
@@ -4692,7 +5018,7 @@ private fun PermissionRequestSection(
     }
 
     if (showHeading) {
-        Text("权限申请", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+        Text(stringResource(R.string.qd_settings_permission_heading), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
     }
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
@@ -4702,7 +5028,7 @@ private fun PermissionRequestSection(
             modifier = Modifier.padding(horizontal = SettingsContentInset, vertical = 8.dp),
         ) {
             Text(
-                "以下是本APP运行所需要的所有权限，请按需授权。",
+                stringResource(R.string.qd_settings_permission_intro),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(vertical = 8.dp),
@@ -4715,17 +5041,17 @@ private fun PermissionRequestSection(
                     com.quickdaily.PermissionPolicy.status(context, spec)
                 }
                 val (statusText, statusColor) = when (status) {
-                    com.quickdaily.PermissionStatus.GRANTED -> "已获得" to MaterialTheme.colorScheme.primary
-                    com.quickdaily.PermissionStatus.NOT_GRANTED -> "未获得" to MaterialTheme.colorScheme.error
-                    com.quickdaily.PermissionStatus.NOT_REQUIRED -> "当前系统无需" to MaterialTheme.colorScheme.onSurfaceVariant
-                    com.quickdaily.PermissionStatus.SYSTEM_MANAGED -> "系统管理" to MaterialTheme.colorScheme.onSurfaceVariant
+                    com.quickdaily.PermissionStatus.GRANTED -> stringResource(R.string.qd_settings_permission_granted) to MaterialTheme.colorScheme.primary
+                    com.quickdaily.PermissionStatus.NOT_GRANTED -> stringResource(R.string.qd_settings_permission_not_granted) to MaterialTheme.colorScheme.error
+                    com.quickdaily.PermissionStatus.NOT_REQUIRED -> stringResource(R.string.qd_settings_permission_not_required) to MaterialTheme.colorScheme.onSurfaceVariant
+                    com.quickdaily.PermissionStatus.SYSTEM_MANAGED -> stringResource(R.string.qd_settings_permission_system_managed) to MaterialTheme.colorScheme.onSurfaceVariant
                 }
                 ListItem(
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    headlineContent = { Text(spec.title) },
+                    headlineContent = { Text(stringResource(spec.titleRes)) },
                     supportingContent = {
                         Column {
-                            Text(spec.description)
+                            Text(stringResource(spec.descriptionRes))
                             Text(
                                 statusText,
                                 color = statusColor,
@@ -4739,7 +5065,7 @@ private fun PermissionRequestSection(
                             enabled = status == com.quickdaily.PermissionStatus.NOT_GRANTED,
                             onClick = { request(spec) },
                         ) {
-                            Text(if (status == com.quickdaily.PermissionStatus.NOT_GRANTED) "申请" else statusText)
+                            Text(if (status == com.quickdaily.PermissionStatus.NOT_GRANTED) stringResource(R.string.qd_settings_permission_request) else statusText)
                         }
                     },
                 )

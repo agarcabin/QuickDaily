@@ -1,7 +1,6 @@
 package com.quickdaily
 
 import android.content.Context
-import com.quickdaily.util.ContentUtil
 import com.quickdaily.util.FileUtil
 import com.quickdaily.util.ReadResult
 import kotlinx.coroutines.CoroutineScope
@@ -51,8 +50,9 @@ internal object TaskToggleUseCase {
         lineIndex: Int,
         expectedRaw: String,
         logTag: String,
+        expectedSeparator: String? = null,
     ): TaskToggleResult = FileUtil.withPathMutation(path) {
-        toggleLocked(context, path, lineIndex, expectedRaw, logTag)
+        toggleLocked(context, path, lineIndex, expectedRaw, logTag, expectedSeparator)
     }
 
     private fun toggleLocked(
@@ -61,6 +61,7 @@ internal object TaskToggleUseCase {
         lineIndex: Int,
         expectedRaw: String,
         logTag: String,
+        expectedSeparator: String?,
     ): TaskToggleResult {
         if (path.isBlank() || lineIndex < 0) {
             val reason = "invalid_target"
@@ -82,28 +83,40 @@ internal object TaskToggleUseCase {
             }
         }
 
-        val parsed = ContentUtil.parseFrontmatter(content)
-        val body = if (parsed.hasFrontmatter) parsed.body else content
-        val lines = body.lines().toMutableList()
-        if (lineIndex !in lines.indices) {
+        val sourceDocument = SourceDocument.from(content)
+        val sourceLine = sourceDocument.lines.getOrNull(lineIndex)
+        if (sourceLine == null) {
             val reason = "line_out_of_range"
-            BetaLogger.log(logTag, "toggle aborted reason=$reason path=$path line=$lineIndex lineCount=${lines.size}")
+            BetaLogger.log(logTag, "toggle aborted reason=$reason path=$path line=$lineIndex lineCount=${sourceDocument.lines.size}")
             return TaskToggleResult(false, failureReason = reason)
         }
-        if (expectedRaw.isNotBlank() && lines[lineIndex] != expectedRaw) {
+        if (expectedRaw.isNotBlank() && sourceLine.rawLine != expectedRaw) {
             val reason = "stale_line"
             BetaLogger.log(
                 logTag,
-                "toggle aborted reason=$reason path=$path line=$lineIndex expectedRaw=$expectedRaw actualRaw=${lines[lineIndex]}",
+                "toggle aborted reason=$reason path=$path line=$lineIndex expectedRaw=$expectedRaw actualRaw=${sourceLine.rawLine}",
+            )
+            return TaskToggleResult(false, failureReason = reason)
+        }
+        if (expectedSeparator != null && sourceLine.separator != expectedSeparator) {
+            val reason = "stale_line"
+            BetaLogger.log(
+                logTag,
+                "toggle aborted reason=$reason path=$path line=$lineIndex expectedSeparator=${expectedSeparator.length} actualSeparator=${sourceLine.separator.length}",
             )
             return TaskToggleResult(false, failureReason = reason)
         }
 
-        val item = TaskWidgetTaskParser.parse(body, path).firstOrNull { it.lineIndex == lineIndex }
-        val toggledLine = TaskWidgetTaskParser.toggleLine(lines[lineIndex])
+        val body = sourceDocument.bodyTextPreservingSeparators()
+        val item = TaskWidgetTaskParser.parse(
+            body = body,
+            sourcePath = path,
+            lineIndexOffset = sourceDocument.bodyStartLine,
+        ).firstOrNull { it.lineIndex == lineIndex }
+        val toggledLine = TaskWidgetTaskParser.toggleLine(sourceLine.rawLine)
         if (item == null || toggledLine == null) {
             val reason = "non_task_line"
-            BetaLogger.log(logTag, "toggle aborted reason=$reason path=$path line=$lineIndex raw=${lines[lineIndex]}")
+            BetaLogger.log(logTag, "toggle aborted reason=$reason path=$path line=$lineIndex raw=${sourceLine.rawLine}")
             return TaskToggleResult(false, failureReason = reason)
         }
 
@@ -138,16 +151,10 @@ internal object TaskToggleUseCase {
             }
         }
 
-        lines[lineIndex] = savedLine
-        val newBody = lines.joinToString("\n")
-        val saveContent = if (parsed.hasFrontmatter) {
-            ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, newBody)
-        } else {
-            newBody
-        }
+        val saveContent = sourceDocument.replaceLine(lineIndex, savedLine)
         BetaLogger.log(
-                logTag,
-                "toggle prepared path=$path line=$lineIndex checkedBefore=${item.checked} checkedAfter=${!item.checked} " +
+            logTag,
+            "toggle prepared path=$path line=$lineIndex checkedBefore=${item.checked} checkedAfter=${!item.checked} " +
                 "timestampAction=$timestampAction timestampEnabled=$timestampEnabled beforeRaw=${item.rawLine} afterRaw=$savedLine",
         )
 

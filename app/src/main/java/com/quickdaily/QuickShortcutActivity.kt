@@ -9,7 +9,7 @@ import androidx.activity.ComponentActivity
  * 桌面快捷方式的中转 Activity。
  * 用户点击桌面快捷方式后，立即跳转到悬浮窗速记，自身不可见。
  */
-class QuickShortcutActivity : ComponentActivity() {
+class QuickShortcutActivity : LocalizedComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         BetaLogger.init(this, "QuickShortcutActivity")

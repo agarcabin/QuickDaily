@@ -45,6 +45,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
@@ -65,10 +66,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.lifecycleScope
 import com.quickdaily.AppState
+import com.quickdaily.R
+import com.quickdaily.FloatingNoteObsidianLaunchPolicy
 import com.quickdaily.EditorImageInsertPolicy
 import com.quickdaily.markdown.MdRenderer
 import com.quickdaily.markdown.toggleTaskCheck
 import com.quickdaily.util.ImageUtil
+import com.quickdaily.util.SafDocumentPath
+import com.quickdaily.util.VaultStoragePrefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
@@ -130,7 +135,13 @@ fun EditorScreen(
     }
     val allTags = completionIndex?.tags.orEmpty()
     val view = LocalView.current
-    val title = todayPath.substringAfterLast("/").removeSuffix(".md")
+    val title = remember(todayPath) {
+        val fileName = SafDocumentPath.leafName(context, todayPath)
+            ?: SafDocumentPath.leafName(todayPath)
+            ?: todayPath.substringAfterLast('/').takeIf { it.isNotBlank() }
+            ?: "QuickDaily"
+        fileName.removeSuffix(".md").ifBlank { "QuickDaily" }
+    }
     val clipboardManager = LocalClipboardManager.current
     DisposableEffect(context, navBarColor) {
         try {
@@ -213,7 +224,7 @@ fun EditorScreen(
             if (link != null) file.delete()
             withContext(Dispatchers.Main) {
                 if (link != null) applyInsertedLink(link)
-                else Toast.makeText(context, "录音保存失败，临时文件已保留", Toast.LENGTH_SHORT).show()
+                else Toast.makeText(context, context.getString(R.string.qd_editor_record_save_failed), Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -233,7 +244,7 @@ fun EditorScreen(
         }.getOrNull()
         if (nextRecorder == null) {
             file.delete()
-            Toast.makeText(context, "无法开始录音", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.qd_editor_record_start_failed), Toast.LENGTH_SHORT).show()
             return
         }
         recorder = nextRecorder
@@ -257,7 +268,7 @@ fun EditorScreen(
         if (granted) {
             val file = runCatching { CaptureFileUtil.newImageFile(context) }.getOrNull()
             if (file == null) {
-                Toast.makeText(context, "无法创建照片文件", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, context.getString(R.string.qd_editor_photo_file_failed), Toast.LENGTH_SHORT).show()
             } else {
                 val uri = CaptureFileUtil.fileUri(context, file)
                 pendingCameraFile = file
@@ -265,14 +276,14 @@ fun EditorScreen(
                 cameraLauncher.launch(uri)
             }
         } else {
-            Toast.makeText(context, "请允许相机权限后再拍照", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.qd_editor_camera_permission_required), Toast.LENGTH_SHORT).show()
         }
     }
     val audioPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) startRecordingNow()
-        else Toast.makeText(context, "请允许录音权限后再录音", Toast.LENGTH_SHORT).show()
+        else Toast.makeText(context, context.getString(R.string.qd_editor_microphone_permission_required), Toast.LENGTH_SHORT).show()
     }
 
     fun toggleRecording() {
@@ -318,25 +329,17 @@ fun EditorScreen(
                 )
                 links.firstOrNull() ?: return@launch
             } else {
-                val vaultPath = config.vaultPath
                 val storagePath = config.imageStoragePath
                 val dir = if (storagePath.isBlank()) "" else storagePath.trim('/')
-                val dirPath = if (dir.isNotEmpty()) vaultPath.trimEnd('/') + "/" + dir else vaultPath.trimEnd('/')
-                val destDirFile = java.io.File(dirPath)
-                destDirFile.mkdirs()
                 val displayName = com.quickdaily.util.ImageUtil.getDisplayName(context, uri)
                 val ext = com.quickdaily.util.ImageUtil.getExtension(context, uri)
                 val fileName = com.quickdaily.util.ImageUtil.generateFileName(config.imageNamingFormat, displayName, ext, config.imageCustomNamingFormat)
-                val destFile = java.io.File(destDirFile, fileName)
-                context.contentResolver.openInputStream(uri)?.use { input: java.io.InputStream? ->
-                    if (input != null) {
-                        java.io.FileOutputStream(destFile).use { output: java.io.FileOutputStream ->
-                            input.copyTo(output)
-                        }
-                    }
-                }
                 val relativePath = if (dir.isNotEmpty()) dir + "/" + fileName else fileName
-                "![[" + relativePath + "]]"
+                val copied = com.quickdaily.util.VaultPathUtil.resolve(config.vaultPath, relativePath)?.let { destination ->
+                    com.quickdaily.util.VaultStorage.copyUriToPath(context, uri, destination)
+                } == true
+                if (!copied) return@launch
+                "![[$relativePath]]"
             }
             withContext(Dispatchers.Main) {
                 val next = EditorMediaUtil.insertLink(
@@ -494,19 +497,38 @@ fun EditorScreen(
                 actions = {
 
                     TextButton(onClick = {
-                        val vaultName = config.vaultPath.trimEnd('/').substringAfterLast('/')
-                        if (vaultName.isNotBlank()) {
-                            try {
-                                val relativePath = Uri.encode(appState.currentEditorRelativePath())
-                                val uri = Uri.parse("obsidian://open?vault=${Uri.encode(vaultName)}&file=$relativePath")
-                                val intent = Intent(Intent.ACTION_VIEW, uri)
-                                context.startActivity(intent)
-                            } catch (e: Exception) {
-                                Toast.makeText(context, "未安装 Obsidian", Toast.LENGTH_SHORT).show()
+                        appState.saveNow(force = true, onComplete = { saveSucceeded ->
+                            if (appState.editorConflict.value != null) {
+                                Toast.makeText(context, context.getString(R.string.qd_editor_external_change), Toast.LENGTH_LONG).show()
+                            } else if (!saveSucceeded) {
+                                Toast.makeText(context, context.getString(R.string.qd_editor_save_incomplete), Toast.LENGTH_LONG).show()
+                            } else {
+                                val storage = VaultStoragePrefs.current(context)
+                                val vaultId = context.getSharedPreferences("QuickDaily", 0)
+                                    .getString(VaultStoragePrefs.OBSIDIAN_VAULT_ID_KEY, "")
+                                    .orEmpty()
+                                val uri = FloatingNoteObsidianLaunchPolicy.buildOpenUri(
+                                    storage = storage,
+                                    relativePath = appState.currentEditorRelativePath(),
+                                    obsidianVaultId = vaultId,
+                                )
+                                if (uri == null) {
+                                    if (storage.backend == com.quickdaily.util.VaultBackend.SAF && vaultId.isBlank()) {
+                                        Toast.makeText(context, context.getString(R.string.qd_editor_vault_id_required), Toast.LENGTH_LONG).show()
+                                    } else {
+                                        Toast.makeText(context, context.getString(R.string.qd_editor_page_unlocatable), Toast.LENGTH_SHORT).show()
+                                    }
+                                } else {
+                                    try {
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                                    } catch (_: Exception) {
+                                        Toast.makeText(context, context.getString(R.string.qd_editor_obsidian_missing), Toast.LENGTH_SHORT).show()
+                                    }
+                                }
                             }
-                        }
+                        })
                     }) {
-                        Text("打开Obsidian",
+                        Text(stringResource(R.string.qd_editor_open_obsidian),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary)
                     }
@@ -514,11 +536,11 @@ fun EditorScreen(
                     IconButton(onClick = { showPreview = !showPreview }) {
                     Icon(
                         if (showPreview) Icons.Default.Edit else Icons.Default.Visibility,
-                        if (showPreview) "返回编辑" else "预览",
+                        stringResource(if (showPreview) R.string.qd_editor_back_to_edit else R.string.qd_editor_preview),
                     )
                     }
                     IconButton(onClick = onSettingsClick) {
-                        Icon(Icons.Default.Settings, "设置")
+                        Icon(Icons.Default.Settings, stringResource(R.string.qd_editor_settings))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -579,7 +601,7 @@ fun EditorScreen(
                                             if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
                                                 val file = runCatching { CaptureFileUtil.newImageFile(context) }.getOrNull()
                                                 if (file == null) {
-                                                    Toast.makeText(context, "无法创建照片文件", Toast.LENGTH_SHORT).show()
+                                                    Toast.makeText(context, context.getString(R.string.qd_editor_photo_file_failed), Toast.LENGTH_SHORT).show()
                                                 } else {
                                                     val uri = CaptureFileUtil.fileUri(context, file)
                                                     pendingCameraFile = file
@@ -708,7 +730,13 @@ fun EditorScreen(
                             icon = {
                                 Icon(
                                     Icons.Default.KeyboardArrowDown,
-                                    if (keyboardVisible) "关闭键盘" else if (toolbarPage > 0) "返回第一页工具" else "打开第二页工具",
+                                    stringResource(
+                                        when {
+                                            keyboardVisible -> R.string.qd_editor_close_keyboard
+                                            toolbarPage > 0 -> R.string.qd_editor_previous_toolbar_page
+                                            else -> R.string.qd_editor_next_toolbar_page
+                                        },
+                                    ),
                                     modifier = Modifier
                                         .size(22.dp)
                                         .graphicsLayer { rotationZ = toolbarArrowRotation },
@@ -747,12 +775,12 @@ fun EditorScreen(
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Text(
-                            "检测到磁盘文件有更新",
+                            stringResource(R.string.qd_editor_conflict_title),
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.onTertiaryContainer,
                         )
                         Text(
-                            "本地未保存内容未被覆盖，请选择保留哪一份。",
+                            stringResource(R.string.qd_editor_conflict_message),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onTertiaryContainer,
                         )
@@ -761,10 +789,21 @@ fun EditorScreen(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Button(onClick = appState::useDiskConflict) {
-                                Text("采用磁盘版本")
+                                Text(stringResource(R.string.qd_editor_use_disk_version))
                             }
-                            OutlinedButton(onClick = appState::keepLocalConflict) {
-                                Text("保留本地并覆盖磁盘")
+                            OutlinedButton(onClick = {
+                                val copyPath = appState.saveLocalConflictCopy()
+                                Toast.makeText(
+                                    context,
+                                    if (copyPath == null) {
+                                        context.getString(R.string.qd_editor_save_local_failed)
+                                    } else {
+                                        context.getString(R.string.qd_editor_local_saved_disk_loaded)
+                                    },
+                                    Toast.LENGTH_LONG,
+                                ).show()
+                            }) {
+                                Text(stringResource(R.string.qd_editor_save_current_copy))
                             }
                         }
                     }
@@ -782,9 +821,18 @@ fun EditorScreen(
                     }
                 } else if (showPreview) {
                     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
-                        MdRenderer(text = diaryContent, vaultBasePath = config.vaultPath, imageStoragePath = config.imageStoragePath.takeIf { it.isNotBlank() }, onToggleCheckbox = { index ->
-                            appState.onContentChanged(toggleTaskCheck(diaryContent, index), forceUndoPoint = true)
-                        })
+                        MdRenderer(
+                            text = diaryContent,
+                            vaultBasePath = config.vaultPath,
+                            imageStoragePath = config.imageStoragePath.takeIf { it.isNotBlank() },
+                            hiddenDisplayTexts = config.hiddenDisplayTexts,
+                            onToggleCheckbox = { actionRef ->
+                                appState.onContentChanged(
+                                    toggleTaskCheck(diaryContent, actionRef),
+                                    forceUndoPoint = true,
+                                )
+                            },
+                        )
                     }
                 } else {
             val scrollState = rememberScrollState()
@@ -864,7 +912,9 @@ fun EditorScreen(
                                 }
                             },
                         decorationBox = { innerField ->
-                            if (textFieldValue.text.isEmpty()) Text("开始写今天的日记...", color = Color.Gray, fontSize = 16.sp)
+                            if (textFieldValue.text.isEmpty()) {
+                                Text(stringResource(R.string.qd_editor_empty_hint), color = Color.Gray, fontSize = 16.sp)
+                            }
                             innerField()
                         }
                     )
@@ -935,7 +985,7 @@ fun EditorScreen(
                             Column(Modifier.verticalScroll(rememberScrollState()).padding(vertical = 2.dp)) {
                                 if (wikilinkIndex.loading && matchingWikilinks.isEmpty()) {
                                     Text(
-                                        "正在建立双链索引…",
+                                        stringResource(R.string.qd_editor_wikilink_index_loading),
                                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,

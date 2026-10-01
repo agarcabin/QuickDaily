@@ -12,6 +12,10 @@ import com.quickdaily.util.FileFingerprint
 import com.quickdaily.util.ContentUtil
 import com.quickdaily.util.ReadResult
 import com.quickdaily.util.VaultPathUtil
+import com.quickdaily.util.VaultBackend
+import com.quickdaily.util.VaultStoragePrefs
+import com.quickdaily.util.SafVirtualPath
+import com.quickdaily.util.QuickDailyConfigMutationLock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -19,6 +23,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.io.File
 
 data class DiaryConfig(
     val vaultPath: String = "",
@@ -47,6 +52,7 @@ data class DiaryConfig(
     val homeEntryMode: String = HomeEntryMode.OVERLAY.key,
     val toolbarOrder: List<String> = EditorToolbarPolicy.defaultOrder.map { it.id },
     val toolbarVisible: Set<String> = EditorToolbarPolicy.defaultVisible,
+    val hiddenDisplayTexts: List<String> = emptyList(),
     val loggingEnabled: Boolean = false,
     val taskPeriod: String = "today",
     val taskCompletionSoundMode: String = TaskCompletionSoundPolicy.DEFAULT_MODE.key,
@@ -157,6 +163,12 @@ data class ObsidianAppConfig(
     val useMarkdownLinks: Boolean = false
 )
 
+data class ConfigUpdateResult(
+    val previous: DiaryConfig,
+    val current: DiaryConfig,
+    val hiddenDisplayTextsChanged: Boolean,
+)
+
 class AppState(application: Application) : AndroidViewModel(application) {
 
     private val app: Application = application
@@ -223,8 +235,9 @@ class AppState(application: Application) : AndroidViewModel(application) {
             .remove("floating_background_blur")
             .apply()
         val obsidianConfigUri = prefs.getString("obsidian_config_uri", "") ?: ""
+        val vaultStorage = VaultStoragePrefs.current(app)
         return DiaryConfig(
-            vaultPath = prefs.getString("vault_path", "") ?: "",
+            vaultPath = vaultStorage.rootPath,
             obsidianConfigUri = obsidianConfigUri,
             useCustomObsidianConfigPath = if (prefs.contains("use_custom_obsidian_config_path")) {
                 prefs.getBoolean("use_custom_obsidian_config_path", false)
@@ -276,6 +289,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
             } else {
                 EditorToolbarPolicy.defaultVisible
             },
+            hiddenDisplayTexts = HiddenTextConfig.read(prefs),
             loggingEnabled = prefs.getBoolean("logging_enabled", false),
             taskPeriod = prefs.getString("task_period", "today") ?: "today",
             taskCompletionSoundMode = TaskCompletionSoundPolicy.migrateMode(
@@ -315,52 +329,73 @@ class AppState(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    fun saveConfig(raw: DiaryConfig) {
-        val previousConfig = _config.value
-        val config = DiaryConfig(
-            vaultPath = raw.vaultPath.trim(),
-            obsidianConfigUri = raw.obsidianConfigUri.trim(),
-            useCustomObsidianConfigPath = raw.useCustomObsidianConfigPath,
-            diaryFolder = raw.diaryFolder.trim().ifBlank { "Daily" },
-            dateFormat = raw.dateFormat.trim().ifBlank { "YYYY-MM-DD" },
-            templatePath = raw.templatePath.trim(),
+    private fun normalizeConfig(raw: DiaryConfig): DiaryConfig = DiaryConfig(
+        vaultPath = raw.vaultPath.trim(),
+        obsidianConfigUri = raw.obsidianConfigUri.trim(),
+        useCustomObsidianConfigPath = raw.useCustomObsidianConfigPath,
+        diaryFolder = raw.diaryFolder.trim().ifBlank { "Daily" },
+        dateFormat = raw.dateFormat.trim().ifBlank { "YYYY-MM-DD" },
+        templatePath = raw.templatePath.trim(),
         anchorText = raw.anchorText,
-            timestampFormat = raw.timestampFormat,
-            addAnchorIfMissing = raw.addAnchorIfMissing,
-            timestampOrder = raw.timestampOrder,
-            enterToSave = raw.enterToSave,
-            openObsidianAfterFloatingSave = raw.openObsidianAfterFloatingSave,
-            saveDraftOnFloatingClose = raw.saveDraftOnFloatingClose,
-            widgetImageUri = raw.widgetImageUri,
-            autoCheckUpdate = raw.autoCheckUpdate,
+        timestampFormat = raw.timestampFormat,
+        addAnchorIfMissing = raw.addAnchorIfMissing,
+        timestampOrder = raw.timestampOrder,
+        enterToSave = raw.enterToSave,
+        openObsidianAfterFloatingSave = raw.openObsidianAfterFloatingSave,
+        saveDraftOnFloatingClose = raw.saveDraftOnFloatingClose,
+        widgetImageUri = raw.widgetImageUri,
+        autoCheckUpdate = raw.autoCheckUpdate,
         filterFrontmatter = raw.filterFrontmatter,
-            imageStoragePath = raw.imageStoragePath,
-            imageNamingFormat = raw.imageNamingFormat,
-            imageLinkFormat = raw.imageLinkFormat,
-            imageCustomNamingFormat = raw.imageCustomNamingFormat,
-            tagAutocomplete = true,
-            wikilinkAutocomplete = true,
-            systemSidebarSupport = raw.systemSidebarSupport,
-            homeEntryMode = HomeEntryMode.fromKey(raw.homeEntryMode).key,
-            toolbarOrder = EditorToolbarPolicy.normalizeOrder(raw.toolbarOrder),
-            toolbarVisible = EditorToolbarPolicy.normalizeVisible(raw.toolbarVisible),
-            loggingEnabled = raw.loggingEnabled,
-            taskPeriod = raw.taskPeriod,
-            taskCompletionSoundMode = TaskCompletionSoundMode.fromKey(raw.taskCompletionSoundMode).key,
-            taskCompletionTimestamp = raw.taskCompletionTimestamp,
-            taskCompletionTimestampFormat = TaskCompletionTimestampPolicy.normalizeFormat(
-                raw.taskCompletionTimestampFormat,
-            ),
-            taskShowCompleted = raw.taskShowCompleted,
-            taskShowFullContent = raw.taskShowFullContent,
-            taskGroupByDate = raw.taskGroupByDate,
-            widgetStyle = raw.widgetStyle,
-            widgetBackgroundColor = raw.widgetBackgroundColor,
-            floatingOpacity = raw.floatingOpacity.coerceIn(0, 100),
-            widgetOpacity = raw.widgetOpacity.coerceIn(0, 100),
-        )
-        prefs.edit()
+        imageStoragePath = raw.imageStoragePath,
+        imageNamingFormat = raw.imageNamingFormat,
+        imageLinkFormat = raw.imageLinkFormat,
+        imageCustomNamingFormat = raw.imageCustomNamingFormat,
+        tagAutocomplete = true,
+        wikilinkAutocomplete = true,
+        systemSidebarSupport = raw.systemSidebarSupport,
+        homeEntryMode = HomeEntryMode.fromKey(raw.homeEntryMode).key,
+        toolbarOrder = EditorToolbarPolicy.normalizeOrder(raw.toolbarOrder),
+        toolbarVisible = EditorToolbarPolicy.normalizeVisible(raw.toolbarVisible),
+        hiddenDisplayTexts = HiddenTextPolicy.normalizeRules(raw.hiddenDisplayTexts),
+        loggingEnabled = raw.loggingEnabled,
+        taskPeriod = raw.taskPeriod,
+        taskCompletionSoundMode = TaskCompletionSoundMode.fromKey(raw.taskCompletionSoundMode).key,
+        taskCompletionTimestamp = raw.taskCompletionTimestamp,
+        taskCompletionTimestampFormat = TaskCompletionTimestampPolicy.normalizeFormat(
+            raw.taskCompletionTimestampFormat,
+        ),
+        taskShowCompleted = raw.taskShowCompleted,
+        taskShowFullContent = raw.taskShowFullContent,
+        taskGroupByDate = raw.taskGroupByDate,
+        widgetStyle = raw.widgetStyle,
+        widgetBackgroundColor = raw.widgetBackgroundColor,
+        floatingOpacity = raw.floatingOpacity.coerceIn(0, 100),
+        widgetOpacity = raw.widgetOpacity.coerceIn(0, 100),
+    )
+
+    private fun persistConfig(config: DiaryConfig) {
+        val vaultEditor = prefs.edit()
             .putString("vault_path", config.vaultPath)
+        val safVault = SafVirtualPath.parse(config.vaultPath)
+        if (safVault != null) {
+            vaultEditor
+                .putString(VaultStoragePrefs.BACKEND_KEY, VaultBackend.SAF.name.lowercase())
+                .putString(VaultStoragePrefs.TREE_URI_KEY, safVault.rootUri.toString())
+                .putString(
+                    VaultStoragePrefs.DISPLAY_NAME_KEY,
+                    prefs.getString(VaultStoragePrefs.DISPLAY_NAME_KEY, "").orEmpty(),
+                )
+        } else if (config.vaultPath.isNotBlank()) {
+            vaultEditor
+                .putString(VaultStoragePrefs.BACKEND_KEY, VaultBackend.FILE.name.lowercase())
+                .remove(VaultStoragePrefs.TREE_URI_KEY)
+        } else {
+            vaultEditor
+                .putString(VaultStoragePrefs.BACKEND_KEY, VaultBackend.FILE.name.lowercase())
+                .remove(VaultStoragePrefs.TREE_URI_KEY)
+                .remove(VaultStoragePrefs.DISPLAY_NAME_KEY)
+        }
+        vaultEditor
             .putString("obsidian_config_uri", config.obsidianConfigUri)
             .putBoolean("use_custom_obsidian_config_path", config.useCustomObsidianConfigPath)
             .putString("diary_folder", config.diaryFolder)
@@ -395,6 +430,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
             .putString(EditorToolbarPolicy.PREF_ORDER, EditorToolbarPolicy.serializeOrder(config.toolbarOrder))
             .putString(EditorToolbarPolicy.PREF_VISIBLE, EditorToolbarPolicy.serializeVisible(config.toolbarVisible))
             .putInt(EditorToolbarPolicy.PREF_SCHEMA_VERSION, EditorToolbarPolicy.CURRENT_SCHEMA_VERSION)
+            .putString(HiddenTextConfig.PREF_KEY, HiddenTextConfig.encode(config.hiddenDisplayTexts))
             .putBoolean("logging_enabled", config.loggingEnabled)
             .putString("task_period", config.taskPeriod)
             .putString(TaskCompletionSoundPolicy.PREF_MODE_KEY, config.taskCompletionSoundMode)
@@ -413,24 +449,37 @@ class AppState(application: Application) : AndroidViewModel(application) {
             // the main thread and was especially visible in Settings because every switch
             // also used to reload the current Markdown file below.
             .apply()
-        _config.value = config
+    }
+
+    fun updateConfig(change: (DiaryConfig) -> DiaryConfig): ConfigUpdateResult {
+        val result = QuickDailyConfigMutationLock.withLock {
+            val previous = loadConfig()
+            val current = normalizeConfig(change(previous))
+            persistConfig(current)
+            _config.value = current
+            ConfigUpdateResult(
+                previous = previous,
+                current = current,
+                hiddenDisplayTextsChanged = previous.hiddenDisplayTexts != current.hiddenDisplayTexts,
+            )
+        }
         BetaLogger.log(
             "Config/Save",
-            "vaultPath=${config.vaultPath} diaryFolder=${config.diaryFolder} dateFormat=${config.dateFormat} " +
-                "filterFrontmatter=${config.filterFrontmatter} loggingEnabled=${config.loggingEnabled} " +
-                "taskCompletionSoundMode=${config.taskCompletionSoundMode} taskCompletionTimestamp=${config.taskCompletionTimestamp} " +
-                "taskCompletionTimestampFormat=${config.taskCompletionTimestampFormat} " +
-                "taskShowCompleted=${config.taskShowCompleted} taskShowFullContent=${config.taskShowFullContent} " +
-                "systemSidebarSupport=${config.systemSidebarSupport}",
+            "vaultPath=${result.current.vaultPath} diaryFolder=${result.current.diaryFolder} dateFormat=${result.current.dateFormat} " +
+                "filterFrontmatter=${result.current.filterFrontmatter} loggingEnabled=${result.current.loggingEnabled} " +
+                "taskCompletionSoundMode=${result.current.taskCompletionSoundMode} taskCompletionTimestamp=${result.current.taskCompletionTimestamp} " +
+                "taskCompletionTimestampFormat=${result.current.taskCompletionTimestampFormat} " +
+                "taskShowCompleted=${result.current.taskShowCompleted} taskShowFullContent=${result.current.taskShowFullContent} " +
+                "systemSidebarSupport=${result.current.systemSidebarSupport} hiddenDisplayTexts=${result.current.hiddenDisplayTexts.size}",
         )
-        if (previousConfig.requiresEditorReloadComparedTo(config)) {
+        if (result.previous.requiresEditorReloadComparedTo(result.current)) {
             loadEditorTarget(_editorTargetRelativePath.value)
         }
+        return result
     }
 
     fun setLoggingEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean("logging_enabled", enabled).apply()
-        _config.value = _config.value.copy(loggingEnabled = enabled)
+        updateConfig { current -> current.copy(loggingEnabled = enabled) }
     }
 
     private fun DiaryConfig.requiresEditorReloadComparedTo(other: DiaryConfig): Boolean =
@@ -601,6 +650,12 @@ class AppState(application: Application) : AndroidViewModel(application) {
             BetaLogger.log(logTag, "rawContent from=$contentSource raw_len=${rawContent.length}")
             val loadedMtimeAfterRead = FileUtil.lastModified(path)
             val loadedFingerprint = FileUtil.fingerprint(path)
+            BetaLogger.log(
+                logTag,
+                "identity backend=${VaultStoragePrefs.current(app).backend} target=$path " +
+                    "contentSha256=${loadedFingerprint?.sha256.orEmpty()} " +
+                    "vaultId=${prefs.getString(VaultStoragePrefs.OBSIDIAN_VAULT_ID_KEY, "").orEmpty()}",
+            )
 
             val parsed = ContentUtil.parseFrontmatter(rawContent)
             val applied = synchronized(loadLock) {
@@ -792,11 +847,8 @@ class AppState(application: Application) : AndroidViewModel(application) {
             BetaLogger.log("LoadTemplate", "templatePath empty in config")
             return ""
         }
-        val tplPath = if (cfg.templatePath.startsWith("/")) {
-            cfg.templatePath
-        } else {
-            "${cfg.vaultPath.trimEnd('/')}/${cfg.templatePath}"
-        }
+        val tplPath = VaultPathUtil.resolveTarget(cfg.vaultPath, cfg.templatePath)
+            ?: cfg.templatePath
         val tplContent = FileUtil.readOrNull(tplPath) ?: ""
         if (tplContent.isEmpty()) {
             BetaLogger.log("LoadTemplate", "template file empty or not found path=" + tplPath)
@@ -858,9 +910,67 @@ class AppState(application: Application) : AndroidViewModel(application) {
         saveNow()
     }
 
+    /** Save the dirty editor buffer beside the externally changed file, then reload the disk copy. */
+    fun saveLocalConflictCopy(): String? {
+        val snapshot = synchronized(loadLock) {
+            val conflict = _editorConflict.value ?: return@synchronized null
+            val hasFm = _frontmatter.value.isNotEmpty() && config.value.filterFrontmatter
+            val content = if (hasFm) {
+                ContentUtil.reconstructWithFrontmatter(_frontmatter.value, _diaryContent.value)
+            } else {
+                _diaryContent.value
+            }
+            conflict.absolutePath to content
+        } ?: return null
+        val copyPath = conflictCopyPath(snapshot.first) ?: return null
+        if (!FileUtil.write(copyPath, snapshot.second)) {
+            BetaLogger.log("ReloadIfNewer", "conflict_copy_failed original=${snapshot.first} copy=$copyPath")
+            return null
+        }
+        BetaLogger.log("ReloadIfNewer", "conflict_copy_saved original=${snapshot.first} copy=$copyPath")
+        useDiskConflict()
+        return copyPath
+    }
+
+    private fun conflictCopyPath(path: String): String? {
+        val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
+            .format(java.util.Date())
+        if (SafVirtualPath.isSafPath(path)) {
+            val parsed = SafVirtualPath.parse(path) ?: return null
+            val leaf = parsed.relativePath.substringAfterLast('/').ifBlank { return null }
+            val parent = parsed.relativePath.substringBeforeLast('/', "")
+            val base = leaf.substringBeforeLast('.', leaf)
+            repeat(100) { index ->
+                val suffix = if (index == 0) "" else "-$index"
+                val relative = listOf(parent, "$base.quickdaily-conflict-$stamp$suffix.md")
+                    .filter(String::isNotBlank)
+                    .joinToString("/")
+                val candidate = SafVirtualPath.join(parsed.rootPath, relative) ?: return null
+                if (!FileUtil.exists(candidate)) return candidate
+            }
+            return null
+        }
+        val file = File(path)
+        val base = file.nameWithoutExtension
+        repeat(100) { index ->
+            val suffix = if (index == 0) "" else "-$index"
+            val candidate = File(file.parentFile, "$base.quickdaily-conflict-$stamp$suffix.${file.extension.ifBlank { "md" }}")
+            if (!candidate.exists()) return candidate.path
+        }
+        return null
+    }
+
     private fun readEditorConflict(path: String, mtime: Long, fingerprint: FileFingerprint?): EditorConflict? =
         when (val result = FileUtil.readResult(path)) {
             is ReadResult.Success -> EditorConflict(path, result.content, mtime, fingerprint)
+            ReadResult.NotFound -> EditorConflict(
+                absolutePath = path,
+                externalContent = "",
+                externalMtime = 0L,
+                externalFingerprint = fingerprint ?: FileFingerprint(false, 0L, "", 0L),
+            ).also {
+                BetaLogger.log("ReloadIfNewer", "conflict_detected external_file_missing path=$path")
+            }
             else -> {
                 BetaLogger.log("ReloadIfNewer", "conflict_read_failed path=$path")
                 null
@@ -927,23 +1037,32 @@ class AppState(application: Application) : AndroidViewModel(application) {
         scanTags()
     }
 
-    fun saveNow(onComplete: (() -> Unit)? = null) {
+    fun saveNow(force: Boolean = false, onComplete: ((Boolean) -> Unit)? = null) {
+        var immediateResult: Boolean? = null
         val snapshot = synchronized(loadLock) {
             val path = _todayPath.value
             val content = _diaryContent.value
-            if (!_isDirty.value) {
+            if (!_isDirty.value && !force) {
                 BetaLogger.log("SaveNow", "skip saving clean content path=$path")
+                immediateResult = true
+                return@synchronized null
+            }
+            if (!_isDirty.value) {
+                BetaLogger.log("SaveNow", "force requested but content is already clean path=$path")
+                immediateResult = true
                 return@synchronized null
             }
             // don't create empty file if diary hasn't been loaded yet
-            if (content.isEmpty() && path.isNotEmpty() && !java.io.File(path).exists()) {
+            if (content.isEmpty() && path.isNotEmpty() && !FileUtil.exists(path)) {
                 BetaLogger.log("SaveNow", "skip saving empty content for new file")
+                immediateResult = false
                 return@synchronized null
             }
             if (path.isBlank() || _editorConflict.value != null) {
                 if (_editorConflict.value != null) {
                     BetaLogger.log("SaveNow", "blocked_by_pending_conflict path=$path")
                 }
+                immediateResult = false
                 return@synchronized null
             }
             val hasFm = _frontmatter.value.isNotEmpty() && config.value.filterFrontmatter
@@ -962,7 +1081,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
                 ignoredExternalFingerprint = ignoredExternalFingerprint,
             )
         } ?: run {
-            onComplete?.invoke()
+            immediateResult?.let { result -> onComplete?.invoke(result) }
             return
         }
 
@@ -973,6 +1092,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
         )
         appScope.launch(Dispatchers.IO) {
             val mutationGuard = FileUtil.acquirePathMutation(snapshot.path)
+            var completionResult = false
             try {
             val snapshotStillCurrent = synchronized(loadLock) {
                 _todayPath.value == snapshot.path &&
@@ -1015,6 +1135,11 @@ class AppState(application: Application) : AndroidViewModel(application) {
             val writeSucceeded = FileUtil.write(snapshot.path, snapshot.saveContent)
             val writtenFingerprint = if (writeSucceeded) FileUtil.fingerprint(snapshot.path) else null
             val writtenMtime = writtenFingerprint?.lastModified ?: if (writeSucceeded) FileUtil.lastModified(snapshot.path) else 0L
+            BetaLogger.log(
+                "SaveNow",
+                "identity backend=${VaultStoragePrefs.current(app).backend} target=${snapshot.path} " +
+                    "observedSha256=${observedFingerprint.sha256} writtenSha256=${writtenFingerprint?.sha256.orEmpty()}",
+            )
             synchronized(loadLock) {
                 if (writeSucceeded && _todayPath.value == snapshot.path) {
                     _lastLoadedMtime = writtenMtime
@@ -1029,6 +1154,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
                     ) {
                         _isDirty.value = false
                     }
+                    completionResult = contentVersion == snapshot.contentVersion
                 }
             }
             if (writeSucceeded) {
@@ -1039,7 +1165,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
             }
             } finally {
                 mutationGuard.close()
-                onComplete?.let { callback -> viewModelScope.launch { callback() } }
+                onComplete?.let { callback -> viewModelScope.launch { callback(completionResult) } }
             }
         }
     }

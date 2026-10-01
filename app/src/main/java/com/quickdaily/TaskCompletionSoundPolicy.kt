@@ -6,16 +6,16 @@ import android.media.MediaPlayer
 import android.media.MediaActionSound
 import android.media.RingtoneManager
 
-internal enum class TaskCompletionSoundMode(val key: String, val label: String) {
+internal enum class TaskCompletionSoundMode(val key: String, val label: String, val labelRes: Int) {
     /** The original local feedback sample, now also the new-user default. */
-    CLASSIC("classic", "经典"),
+    CLASSIC("classic", "经典", R.string.qd_task_completion_classic),
     /** Keep the persisted key so existing 1.9.3 users retain their choice. */
-    ELECTRONIC("electronic", "木鱼"),
+    ELECTRONIC("electronic", "木鱼", R.string.qd_task_completion_electronic),
     /** Android 1.9 used MediaActionSound.FOCUS_COMPLETE for this mode. */
-    BEEP("beep", "蜂鸣"),
+    BEEP("beep", "蜂鸣", R.string.qd_task_completion_beep),
     /** The user's current system notification sound. */
-    SYSTEM("system", "系统"),
-    SILENT("silent", "静音");
+    SYSTEM("system", "系统", R.string.qd_task_completion_system),
+    SILENT("silent", "静音", R.string.qd_task_completion_silent);
 
     companion object {
         fun fromKey(key: String?): TaskCompletionSoundMode =

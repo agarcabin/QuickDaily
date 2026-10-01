@@ -28,9 +28,13 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.Hyphens
+import androidx.compose.ui.text.style.LineBreak
 import androidx.core.content.getSystemService
 import androidx.core.view.WindowCompat
 import com.quickdaily.BetaLogger
+import com.quickdaily.R
 
 private val LightColorScheme = lightColorScheme(
     primary = Color(0xFF1B6EF3),
@@ -96,6 +100,7 @@ private fun ColorScheme.withAccent(
 internal enum class QuickDailyAccentPreset(
     val key: String,
     val label: String,
+    @androidx.annotation.StringRes val labelRes: Int,
     val previewColor: Color,
     private val lightPrimary: Color,
     private val lightOnPrimary: Color,
@@ -109,6 +114,7 @@ internal enum class QuickDailyAccentPreset(
     BLUE(
         key = "blue",
         label = "蓝色",
+        labelRes = R.string.qd_settings_accent_blue,
         previewColor = Color(0xFF1B6EF3),
         lightPrimary = Color(0xFF1B6EF3),
         lightOnPrimary = Color.White,
@@ -122,6 +128,7 @@ internal enum class QuickDailyAccentPreset(
     PURPLE(
         key = "purple",
         label = "紫色",
+        labelRes = R.string.qd_settings_accent_purple,
         previewColor = Color(0xFF6750A4),
         lightPrimary = Color(0xFF6750A4),
         lightOnPrimary = Color.White,
@@ -135,6 +142,7 @@ internal enum class QuickDailyAccentPreset(
     GREEN(
         key = "green",
         label = "绿色",
+        labelRes = R.string.qd_settings_accent_green,
         previewColor = Color(0xFF006C4C),
         lightPrimary = Color(0xFF006C4C),
         lightOnPrimary = Color.White,
@@ -148,6 +156,7 @@ internal enum class QuickDailyAccentPreset(
     ORANGE(
         key = "orange",
         label = "橙色",
+        labelRes = R.string.qd_settings_accent_orange,
         previewColor = Color(0xFF8C5000),
         lightPrimary = Color(0xFF8C5000),
         lightOnPrimary = Color.White,
@@ -161,6 +170,7 @@ internal enum class QuickDailyAccentPreset(
     PINK(
         key = "pink",
         label = "粉色",
+        labelRes = R.string.qd_settings_accent_pink,
         previewColor = Color(0xFF9C2D6D),
         lightPrimary = Color(0xFF9C2D6D),
         lightOnPrimary = Color.White,
@@ -174,6 +184,7 @@ internal enum class QuickDailyAccentPreset(
     TEAL(
         key = "teal",
         label = "青色",
+        labelRes = R.string.qd_settings_accent_teal,
         previewColor = Color(0xFF006874),
         lightPrimary = Color(0xFF006874),
         lightOnPrimary = Color.White,
@@ -256,10 +267,10 @@ internal object QuickDailyThemePreferences {
     }
 }
 
-internal enum class QuickDailyNightMode(val key: String, val label: String) {
-    SYSTEM("system", "\u8ddf\u968f\u7cfb\u7edf"),
-    LIGHT("light", "\u5173\u95ed"),
-    DARK("dark", "\u5f00\u542f");
+internal enum class QuickDailyNightMode(val key: String, val label: String, val labelRes: Int) {
+    SYSTEM("system", "\u8ddf\u968f\u7cfb\u7edf", R.string.qd_night_mode_system),
+    LIGHT("light", "\u5173\u95ed", R.string.qd_night_mode_light),
+    DARK("dark", "\u5f00\u542f", R.string.qd_night_mode_dark);
 
     companion object {
         fun fromKey(key: String?): QuickDailyNightMode =
@@ -416,9 +427,32 @@ fun quickDailyFloaterColors(): FloaterColors {
     )
 }
 
-// Typography tokens matching app font sizes
+// Typography tokens matching app font sizes. Keep translated UI text at word
+// boundaries so narrow English labels do not split inside a word.
+private fun TextStyle.withWholeWordWrapping(): TextStyle = copy(
+    lineBreak = LineBreak.Paragraph,
+    hyphens = Hyphens.None,
+)
 
-val AppTypography = Typography()
+val AppTypography = Typography().let { typography ->
+    typography.copy(
+        displayLarge = typography.displayLarge.withWholeWordWrapping(),
+        displayMedium = typography.displayMedium.withWholeWordWrapping(),
+        displaySmall = typography.displaySmall.withWholeWordWrapping(),
+        headlineLarge = typography.headlineLarge.withWholeWordWrapping(),
+        headlineMedium = typography.headlineMedium.withWholeWordWrapping(),
+        headlineSmall = typography.headlineSmall.withWholeWordWrapping(),
+        titleLarge = typography.titleLarge.withWholeWordWrapping(),
+        titleMedium = typography.titleMedium.withWholeWordWrapping(),
+        titleSmall = typography.titleSmall.withWholeWordWrapping(),
+        bodyLarge = typography.bodyLarge.withWholeWordWrapping(),
+        bodyMedium = typography.bodyMedium.withWholeWordWrapping(),
+        bodySmall = typography.bodySmall.withWholeWordWrapping(),
+        labelLarge = typography.labelLarge.withWholeWordWrapping(),
+        labelMedium = typography.labelMedium.withWholeWordWrapping(),
+        labelSmall = typography.labelSmall.withWholeWordWrapping(),
+    )
+}
 
 @Immutable
 data class QuickDailyMotionPolicy(val reducedMotion: Boolean) {

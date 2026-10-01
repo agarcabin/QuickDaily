@@ -29,6 +29,26 @@ object FloatingNotePositionPolicy {
         )
     }
 
+    /**
+     * Prefer the position captured immediately before a mode switch. The
+     * persisted value is only the fallback for a newly created window or for
+     * a process that was recreated while the editor was fullscreen.
+     */
+    fun resolve(
+        captured: FloatingNotePosition?,
+        persisted: FloatingNotePosition,
+        screenWidth: Int,
+        screenHeight: Int,
+        windowWidth: Int,
+        windowHeight: Int,
+    ): FloatingNotePosition = clamp(
+        captured ?: persisted,
+        screenWidth,
+        screenHeight,
+        windowWidth,
+        windowHeight,
+    )
+
     fun load(context: Context, fallback: FloatingNotePosition): FloatingNotePosition {
         val prefs = context.getSharedPreferences("QuickDaily", Context.MODE_PRIVATE)
         return if (prefs.contains(PREF_X) && prefs.contains(PREF_Y)) {

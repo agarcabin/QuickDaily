@@ -70,7 +70,7 @@ object FloatingNoteTargetStore {
             FloatingNoteTargetOption(
                 path = null,
                 title = titleFor(context, null),
-                menuTitle = "日记",
+                menuTitle = LocaleController.localizedContext(context).getString(R.string.qd_read_widget_today),
             )
         ) + customPaths.map { path ->
             FloatingNoteTargetOption(path, titleFor(context, path))
@@ -85,7 +85,7 @@ object FloatingNoteTargetStore {
             ?.let { TaskWidgetConfigStore.displayName(it) }
             ?.takeIf { it.isNotBlank() }
             ?: DateUtil.todayStr(dateFormat)
-        return "$pageName 速记"
+        return "$pageName ${LocaleController.localizedContext(context).getString(R.string.qd_editor_quick_capture_suffix)}"
     }
 }
 
@@ -240,9 +240,7 @@ internal object FloatingNoteDraftTargetPolicy {
     fun keyFor(context: Context, targetRelativePath: String?): String =
         keyForPath(
             targetRelativePath,
-            context.getSharedPreferences(FLOATING_NOTE_PREFS, Context.MODE_PRIVATE)
-                .getString("vault_path", "")
-                .orEmpty(),
+            com.quickdaily.util.VaultStoragePrefs.current(context).rootPath,
         )
 
     internal fun keyForPath(targetRelativePath: String?, vaultPath: String): String {

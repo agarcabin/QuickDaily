@@ -6,6 +6,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import com.quickdaily.R
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.widthIn
 
@@ -17,19 +19,19 @@ internal fun OnboardingSkipConfirmationDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         modifier = Modifier.widthIn(max = 400.dp),
-        title = { Text("跳过引导") },
-        text = { Text("你确定跳过引导吗？后续可以在设置中重置引导教程。") },
+        title = { Text(stringResource(R.string.qd_onboarding_skip_title)) },
+        text = { Text(stringResource(R.string.qd_onboarding_skip_message)) },
         dismissButton = {
             TextButton(
                 onClick = onDismiss,
                 modifier = Modifier.heightIn(min = 48.dp),
-            ) { Text("取消") }
+            ) { Text(stringResource(R.string.qd_common_cancel)) }
         },
         confirmButton = {
             TextButton(
                 onClick = onConfirm,
                 modifier = Modifier.heightIn(min = 48.dp),
-            ) { Text("跳过") }
+            ) { Text(stringResource(R.string.qd_onboarding_skip)) }
         },
     )
 }

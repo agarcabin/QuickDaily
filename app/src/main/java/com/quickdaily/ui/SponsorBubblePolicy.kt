@@ -19,3 +19,24 @@ internal object SponsorBubbleTailPolicy {
         return bubbleCenter >= avatarCenter
     }
 }
+
+/**
+ * Converts the selected avatar's window-space center into the popup-local
+ * coordinate used by the speech-bubble shape.
+ *
+ * Keeping this calculation in one coordinate space is important because a
+ * Compose Popup may render in a separate platform window.
+ */
+internal fun sponsorBubbleTailOffset(
+    avatarLeft: Int,
+    avatarRight: Int,
+    bubbleLeft: Int,
+    bubbleWidthPx: Int,
+    tailWidthPx: Float,
+): Float {
+    if (bubbleWidthPx <= 0) return 0f
+    val halfTail = tailWidthPx / 2f
+    val maxTail = (bubbleWidthPx.toFloat() - halfTail).coerceAtLeast(halfTail)
+    return ((avatarLeft + avatarRight) / 2f - bubbleLeft)
+        .coerceIn(halfTail, maxTail)
+}

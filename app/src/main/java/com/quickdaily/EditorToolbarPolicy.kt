@@ -1,32 +1,32 @@
 package com.quickdaily
 
 /** Stable IDs shared by the full editor and the floating editor toolbar. */
-enum class EditorToolbarAction(val id: String, val label: String) {
-    IMAGE("image", "图片"),
-    TASK("task", "任务"),
-    HEADING("heading", "标题"),
-    LIST("list", "列表"),
-    ORDERED_LIST("ordered_list", "有序列表"),
-    BOLD("bold", "加粗"),
-    ATTACHMENT("attachment", "附件"),
-    CAMERA("camera", "拍照"),
-    RECORD("record", "录音"),
-    INDENT("indent", "Tab缩进"),
-    OUTDENT("outdent", "Tab反缩进"),
-    CUT_LINE("cut_line", "剪切行"),
-    MOVE_LINE_UP("move_line_up", "上移行"),
-    MOVE_LINE_DOWN("move_line_down", "下移行"),
-    TIMESTAMP("timestamp", "时间戳"),
-    DATE_STAMP("date_stamp", "日期戳"),
-    WIKILINK("wikilink", "双链[[]]"),
-    UNDO("undo", "撤销"),
-    REDO("redo", "重做"),
-    STRIKETHROUGH("strikethrough", "删除线"),
-    INLINE_CODE("inline_code", "行内代码"),
-    QUOTE("quote", "引用"),
-    CODE_BLOCK("code_block", "代码块"),
-    HORIZONTAL_RULE("horizontal_rule", "分割线"),
-    MARKDOWN_LINK("markdown_link", "Markdown链接");
+enum class EditorToolbarAction(val id: String, val labelRes: Int) {
+    IMAGE("image", R.string.qd_toolbar_image),
+    TASK("task", R.string.qd_toolbar_task),
+    HEADING("heading", R.string.qd_toolbar_heading),
+    LIST("list", R.string.qd_toolbar_list),
+    ORDERED_LIST("ordered_list", R.string.qd_toolbar_ordered_list),
+    BOLD("bold", R.string.qd_toolbar_bold),
+    ATTACHMENT("attachment", R.string.qd_toolbar_attachment),
+    CAMERA("camera", R.string.qd_toolbar_camera),
+    RECORD("record", R.string.qd_toolbar_record),
+    INDENT("indent", R.string.qd_toolbar_indent),
+    OUTDENT("outdent", R.string.qd_toolbar_outdent),
+    CUT_LINE("cut_line", R.string.qd_toolbar_cut_line),
+    MOVE_LINE_UP("move_line_up", R.string.qd_toolbar_move_line_up),
+    MOVE_LINE_DOWN("move_line_down", R.string.qd_toolbar_move_line_down),
+    TIMESTAMP("timestamp", R.string.qd_toolbar_timestamp),
+    DATE_STAMP("date_stamp", R.string.qd_toolbar_date_stamp),
+    WIKILINK("wikilink", R.string.qd_toolbar_wikilink),
+    UNDO("undo", R.string.qd_toolbar_undo),
+    REDO("redo", R.string.qd_toolbar_redo),
+    STRIKETHROUGH("strikethrough", R.string.qd_toolbar_strikethrough),
+    INLINE_CODE("inline_code", R.string.qd_toolbar_inline_code),
+    QUOTE("quote", R.string.qd_toolbar_quote),
+    CODE_BLOCK("code_block", R.string.qd_toolbar_code_block),
+    HORIZONTAL_RULE("horizontal_rule", R.string.qd_toolbar_horizontal_rule),
+    MARKDOWN_LINK("markdown_link", R.string.qd_toolbar_markdown_link);
 
     companion object {
         fun fromId(id: String): EditorToolbarAction? =
@@ -34,10 +34,10 @@ enum class EditorToolbarAction(val id: String, val label: String) {
     }
 }
 
-enum class HomeEntryMode(val key: String, val label: String) {
-    OVERLAY("overlay", "悬浮窗"),
-    FULLSCREEN("fullscreen", "全屏速录"),
-    EDITOR("editor", "编辑页面");
+enum class HomeEntryMode(val key: String, val labelRes: Int) {
+    OVERLAY("overlay", R.string.qd_home_mode_overlay),
+    FULLSCREEN("fullscreen", R.string.qd_home_mode_fullscreen),
+    EDITOR("editor", R.string.qd_home_mode_editor);
 
     companion object {
         fun fromKey(key: String?): HomeEntryMode =

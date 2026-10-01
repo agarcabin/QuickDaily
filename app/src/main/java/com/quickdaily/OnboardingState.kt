@@ -17,7 +17,41 @@ internal object OnboardingPolicy {
     const val PAGE_COUNT = 4
     const val FLOATING_COACH_STEP_COUNT = 5
 
+    private val legacyConfigKeys = setOf(
+        "obsidian_config_uri",
+        "use_custom_obsidian_config_path",
+        "diary_folder",
+        "date_format",
+        "template_path",
+        "anchor_text",
+        "timestamp_format",
+        "add_anchor_if_missing",
+        "timestamp_order",
+        "enter_to_save",
+        "image_storage_path",
+        "image_naming_format",
+        "image_link_format",
+        "image_custom_naming_format",
+        "home_entry_mode",
+        "task_period",
+        "logging_enabled",
+        "filter_frontmatter",
+        EditorToolbarPolicy.PREF_ORDER,
+        EditorToolbarPolicy.PREF_VISIBLE,
+        TaskCompletionTimestampPolicy.PREF_KEY,
+        TaskCompletionTimestampPolicy.PREF_FORMAT_KEY,
+    )
+
     fun shouldShowOnFirstState(hasLegacyConfig: Boolean): Boolean = !hasLegacyConfig
+
+    /**
+     * A blank vault preference can be left behind by an interrupted first-run
+     * flow. It must not make a clean install look like an upgrade. A real vault
+     * path, or any other persisted pre-onboarding setting, is enough to
+     * recognize an existing installation.
+     */
+    fun hasLegacyConfiguration(vaultPath: String?, presentKeys: Set<String>): Boolean =
+        !vaultPath.isNullOrBlank() || presentKeys.any { it in legacyConfigKeys }
 
     fun canAdvance(
         page: Int,
@@ -86,21 +120,13 @@ internal object OnboardingStore {
     private const val KEY_COACH_VERSION = "floating_coach_version"
     private const val CURRENT_COACH_VERSION = 3
 
-    private val legacyConfigKeys = setOf(
-        "vault_path",
-        "diary_folder",
-        "date_format",
-        "timestamp_format",
-        "anchor_text",
-        "home_entry_mode",
-        EditorToolbarPolicy.PREF_ORDER,
-        TaskCompletionTimestampPolicy.PREF_KEY,
-    )
-
     fun initialize(context: Context) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         if (!prefs.contains(KEY_VERSION)) {
-            val hasLegacyConfig = legacyConfigKeys.any(prefs::contains)
+            val hasLegacyConfig = OnboardingPolicy.hasLegacyConfiguration(
+                vaultPath = prefs.getString("vault_path", null),
+                presentKeys = prefs.all.keys,
+            )
             val shouldShow = OnboardingPolicy.shouldShowOnFirstState(hasLegacyConfig)
             prefs.edit()
                 .putInt(KEY_VERSION, OnboardingPolicy.CURRENT_VERSION)

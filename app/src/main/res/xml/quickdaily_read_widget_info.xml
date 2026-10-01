@@ -8,6 +8,6 @@
     android:initialLayout="@layout/widget_diary_read"
     android:resizeMode="horizontal|vertical"
     android:widgetCategory="home_screen"
-    android:label="便签小部件"
+    android:label="@string/qd_read_widget_label"
     android:previewImage="@drawable/widget_preview_design"
     android:description="@string/widget_description" />

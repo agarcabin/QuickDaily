@@ -20,7 +20,7 @@ object ContentUtil {
      * 如果没有 frontmatter，返回的 body = 原始内容。
      */
     fun parseFrontmatter(content: String): ParsedContent {
-        val normalized = content.replace("\r\n", "\n")
+        val normalized = canonicalizeLineEndings(content)
         val match = frontmatterRegex.find(normalized)
         return if (match != null) {
             ParsedContent(
@@ -32,6 +32,10 @@ object ContentUtil {
             ParsedContent("", normalized, false)
         }
     }
+
+    /** Normalizes line endings for parsing and matching without changing stored source text. */
+    fun canonicalizeLineEndings(content: String): String =
+        content.replace("\r\n", "\n").replace('\r', '\n')
 
     /**
      * 如果有 frontmatter，将 frontmatter 和 body 重组为完整 Markdown 内容。

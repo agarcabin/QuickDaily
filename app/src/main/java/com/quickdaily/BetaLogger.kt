@@ -11,6 +11,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import com.quickdaily.util.VaultStoragePrefs
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -100,10 +101,13 @@ object BetaLogger {
         val prefs = context.getSharedPreferences("QuickDaily", Context.MODE_PRIVATE)
         val customPages = TaskWidgetConfigStore.recentCustomPaths(context).joinToString("|")
         val featureStats = collectFeatureStats(context, prefs)
+        val storage = VaultStoragePrefs.current(context)
         log(
             "ConfigSnapshot",
             "source=$source loggingEnabled=${prefs.getBoolean("logging_enabled", false)} " +
                 "vaultPath=${prefs.getString("vault_path", "").orEmpty()} " +
+                "vaultBackend=${storage.backend} vaultTreeUri=${storage.treeUri} " +
+                "obsidianVaultId=${prefs.getString(VaultStoragePrefs.OBSIDIAN_VAULT_ID_KEY, "").orEmpty()} " +
                 "diaryFolder=${prefs.getString("diary_folder", "Daily").orEmpty()} " +
                 "dateFormat=${prefs.getString("date_format", "YYYY-MM-DD").orEmpty()} " +
                 "filterFrontmatter=${prefs.getBoolean("filter_frontmatter", false)} " +
@@ -241,7 +245,8 @@ object BetaLogger {
         try {
             val content = getLogContent()
             if (content.isEmpty()) {
-                android.widget.Toast.makeText(context, "日志为空", android.widget.Toast.LENGTH_SHORT).show()
+                val uiContext = LocaleController.localizedContext(context)
+                android.widget.Toast.makeText(context, uiContext.getString(R.string.qd_debug_log_empty), android.widget.Toast.LENGTH_SHORT).show()
                 return
             }
             val cacheFile = java.io.File(context.cacheDir, "QuickDaily_log.txt")
@@ -254,9 +259,15 @@ object BetaLogger {
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            context.startActivity(Intent.createChooser(intent, "分享 Beta 日志"))
+            context.startActivity(
+                Intent.createChooser(
+                    intent,
+                    LocaleController.localizedContext(context).getString(R.string.qd_debug_share_log),
+                ),
+            )
         } catch (_: Exception) {
-            android.widget.Toast.makeText(context, "分享失败", android.widget.Toast.LENGTH_SHORT).show()
+            val uiContext = LocaleController.localizedContext(context)
+            android.widget.Toast.makeText(context, uiContext.getString(R.string.qd_debug_share_failed), android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 }

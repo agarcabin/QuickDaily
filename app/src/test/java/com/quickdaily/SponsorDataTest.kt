@@ -6,13 +6,16 @@ import org.junit.Test
 
 class SponsorDataTest {
     @Test
-    fun defaultSponsorsKeepOrderAndFixedMessages() {
+    fun defaultSponsorsAreRankedAndKeepFixedMessages() {
+        val ranked = rankSponsorEntries(defaultSponsorEntries)
         assertEquals(
-            listOf("sponsor-o", "sponsor-wei"),
-            defaultSponsorEntries.map { it.id },
+            listOf("sponsor-pokewins", "sponsor-o", "sponsor-wei"),
+            ranked.map { it.id },
         )
-        assertEquals("暂无留言", defaultSponsorEntries[0].message)
-        assertTrue(defaultSponsorEntries[1].message.contains("QuickDaily和讯飞输入法很好用"))
+        assertEquals(100, ranked.first().amount)
+        assertEquals(0, ranked[1].amount)
+        assertEquals("暂无留言", ranked[1].message)
+        assertTrue(ranked[2].message.contains("QuickDaily和讯飞输入法很好用"))
     }
 
     @Test

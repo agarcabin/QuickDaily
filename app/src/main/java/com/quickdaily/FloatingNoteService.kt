@@ -5,8 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.Manifest
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Rect
 import android.content.pm.PackageManager
 import android.graphics.PixelFormat
@@ -23,7 +25,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
@@ -68,7 +69,14 @@ internal object FloatingNoteRecordingPolicy {
         }
 }
 
-class FloatingNoteService : LifecycleService() {
+class FloatingNoteService : LocalizedLifecycleService() {
+    private val localeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == LocaleRefreshCoordinator.ACTION_LOCALE_REFRESH) {
+                refreshLocaleSurfaces()
+            }
+        }
+    }
     private lateinit var windowManager: WindowManager
     private var overlayView: FloatingNoteComposeView? = null
     private lateinit var state: FloatingNoteEditorState
@@ -101,6 +109,7 @@ class FloatingNoteService : LifecycleService() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         state = FloatingNoteEditorState(this)
         viewTreeOwner = FloatingNoteViewTreeOwner().also { it.onCreate() }
+        registerLocaleReceiver()
         createNotificationChannel()
         lifecycleScope.launch {
             while (isActive) {
@@ -293,7 +302,7 @@ class FloatingNoteService : LifecycleService() {
                                         recordingState == FloatingNoteRecordingState.Finalizing -> {
                                             Toast.makeText(
                                                 this@FloatingNoteService,
-                                                "正在保存上一段录音",
+                                                getString(R.string.qd_editor_recording_pending),
                                                 Toast.LENGTH_SHORT,
                                             ).show()
                                         }
@@ -391,7 +400,7 @@ class FloatingNoteService : LifecycleService() {
             overlayView = null
             isWindowShowing = false
             FloatingNoteLaunchGate.release()
-            Toast.makeText(this, "悬浮窗启动失败，已返回首页", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.qd_editor_overlay_start_failed), Toast.LENGTH_SHORT).show()
             openHome()
         }
     }
@@ -448,7 +457,8 @@ class FloatingNoteService : LifecycleService() {
                     targetRelativePath = state.targetRelativePath,
                 )
             } catch (error: Throwable) {
-                FloatingNoteSaveResult.Failed(error.message ?: "save failed")
+                BetaLogger.logException("FloatingNote/Close", "save_use_case_failed", error)
+                FloatingNoteSaveResult.Failed(UiText.Resource(R.string.qd_editor_save_failed_generic))
             }
             withContext(Dispatchers.Main) {
                 closeJob = null
@@ -467,8 +477,8 @@ class FloatingNoteService : LifecycleService() {
                         completeClose(reason, openHomeAfterClose)
                     }
                     is FloatingNoteSaveResult.Failed -> {
-                        BetaLogger.log("FloatingNote/Close", "save_failed reason=$reason message=${result.message}")
-                        Toast.makeText(this@FloatingNoteService, result.message, Toast.LENGTH_LONG).show()
+                        BetaLogger.log("FloatingNote/Close", "save_failed reason=$reason messageType=${result.message::class.simpleName}")
+                        Toast.makeText(this@FloatingNoteService, result.message.resolve(this@FloatingNoteService), Toast.LENGTH_LONG).show()
                     }
                 }
             }
@@ -500,7 +510,8 @@ class FloatingNoteService : LifecycleService() {
                     targetRelativePath = state.targetRelativePath,
                 )
             } catch (error: Throwable) {
-                FloatingNoteSaveResult.Failed(error.message ?: "save failed")
+                BetaLogger.logException("FloatingNote/Save", "save_use_case_failed", error)
+                FloatingNoteSaveResult.Failed(UiText.Resource(R.string.qd_editor_save_failed_generic))
             }
             withContext(Dispatchers.Main) {
                 FloatingNoteTiming.mark("save_use_case_done", "result=${result::class.simpleName}")
@@ -509,7 +520,7 @@ class FloatingNoteService : LifecycleService() {
                     FloatingNoteSaveResult.Saved -> {
                         FloatingNoteDraftStore.clear(this@FloatingNoteService, state.targetRelativePath)
                         if (!FloatingNoteEntryPolicy.isSystemSidebarSupportEnabled(this@FloatingNoteService)) {
-                            Toast.makeText(this@FloatingNoteService, "已保存", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(this@FloatingNoteService, getString(R.string.qd_editor_saved), Toast.LENGTH_SHORT).show()
                         }
                         FloatingNoteObsidianLauncher.openAfterSuccessfulSave(
                             this@FloatingNoteService,
@@ -522,8 +533,8 @@ class FloatingNoteService : LifecycleService() {
                         completeClose("saved_empty", state.returnToHomeAfterClose)
                     }
                     is FloatingNoteSaveResult.Failed -> {
-                        BetaLogger.log("FloatingNote/Save", "failed=${result.message}")
-                        Toast.makeText(this@FloatingNoteService, result.message, Toast.LENGTH_LONG).show()
+                        BetaLogger.log("FloatingNote/Save", "failed messageType=${result.message::class.simpleName}")
+                        Toast.makeText(this@FloatingNoteService, result.message.resolve(this@FloatingNoteService), Toast.LENGTH_LONG).show()
                     }
                 }
             }
@@ -556,18 +567,18 @@ class FloatingNoteService : LifecycleService() {
     private fun startRecording() {
         if (!FloatingNoteRecordingPolicy.canStart(recordingState)) {
             if (recordingState == FloatingNoteRecordingState.Finalizing) {
-                Toast.makeText(this, "正在保存上一段录音", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, getString(R.string.qd_editor_recording_pending), Toast.LENGTH_SHORT).show()
             }
             return
         }
         if (recorder != null) return
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            Toast.makeText(this, "请允许录音权限后再录音", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.qd_editor_microphone_permission_required), Toast.LENGTH_SHORT).show()
             return
         }
         val file = runCatching { CaptureFileUtil.newAudioFile(this) }.getOrNull()
         if (file == null) {
-            Toast.makeText(this, "无法创建录音文件", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.qd_editor_recording_file_failed), Toast.LENGTH_SHORT).show()
             return
         }
         val nextRecorder = runCatching {
@@ -582,7 +593,7 @@ class FloatingNoteService : LifecycleService() {
         }.getOrNull()
         if (nextRecorder == null) {
             file.delete()
-            Toast.makeText(this, "无法开始录音", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.qd_editor_record_start_failed), Toast.LENGTH_SHORT).show()
             return
         }
         recorder = nextRecorder
@@ -627,7 +638,7 @@ class FloatingNoteService : LifecycleService() {
                 }
             } else if (refreshOverlay) {
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(this@FloatingNoteService, "录音保存失败", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@FloatingNoteService, getString(R.string.qd_editor_recording_save_failed), Toast.LENGTH_SHORT).show()
                 }
             }
         }.also { job ->
@@ -731,11 +742,17 @@ class FloatingNoteService : LifecycleService() {
         val baseTitle = state.displayTitle.orEmpty().ifBlank {
             FloatingNoteTargetStore.titleFor(this, state.targetRelativePath)
         }
-        val title = if (baseTitle.endsWith("速录")) baseTitle else "$baseTitle 速录"
+        val suffix = getString(R.string.qd_editor_quick_capture_suffix)
+        // localization-legacy: accept the pre-i18n suffix written into older titles.
+        val title = if (baseTitle.endsWith(suffix) || baseTitle.endsWith("速录")) baseTitle else "$baseTitle $suffix" // localization-legacy
         BetaLogger.log(
             "FloatingNote/Fullscreen",
             "open source=" + state.source + " target=" + state.targetRelativePath.orEmpty(),
         )
+        // Save before removing the overlay. The fullscreen Activity resets its
+        // own window coordinates to (0, 0), so the last overlay position must
+        // already be durable when the user later shrinks back to floating.
+        persistWindowPosition()
         startActivity(
             NoteEditActivity.fullScreenIntent(
                 context = this,
@@ -833,7 +850,25 @@ class FloatingNoteService : LifecycleService() {
         FloatingNoteLaunchGate.release()
         viewTreeOwner.onDestroy()
         BetaLogger.log("FloatingNote/Service", "destroyed")
+        runCatching { unregisterReceiver(localeReceiver) }
         super.onDestroy()
+    }
+
+    private fun registerLocaleReceiver() {
+        val filter = IntentFilter(LocaleRefreshCoordinator.ACTION_LOCALE_REFRESH)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(localeReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(localeReceiver, filter)
+        }
+    }
+
+    private fun refreshLocaleSurfaces() {
+        val localized = LocaleController.localizedContext(this)
+        createNotificationChannel(localized)
+        startForeground(NOTIFICATION_ID, buildNotification(localized))
+        appearanceRefreshToken++
     }
 
     private fun requestFromIntent(intent: Intent?): FloatingNoteRequest {
@@ -854,7 +889,7 @@ class FloatingNoteService : LifecycleService() {
         )
     }
 
-    private fun buildNotification(): Notification {
+    private fun buildNotification(context: Context = this): Notification {
         val closeIntent = PendingIntent.getService(
             this,
             1001,
@@ -863,20 +898,28 @@ class FloatingNoteService : LifecycleService() {
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_shortcut_add)
-            .setContentTitle("QuickDaily 速记悬浮窗")
-            .setContentText("悬浮窗正在运行")
+            .setContentTitle(context.getString(R.string.qd_notification_floating_title))
+            .setContentText(context.getString(R.string.qd_notification_floating_running))
             .setOngoing(true)
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "关闭", closeIntent)
+            .addAction(
+                android.R.drawable.ic_menu_close_clear_cancel,
+                context.getString(R.string.qd_common_close),
+                closeIntent,
+            )
             .build()
     }
 
-    private fun createNotificationChannel() {
+    private fun createNotificationChannel(context: Context = this) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             getSystemService(NotificationManager::class.java).createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "速记悬浮窗", NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "QuickDaily 速记悬浮窗运行状态"
+                NotificationChannel(
+                    CHANNEL_ID,
+                    context.getString(R.string.qd_notification_floating_channel),
+                    NotificationManager.IMPORTANCE_LOW,
+                ).apply {
+                    description = context.getString(R.string.qd_notification_floating_title)
                     setShowBadge(false)
                 }
             )

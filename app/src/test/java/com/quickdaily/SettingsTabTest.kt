@@ -7,10 +7,23 @@ import org.junit.Test
 
 class SettingsTabTest {
     @Test
+    fun restoredNavigatorScreenKeepsTheCurrentMainSurface() {
+        assertEquals(
+            Screen.SETTINGS,
+            Navigator(showOnboarding = false, firstLaunch = false, restoredScreen = Screen.SETTINGS).screen,
+        )
+    }
+
+    @Test
     fun stableSettingsOrderAndTitles() {
         assertEquals(
-            listOf("速录设置", "小部件", "外观设置", "其他"),
-            SettingsTab.entries.map(SettingsTab::title),
+            listOf(
+                R.string.qd_tab_quick_capture,
+                R.string.qd_tab_widgets,
+                R.string.qd_tab_appearance,
+                R.string.qd_tab_other,
+            ),
+            SettingsTab.entries.map(SettingsTab::titleRes),
         )
     }
 

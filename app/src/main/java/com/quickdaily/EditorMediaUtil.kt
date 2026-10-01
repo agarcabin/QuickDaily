@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import com.quickdaily.util.ImageUtil
+import com.quickdaily.util.VaultStoragePrefs
 import java.io.File
 
 object EditorMediaUtil {
@@ -13,7 +14,7 @@ object EditorMediaUtil {
         return ImageUtil.processImages(
             context = context,
             uris = listOf(uri),
-            vaultPath = prefs.getString("vault_path", "").orEmpty(),
+            vaultPath = VaultStoragePrefs.current(context).rootPath,
             storagePath = prefs.getString("image_storage_path", "").orEmpty(),
             namingFormat = prefs.getString("image_naming_format", "timestamp_original").orEmpty(),
             linkFormat = prefs.getString("image_link_format", "described").orEmpty(),
@@ -25,7 +26,7 @@ object EditorMediaUtil {
         val prefs = context.getSharedPreferences("QuickDaily", Context.MODE_PRIVATE)
         val relativePath = ImageUtil.copyLocalFileToVault(
             sourceFile = file,
-            vaultPath = prefs.getString("vault_path", "").orEmpty(),
+            vaultPath = VaultStoragePrefs.current(context).rootPath,
             storagePath = prefs.getString("image_storage_path", "").orEmpty(),
             namingFormat = prefs.getString("image_naming_format", "timestamp_original").orEmpty(),
             customNamingFormat = prefs.getString("image_custom_naming_format", "").orEmpty(),

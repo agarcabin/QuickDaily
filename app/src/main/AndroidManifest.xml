@@ -131,6 +131,14 @@
             android:launchMode="singleTop" />
 
         <activity
+            android:name=".TaskWidgetFolderActionActivity"
+            android:exported="false"
+            android:theme="@style/Theme.QuickDaily.Transparent"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:launchMode="singleTop" />
+
+        <activity
             android:name=".ReadWidgetConfigActivity"
             android:exported="false"
             android:theme="@style/Theme.QuickDaily.Transparent"
@@ -178,7 +186,7 @@
         <receiver
             android:name=".QuickNoteWidget"
             android:exported="true"
-            android:label="快速录入">
+            android:label="@string/qd_quicknote_widget_label">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
@@ -190,7 +198,7 @@
         <service
             android:name=".QuickTileService"
             android:exported="true"
-            android:label="速记"
+            android:label="@string/qd_tile_label"
             android:icon="@drawable/ic_tile_quicknote"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
@@ -202,7 +210,7 @@
         <service
             android:name=".QuickAccessibilityService"
             android:exported="true"
-            android:label="QuickDaily 速记辅助"
+            android:label="@string/qd_accessibility_service_label"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
@@ -215,7 +223,7 @@
         <receiver
             android:name=".TaskWidget"
             android:exported="true"
-            android:label="任务小部件">
+            android:label="@string/qd_task_widget_label">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
@@ -232,7 +240,7 @@
         <receiver
             android:name=".QuickDailyReadWidget"
             android:exported="true"
-            android:label="便签小部件">
+            android:label="@string/qd_read_widget_label">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>

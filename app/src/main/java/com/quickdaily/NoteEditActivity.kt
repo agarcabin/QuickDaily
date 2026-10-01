@@ -106,6 +106,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.Image
@@ -250,7 +251,7 @@ internal object EditorThumbnailLoader {
     }
 }
 
-class NoteEditActivity : ComponentActivity() {
+class NoteEditActivity : LocalizedComponentActivity() {
     companion object {
         const val EXTRA_RETURN_TO_HOME = "return_to_home"
         const val EXTRA_TARGET_RELATIVE_PATH = "target_relative_path"
@@ -314,10 +315,11 @@ class NoteEditActivity : ComponentActivity() {
     private var predictiveExitView: android.view.View? = null
     private var targetRelativePath by mutableStateOf<String?>(null)
     private var targetOptions by mutableStateOf<List<FloatingNoteTargetOption>>(emptyList())
-    private var dialogTitle by mutableStateOf("速记")
+    private var dialogTitle by mutableStateOf("")
     private var windowDragOrigin: FloatingNotePosition? = null
     private var windowDragX = 0f
     private var windowDragY = 0f
+    private var floatingPositionBeforeFullscreen: FloatingNotePosition? = null
 
     private val imagePicker = registerForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
@@ -351,7 +353,11 @@ class NoteEditActivity : ComponentActivity() {
                     "images selected=${uris.size} inserted=${successfulLinks.size}",
                 )
                 if (successfulLinks.size < uris.size) {
-                    Toast.makeText(this@NoteEditActivity, "部分图片保存失败，请检查图片存储路径", Toast.LENGTH_LONG).show()
+                    Toast.makeText(
+                        this@NoteEditActivity,
+                        getString(R.string.qd_editor_image_save_partial_failed),
+                        Toast.LENGTH_LONG,
+                    ).show()
                 }
             }
         }
@@ -579,7 +585,9 @@ class NoteEditActivity : ComponentActivity() {
                         onSave = ::saveEditor,
                         onClose = { closeFloatingEditor(discard = true) },
                         onTopAction = { if (fullScreen) saveEditor() else closeFloatingEditor(discard = true) },
-                        topActionText = if (fullScreen) "保存" else "关闭",
+                        topActionText = getString(
+                            if (fullScreen) R.string.qd_common_save else R.string.qd_common_close,
+                        ),
                         fullScreen = fullScreen,
                         onHome = { closeFloatingEditor(openHomeAfterClose = true) },
                         onReturnToFloating = ::shrinkToFloating,
@@ -705,14 +713,14 @@ class NoteEditActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) takePhotoNow()
-        else Toast.makeText(this, "请允许相机权限后再拍照", Toast.LENGTH_SHORT).show()
+        else Toast.makeText(this, getString(R.string.qd_editor_camera_permission_required), Toast.LENGTH_SHORT).show()
     }
 
     private val audioPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) startRecordingNow()
-        else Toast.makeText(this, "请允许录音权限后再录音", Toast.LENGTH_SHORT).show()
+        else Toast.makeText(this, getString(R.string.qd_editor_microphone_permission_required), Toast.LENGTH_SHORT).show()
     }
 
     private fun insertMediaLink(link: String) {
@@ -737,7 +745,7 @@ class NoteEditActivity : ComponentActivity() {
     private fun takePhotoNow() {
         val file = runCatching { CaptureFileUtil.newImageFile(this) }.getOrNull()
         if (file == null) {
-            Toast.makeText(this, "无法创建照片文件", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.qd_editor_photo_file_failed), Toast.LENGTH_SHORT).show()
             return
         }
         pendingCameraFile = file
@@ -770,7 +778,7 @@ class NoteEditActivity : ComponentActivity() {
         }.getOrNull()
         if (nextRecorder == null) {
             file.delete()
-            Toast.makeText(this, "无法开始录音", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.qd_editor_record_start_failed), Toast.LENGTH_SHORT).show()
             return
         }
         recorder = nextRecorder
@@ -796,7 +804,11 @@ class NoteEditActivity : ComponentActivity() {
             val link = runCatching { EditorMediaUtil.audioLink(this@NoteEditActivity, file) }.getOrNull()
             if (link != null) file.delete()
             withContext(Dispatchers.Main) {
-                if (link != null) insertMediaLink(link) else Toast.makeText(this@NoteEditActivity, "录音保存失败，临时文件已保留", Toast.LENGTH_SHORT).show()
+                if (link != null) insertMediaLink(link) else Toast.makeText(
+                    this@NoteEditActivity,
+                    getString(R.string.qd_editor_record_save_failed),
+                    Toast.LENGTH_SHORT,
+                ).show()
             }
         }
     }
@@ -828,6 +840,7 @@ class NoteEditActivity : ComponentActivity() {
         intent.sourceBounds?.let { sourceBounds = Rect(it) }
         if (intent.getBooleanExtra(EXTRA_FULLSCREEN, false)) {
             BetaLogger.log("FloatingNote/Fullscreen", "activity reused fullscreen request")
+            if (!fullScreen) captureFloatingPositionBeforeFullscreen()
             fullScreen = true
             floatingCoachStep = if (OnboardingStore.shouldShowFloatingCoach(this)) {
                 OnboardingStore.floatingCoachStep(this)
@@ -850,6 +863,15 @@ class NoteEditActivity : ComponentActivity() {
                 OnboardingStore.floatingCoachStep(this)
             } else {
                 null
+            }
+            intent.getStringExtra(EXTRA_DIALOG_TITLE)
+                ?.takeIf { it.isNotBlank() }
+                ?.let { dialogTitle = titleForCurrentMode(it) }
+            if (intent.hasExtra(EXTRA_TARGET_RELATIVE_PATH)) {
+                targetRelativePath = intent.getStringExtra(EXTRA_TARGET_RELATIVE_PATH)
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                targetOptions = FloatingNoteTargetStore.options(this, targetRelativePath)
             }
         }
         // singleInstance 会复用当前编辑器。不要重新初始化 noteText，避免重复点击入口时丢草稿。
@@ -919,15 +941,21 @@ class NoteEditActivity : ComponentActivity() {
 
     private fun titleForCurrentMode(baseTitle: String): String {
         val normalized = withoutQuickRecordSuffix(baseTitle)
-        return if (fullScreen) "$normalized \u901f\u5F55" else normalized
+        return if (fullScreen) {
+            "$normalized \${getString(R.string.qd_editor_quick_capture_suffix)}"
+        } else {
+            normalized
+        }
     }
 
     private fun withoutQuickRecordSuffix(title: String): String {
         var normalized = title.trim()
-        while (normalized.endsWith("\u901f\u5F55")) {
-            normalized = normalized.removeSuffix("\u901f\u5F55").trimEnd()
+        val suffixes = listOf(getString(R.string.qd_editor_quick_capture_suffix), "\u901f\u5F55")
+        while (suffixes.any { normalized.endsWith(it) }) {
+            val suffix = suffixes.first { normalized.endsWith(it) }
+            normalized = normalized.removeSuffix(suffix).trimEnd()
         }
-        return normalized.ifBlank { "\u901f\u8bb0" }
+        return normalized.ifBlank { getString(R.string.qd_editor_floating_title) }
     }
 
     private fun openFullScreen() {
@@ -936,6 +964,7 @@ class NoteEditActivity : ComponentActivity() {
             "FloatingNote/Fullscreen",
             "activity expand source=" + floatingSource + " target=" + targetRelativePath.orEmpty(),
         )
+        captureFloatingPositionBeforeFullscreen()
         syncFloatingDraft()
         FloatingNoteDraftStore.persist(this, floatingDraft)
         val title = dialogTitle
@@ -975,6 +1004,30 @@ class NoteEditActivity : ComponentActivity() {
         applyFloatingWindow()
     }
 
+    private fun captureFloatingPositionBeforeFullscreen() {
+        if (fullScreen) return
+        val attrs = window?.attributes ?: return
+        val dm = resources.displayMetrics
+        val width = attrs.width
+            .takeIf { it > 0 && it != WindowManager.LayoutParams.MATCH_PARENT }
+            ?: (dm.widthPixels * 0.88f).toInt()
+        val height = attrs.height
+            .takeIf { it > 0 && it != WindowManager.LayoutParams.MATCH_PARENT }
+            ?: (dm.heightPixels * 0.35f).toInt()
+        val position = FloatingNotePositionPolicy.clamp(
+            FloatingNotePosition(attrs.x, attrs.y),
+            dm.widthPixels,
+            dm.heightPixels,
+            width,
+            height,
+        )
+        floatingPositionBeforeFullscreen = position
+        // Persist before applying fullscreen because that operation changes
+        // WindowManager.LayoutParams.x/y to (0, 0).
+        FloatingNotePositionPolicy.save(this, position)
+        BetaLogger.log("FloatingNote/Fullscreen", "captured floating position x=${position.x} y=${position.y}")
+    }
+
     private fun applyFullScreenWindow() {
         window?.apply {
             clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
@@ -1003,12 +1056,13 @@ class NoteEditActivity : ComponentActivity() {
             w,
             h,
         )
-        val position = FloatingNotePositionPolicy.clamp(
-            FloatingNotePositionPolicy.load(this, fallbackPosition),
-            dm.widthPixels,
-            dm.heightPixels,
-            w,
-            h,
+        val position = FloatingNotePositionPolicy.resolve(
+            captured = floatingPositionBeforeFullscreen,
+            persisted = FloatingNotePositionPolicy.load(this, fallbackPosition),
+            screenWidth = dm.widthPixels,
+            screenHeight = dm.heightPixels,
+            windowWidth = w,
+            windowHeight = h,
         )
         window?.apply {
             addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
@@ -1025,6 +1079,8 @@ class NoteEditActivity : ComponentActivity() {
             lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_DIM_BEHIND.inv()
             attributes = lp
         }
+        FloatingNotePositionPolicy.save(this, position)
+        floatingPositionBeforeFullscreen = null
     }
 
     private fun requestActivityImeHide() {
@@ -1143,7 +1199,7 @@ class NoteEditActivity : ComponentActivity() {
                     selectedImages.clear()
                     pendingAttachments.clear()
                     FloatingNoteDraftStore.clear(this@NoteEditActivity, targetRelativePath)
-                    Toast.makeText(this@NoteEditActivity, "已保存", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@NoteEditActivity, getString(R.string.qd_editor_saved), Toast.LENGTH_SHORT).show()
                     val openedObsidian = FloatingNoteObsidianLauncher.openAfterSuccessfulSave(
                         this@NoteEditActivity,
                         targetRelativePath,
@@ -1160,8 +1216,8 @@ class NoteEditActivity : ComponentActivity() {
                 }
                 is FloatingNoteSaveResult.Failed -> {
                     noteSaveInProgress = false
-                    BetaLogger.log("NoteEdit", "save failed=" + result.message)
-                    Toast.makeText(this@NoteEditActivity, result.message, Toast.LENGTH_LONG).show()
+                    BetaLogger.log("NoteEdit", "save failed messageType=${result.message::class.simpleName}")
+                    Toast.makeText(this@NoteEditActivity, result.message.resolve(this@NoteEditActivity), Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -1217,7 +1273,7 @@ fun NoteEditDialog(
     enterToSave: Boolean,
     tagAutocomplete: Boolean = true,
     wikilinkAutocomplete: Boolean = true,
-    title: String = "速记",
+    title: String = "",
     targetPath: String? = null,
     targetOptions: List<FloatingNoteTargetOption> = emptyList(),
     onTargetChange: (FloatingNoteTargetOption) -> Unit = {},
@@ -1227,7 +1283,7 @@ fun NoteEditDialog(
     onSave: () -> Unit,
     onClose: () -> Unit,
     onTopAction: () -> Unit = onClose,
-    topActionText: String = "关闭",
+    topActionText: String = "",
     fullScreen: Boolean = false,
     onHome: () -> Unit,
     onReturnToFloating: () -> Unit = {},
@@ -1364,7 +1420,7 @@ fun NoteEditDialog(
             toolbarPage = originPage
         }
     }
-    val tagVaultPath = neCtx.getSharedPreferences("QuickDaily", 0).getString("vault_path", "") ?: ""
+    val tagVaultPath = com.quickdaily.util.VaultStoragePrefs.current(neCtx).rootPath
     val wikilinkIndex by WikilinkIndexRepository.indexState.collectAsStateWithLifecycle()
     val completionIndex = wikilinkIndex.takeIf {
         it.rootPath == tagVaultPath && it.indexed && it.tagsIndexed && it.error == null
@@ -1654,7 +1710,7 @@ fun NoteEditDialog(
                             contentAlignment = Alignment.CenterStart,
                         ) {
                             TextButton(onClick = onHome) {
-                                Text("编辑页", color = floater.primary, style = MaterialTheme.typography.labelSmall)
+                                Text(stringResource(R.string.qd_editor_page), color = floater.primary, style = MaterialTheme.typography.labelSmall)
                             }
                         }
                         Row(
@@ -1689,7 +1745,7 @@ fun NoteEditDialog(
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Text(
-                                    title.ifBlank { "速记" },
+                                    title.ifBlank { stringResource(R.string.qd_editor_floating_title) },
                                     modifier = Modifier.fillMaxWidth(),
                                     style = MaterialTheme.typography.labelMedium,
                                     color = floater.onSurfaceVariant,
@@ -1709,7 +1765,7 @@ fun NoteEditDialog(
                             ) {
                                 Icon(
                                     Icons.Default.ExpandMore,
-                                    contentDescription = "选择记录页面",
+                                    contentDescription = stringResource(R.string.qd_editor_select_page),
                                     tint = floater.primary,
                                     modifier = Modifier.size(28.dp),
                                 )
@@ -1726,7 +1782,7 @@ fun NoteEditDialog(
                                 ) {
                                     Icon(
                                         Icons.Default.Fullscreen,
-                                        contentDescription = "全屏",
+                                        contentDescription = stringResource(R.string.qd_editor_fullscreen),
                                         tint = floater.primary,
                                         modifier = Modifier.size(24.dp),
                                     )
@@ -1794,7 +1850,7 @@ fun NoteEditDialog(
                                 onClick = { onRemoveImage(index) },
                                 modifier = Modifier.align(Alignment.TopEnd).size(18.dp)
                             ) {
-                                Icon(Icons.Default.Close, "删除", tint = Color.Red, modifier = Modifier.size(14.dp))
+                                Icon(Icons.Default.Close, stringResource(R.string.qd_editor_delete), tint = Color.Red, modifier = Modifier.size(14.dp))
                             }
                         }
                     }
@@ -1812,7 +1868,10 @@ fun NoteEditDialog(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                text = if (invalid) "附件失效：${uri.lastPathSegment ?: uri}" else "附件：${uri.lastPathSegment ?: uri}",
+                                text = stringResource(
+                                    if (invalid) R.string.qd_editor_attachment_invalid else R.string.qd_editor_attachment,
+                                    uri.lastPathSegment ?: uri,
+                                ),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = if (invalid) MaterialTheme.colorScheme.error else floater.primary,
                                 modifier = Modifier.weight(1f),
@@ -1820,7 +1879,7 @@ fun NoteEditDialog(
                                 overflow = TextOverflow.Ellipsis,
                             )
                             IconButton(onClick = { onRemoveAttachment(index) }) {
-                                Icon(Icons.Default.Close, contentDescription = "移除附件", tint = floater.onBackgroundVariant)
+                                Icon(Icons.Default.Close, contentDescription = stringResource(R.string.qd_common_remove_attachment), tint = floater.onBackgroundVariant)
                             }
                         }
                     }
@@ -1930,7 +1989,9 @@ fun NoteEditDialog(
                         }
                     },
                 decorationBox = { inner ->
-                    if (text.isEmpty()) Text("写点什么...", color = floater.onBackgroundDim, fontSize = MaterialTheme.typography.bodyMedium.fontSize)
+                    if (text.isEmpty()) {
+                        Text(stringResource(R.string.qd_editor_empty_floating_hint), color = floater.onBackgroundDim, fontSize = MaterialTheme.typography.bodyMedium.fontSize)
+                    }
                     inner() })
             } // end content Column (weight)
             // ── Tag autocomplete row ──
@@ -1965,7 +2026,7 @@ fun NoteEditDialog(
                 ) {
                     if (wikilinkIndex.loading) {
                         Text(
-                            "正在建立双链索引…",
+                            stringResource(R.string.qd_editor_wikilink_index_loading),
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                             style = MaterialTheme.typography.bodySmall,
                             color = floater.onBackgroundDim,
@@ -2052,7 +2113,7 @@ fun NoteEditDialog(
                     modifier = Modifier.width(48.dp).height(48.dp),
                     contentPadding = PaddingValues(horizontal = 0.dp),
                 ) {
-                    Text("保存", color = floater.primary, style = MaterialTheme.typography.labelMedium)
+                    Text(stringResource(R.string.qd_common_save), color = floater.primary, style = MaterialTheme.typography.labelMedium)
                 }
             } // end toolbar Row
         }
@@ -2121,7 +2182,11 @@ private fun FloatingCoachCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    "新手引导 (第${step + 1}步，共${OnboardingPolicy.FLOATING_COACH_STEP_COUNT}步)",
+                    stringResource(
+                        R.string.qd_editor_coach_step,
+                        step + 1,
+                        OnboardingPolicy.FLOATING_COACH_STEP_COUNT,
+                    ),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier
@@ -2133,16 +2198,18 @@ private fun FloatingCoachCard(
                 TextButton(
                     onClick = onSkipRequest,
                     modifier = Modifier.heightIn(min = 48.dp),
-                ) { Text("跳过") }
+                ) { Text(stringResource(R.string.qd_editor_coach_skip)) }
             }
             Text(
-                when (step) {
-                    0 -> "长按标题可以移动悬浮窗。"
-                    1 -> "点击“编辑页”进入完整编辑页，设置也在里面。"
-                    2 -> "点击标题旁的下箭头，可以切换日记或其他记录页面。"
-                    3 -> "点击全屏按钮，可以在全屏速录与悬浮窗之间切换。"
-                    else -> "下方的工具栏可以左右滑动，更多工具可在设置中添加。"
-                },
+                stringResource(
+                    when (step) {
+                        0 -> R.string.qd_editor_coach_move_overlay
+                        1 -> R.string.qd_editor_coach_open_editor
+                        2 -> R.string.qd_editor_coach_switch_page
+                        3 -> R.string.qd_editor_coach_fullscreen
+                        else -> R.string.qd_editor_coach_toolbar
+                    },
+                ),
                 style = MaterialTheme.typography.bodyMedium,
             )
             Row(
@@ -2153,12 +2220,17 @@ private fun FloatingCoachCard(
                     onClick = onPrevious,
                     enabled = step > 0,
                     modifier = Modifier.heightIn(min = 48.dp),
-                ) { Text("上一步") }
+                ) { Text(stringResource(R.string.qd_onboarding_previous)) }
                 Spacer(Modifier.weight(1f))
                 Button(onClick = onNext, modifier = Modifier.heightIn(min = 48.dp)) {
                     Text(
-                        if (step == OnboardingPolicy.FLOATING_COACH_STEP_COUNT - 1) "我知道了"
-                        else "下一步",
+                        stringResource(
+                            if (step == OnboardingPolicy.FLOATING_COACH_STEP_COUNT - 1) {
+                                R.string.qd_editor_coach_acknowledge
+                            } else {
+                                R.string.qd_onboarding_next
+                            },
+                        ),
                     )
                 }
             }
@@ -2276,7 +2348,7 @@ private fun FullScreenNoteEditSurface(
                             onClick = onHome,
                             modifier = Modifier.widthIn(min = 64.dp),
                         ) {
-                            Text("\u7f16\u8f91\u9875", maxLines = 1)
+                            Text(stringResource(R.string.qd_editor_page), maxLines = 1)
                         }
                         Box(
                             modifier = Modifier
@@ -2286,7 +2358,7 @@ private fun FullScreenNoteEditSurface(
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
-                                text = title.ifBlank { "\u901f\u8bb0" },
+                                text = title.ifBlank { stringResource(R.string.qd_editor_floating_title) },
                                 modifier = Modifier.fillMaxWidth(),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
@@ -2300,7 +2372,7 @@ private fun FullScreenNoteEditSurface(
                         ) {
                             Icon(
                                 Icons.Default.ExpandMore,
-                                contentDescription = "\u9009\u62e9\u8bb0\u5f55\u9875\u9762",
+                                contentDescription = stringResource(R.string.qd_editor_select_page),
                             )
                         }
                         IconButton(
@@ -2309,14 +2381,14 @@ private fun FullScreenNoteEditSurface(
                         ) {
                             Icon(
                                 Icons.Default.FullscreenExit,
-                                contentDescription = "\u7f29\u56de\u60ac\u6d6e\u7a97",
+                                contentDescription = stringResource(R.string.qd_editor_return_to_floating),
                             )
                         }
                         TextButton(
                             onClick = onSave,
                             modifier = Modifier.widthIn(min = 56.dp),
                         ) {
-                            Text("\u4fdd\u5b58", maxLines = 1)
+                            Text(stringResource(R.string.qd_common_save), maxLines = 1)
                         }
                     }
                 }
@@ -2382,7 +2454,13 @@ private fun FullScreenNoteEditSurface(
                     ) {
                         Icon(
                             Icons.Default.KeyboardArrowDown,
-                            contentDescription = if (keyboardVisible) "\u5173\u95ed\u952e\u76d8" else if (toolbarPage > 0) "\u8fd4\u56de\u7b2c\u4e00\u9875\u5de5\u5177" else "\u6253\u5f00\u7b2c\u4e8c\u9875\u5de5\u5177",
+                            contentDescription = stringResource(
+                                when {
+                                    keyboardVisible -> R.string.qd_editor_close_keyboard
+                                    toolbarPage > 0 -> R.string.qd_editor_previous_toolbar_page
+                                    else -> R.string.qd_editor_next_toolbar_page
+                                },
+                            ),
                             modifier = Modifier
                                 .size(22.dp)
                                 .graphicsLayer { rotationZ = toolbarArrowRotation },
@@ -2444,7 +2522,7 @@ private fun FullScreenNoteEditSurface(
                                     ) {
                                         Icon(
                                             Icons.Default.Close,
-                                            contentDescription = "\u79fb\u9664\u56fe\u7247",
+                                            contentDescription = stringResource(R.string.qd_editor_remove_image),
                                             tint = MaterialTheme.colorScheme.error,
                                             modifier = Modifier.size(16.dp),
                                         )
@@ -2469,7 +2547,11 @@ private fun FullScreenNoteEditSurface(
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text(
-                                        text = if (invalid) "\u9644\u4ef6\u4e0d\u53ef\u7528\uff1a${uri.lastPathSegment ?: uri}" else "\u9644\u4ef6\uff1a${uri.lastPathSegment ?: uri}",
+                                        text = if (invalid) {
+                                            stringResource(R.string.qd_editor_attachment_invalid, uri.lastPathSegment ?: uri)
+                                        } else {
+                                            stringResource(R.string.qd_editor_attachment, uri.lastPathSegment ?: uri)
+                                        },
                                         modifier = Modifier.weight(1f),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
@@ -2477,7 +2559,7 @@ private fun FullScreenNoteEditSurface(
                                         color = if (invalid) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                                     )
                                     IconButton(onClick = { onRemoveAttachment(index) }) {
-                                        Icon(Icons.Default.Close, contentDescription = "\u79fb\u9664\u9644\u4ef6")
+                                        Icon(Icons.Default.Close, contentDescription = stringResource(R.string.qd_common_remove_attachment))
                                     }
                                 }
                             }
@@ -2687,7 +2769,7 @@ private fun TargetSelectionSurface(
     ) {
         Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
             Text(
-                "记录到",
+                stringResource(R.string.qd_editor_record_to),
                 style = MaterialTheme.typography.titleMedium,
                 color = floater.onBackground,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
@@ -2710,7 +2792,7 @@ private fun TargetSelectionSurface(
                         if (targetPath == option.path) {
                             Icon(
                                 Icons.Default.Check,
-                                contentDescription = "当前页面",
+                                contentDescription = stringResource(R.string.qd_editor_current_page),
                                 tint = floater.primary,
                                 modifier = Modifier.padding(horizontal = 8.dp),
                             )
@@ -2726,7 +2808,7 @@ private fun TargetSelectionSurface(
                             IconButton(onClick = { onRemoveTarget(option.path) }) {
                                 Icon(
                                     Icons.Default.Close,
-                                    contentDescription = "删除页面记录",
+                                    contentDescription = stringResource(R.string.qd_editor_remove_page),
                                     tint = floater.onBackgroundVariant,
                                 )
                             }
@@ -2742,7 +2824,7 @@ private fun TargetSelectionSurface(
                 },
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("添加自定义页面", color = floater.primary)
+                Text(stringResource(R.string.qd_editor_add_custom_page), color = floater.primary)
             }
         }
     }

@@ -1,5 +1,5 @@
 ﻿{
-    "version": "1.9.3-beta",
+    "version": "1.9.7-beta",
     "url": "https://github.com/agarcabin/QuickDaily/releases/latest",
-    "body": "QuickDaily 1.9.3-beta\n• 新增 首次使用引导与悬浮窗控件教学\n• 新增 PDF、Word、PowerPoint、Excel、OpenDocument 与 WPS 文档分享捕获\n• 优化 设置分类与任务完成日期格式\n• 优化 设置页下拉框、锚点文本、小部件外观与提示音试听"
+    "body": "QuickDaily 1.9.7-beta\n• 新增 中文与 English 多语言支持，可在设置中手动切换\n• 优化 切换语言后保留当前设置页面\n• 优化 英文界面按完整单词换行"
 }

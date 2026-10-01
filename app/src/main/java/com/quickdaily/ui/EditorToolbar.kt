@@ -62,6 +62,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
 import com.quickdaily.EditorToolbarAction
 import com.quickdaily.EditorToolbarPolicy
 import com.quickdaily.ui.theme.LocalQuickDailyMotion
@@ -173,6 +174,7 @@ fun EditorToolbarActions(
                     horizontalArrangement = Arrangement.Start,
                 ) {
                     pageActions.forEach { action ->
+                        val actionDescription = stringResource(action.labelRes)
                         Box(
                             modifier = Modifier
                                 .width(pageSlotWidth)
@@ -188,7 +190,7 @@ fun EditorToolbarActions(
                                             onClick = { onAction(action) },
                                         )
                                         .semantics {
-                                            contentDescription = action.label
+                                            contentDescription = actionDescription
                                             role = Role.Button
                                         },
                                     contentAlignment = Alignment.Center,
@@ -230,7 +232,7 @@ fun EditorToolbarActionIcon(
     tint: Color,
     modifier: Modifier = Modifier,
 ) {
-    val actionDescription = action.label
+    val actionDescription = stringResource(action.labelRes)
     when (action) {
         EditorToolbarAction.IMAGE -> Icon(Icons.Default.Image, actionDescription, tint = tint, modifier = modifier)
         EditorToolbarAction.TASK -> Icon(Icons.Default.CheckBoxOutlineBlank, actionDescription, tint = tint, modifier = modifier)

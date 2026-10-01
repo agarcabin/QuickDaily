@@ -7,6 +7,11 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import com.quickdaily.util.DateUtil
+import com.quickdaily.util.SafVirtualPath
+import com.quickdaily.util.VaultBackend
+import com.quickdaily.util.VaultPathUtil
+import com.quickdaily.util.VaultStorageInfo
+import com.quickdaily.util.VaultStoragePrefs
 
 internal object FloatingNoteObsidianLaunchPolicy {
     const val PREF_KEY = "open_obsidian_after_floating_save"
@@ -31,6 +36,37 @@ internal object FloatingNoteObsidianLaunchPolicy {
         .trimEnd('/', '\\')
         .substringAfterLast('/')
         .substringAfterLast('\\')
+
+    fun buildOpenUri(
+        storage: VaultStorageInfo,
+        relativePath: String,
+        obsidianVaultId: String,
+    ): Uri? {
+        return when (storage.backend) {
+            VaultBackend.SAF -> {
+                val normalizedRelative = if (SafVirtualPath.isSafPath(relativePath)) {
+                    VaultPathUtil.relativePath(storage.rootPath, relativePath)
+                } else {
+                    SafVirtualPath.normalizeRelative(relativePath)
+                }?.takeIf { it.isNotBlank() } ?: return null
+                val vaultId = obsidianVaultId.trim().takeIf { it.isNotBlank() } ?: return null
+                Uri.Builder()
+                    .scheme("obsidian")
+                    .authority("open")
+                    .appendQueryParameter("vault", vaultId)
+                    .appendQueryParameter("file", normalizedRelative)
+                    .build()
+            }
+            VaultBackend.FILE -> {
+                val absolute = VaultPathUtil.resolveTarget(storage.rootPath, relativePath.trim()) ?: return null
+                Uri.Builder()
+                    .scheme("obsidian")
+                    .authority("open")
+                    .appendQueryParameter("path", absolute)
+                    .build()
+            }
+        }
+    }
 }
 
 /** Opens the saved note only when Obsidian is not already in the background, then returns home. */
@@ -50,9 +86,8 @@ internal object FloatingNoteObsidianLauncher {
             return false
         }
 
-        val vaultPath = prefs.getString("vault_path", "").orEmpty()
-        val vaultName = FloatingNoteObsidianLaunchPolicy.vaultName(vaultPath)
-        if (vaultName.isBlank()) return false
+        val storage = VaultStoragePrefs.current(context)
+        if (storage.rootPath.isBlank()) return false
 
         val dateFormat = prefs.getString("date_format", "YYYY-MM-DD").orEmpty()
         val relativePath = FloatingNoteObsidianLaunchPolicy.savedRelativePath(
@@ -60,12 +95,18 @@ internal object FloatingNoteObsidianLauncher {
             diaryFolder = prefs.getString("diary_folder", "Daily").orEmpty(),
             today = DateUtil.todayStr(dateFormat),
         )
-        val uri = Uri.Builder()
-            .scheme("obsidian")
-            .authority("open")
-            .appendQueryParameter("vault", vaultName)
-            .appendQueryParameter("file", relativePath)
-            .build()
+        val vaultId = prefs.getString(VaultStoragePrefs.OBSIDIAN_VAULT_ID_KEY, "").orEmpty()
+        val uri = FloatingNoteObsidianLaunchPolicy.buildOpenUri(storage, relativePath, vaultId)
+        if (uri == null) {
+            if (storage.backend == VaultBackend.SAF && vaultId.isBlank()) {
+                BetaLogger.log("FloatingNote/Obsidian", "open_blocked reason=missing_vault_id")
+                val uiContext = LocaleController.localizedContext(context)
+                Toast.makeText(context, uiContext.getString(R.string.qd_editor_vault_id_required), Toast.LENGTH_LONG).show()
+            } else {
+                BetaLogger.log("FloatingNote/Obsidian", "open_blocked reason=invalid_target target=$relativePath")
+            }
+            return false
+        }
         val intent = Intent(Intent.ACTION_VIEW, uri).apply {
             if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
@@ -83,12 +124,14 @@ internal object FloatingNoteObsidianLauncher {
             }
             BetaLogger.log(
                 "FloatingNote/Obsidian",
-                "opened saved target=${targetRelativePath.orEmpty()} then_home=true",
+                "opened saved target=${targetRelativePath.orEmpty()} launchUri=$uri " +
+                    "vaultIdConfigured=${vaultId.isNotBlank()} then_home=true",
             )
             true
         } catch (error: Exception) {
             BetaLogger.logException("FloatingNote/Obsidian", "open_failed", error)
-            Toast.makeText(context, "未安装 Obsidian", Toast.LENGTH_SHORT).show()
+            val uiContext = LocaleController.localizedContext(context)
+            Toast.makeText(context, uiContext.getString(R.string.qd_editor_obsidian_missing), Toast.LENGTH_SHORT).show()
             false
         }
     }

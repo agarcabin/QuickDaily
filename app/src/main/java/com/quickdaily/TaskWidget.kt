@@ -67,15 +67,42 @@ class TaskWidget : AppWidgetProvider() {
             }
             ACTION_ADD_TASK -> addTask(context, widgetId, intent.sourceBounds?.let(::Rect))
             ACTION_TOGGLE_TASK -> {
+                val fillWidgetId = intent.getIntExtra(
+                    WidgetFillInContract.EXTRA_WIDGET_ID,
+                    widgetId,
+                )
+                val kind = intent.getStringExtra(WidgetFillInContract.EXTRA_KIND)
+                val generation = intent.getLongExtra(WidgetFillInContract.EXTRA_GENERATION, 0L)
+                if (kind != null && kind != WidgetFillInContract.KIND_TASK) {
+                    BetaLogger.log("TaskWidget", "toggle ignored wrong widget kind=$kind widgetId=$fillWidgetId")
+                    return
+                }
+                if (fillWidgetId >= 0 && !WidgetGeneration.isCurrent(
+                        context,
+                        WidgetFillInContract.KIND_TASK,
+                        fillWidgetId,
+                        generation,
+                    )
+                ) {
+                    BetaLogger.log(
+                        "TaskWidget",
+                        "toggle ignored stale generation=$generation current=${WidgetGeneration.current(context, WidgetFillInContract.KIND_TASK, fillWidgetId)} widgetId=$fillWidgetId",
+                    )
+                    WidgetRefreshCoordinator.refreshTasks(context, immediate = true)
+                    return
+                }
                 val path = intent.getStringExtra(EXTRA_TASK_PATH).orEmpty()
                 val lineIndex = intent.getIntExtra(EXTRA_TASK_LINE, -1)
                 val expectedRaw = intent.getStringExtra(EXTRA_TASK_RAW).orEmpty()
+                val expectedSeparator = if (intent.hasExtra(EXTRA_TASK_SEPARATOR)) {
+                    intent.getStringExtra(EXTRA_TASK_SEPARATOR).orEmpty()
+                } else null
                 if (path.isNotBlank() && lineIndex >= 0) {
                     val pendingResult = goAsync()
                     WidgetAsyncWorkRunner.launch(
                         finishable = WidgetAsyncFinishable { pendingResult.finish() },
                     ) {
-                        toggleTask(context.applicationContext, path, lineIndex, expectedRaw)
+                        toggleTask(context.applicationContext, path, lineIndex, expectedRaw, expectedSeparator)
                     }
                 } else {
                     BetaLogger.log("TaskWidget", "toggle ignored invalid path=$path line=$lineIndex")
@@ -94,6 +121,7 @@ class TaskWidget : AppWidgetProvider() {
         internal const val EXTRA_TASK_PATH = "task_path"
         internal const val EXTRA_TASK_LINE = "task_line"
         internal const val EXTRA_TASK_RAW = "task_raw"
+        internal const val EXTRA_TASK_SEPARATOR = "task_separator"
         private const val INVALID_WIDGET_ID = -1
 
         fun scheduleMidnightRefresh(context: Context) {
@@ -128,14 +156,24 @@ class TaskWidget : AppWidgetProvider() {
             appWidgetManager: AppWidgetManager,
             widgetId: Int,
             result: WidgetLoadResult<List<TaskWidgetItem>>?,
-        ) {
-            val config = TaskWidgetConfigStore.load(context, widgetId)
+            configOverride: TaskWidgetConfig? = null,
+            generation: Long? = null,
+        ): Boolean {
+            val uiContext = LocaleController.localizedContext(context)
+            val config = configOverride ?: TaskWidgetConfigStore.load(context, widgetId)
+            val renderGeneration = generation ?: WidgetGeneration.next(
+                context,
+                WidgetFillInContract.KIND_TASK,
+                widgetId,
+            )
             val views = RemoteViews(context.packageName, R.layout.widget_tasks)
             val appearance = WidgetAppearance.colors(context)
             val size = WidgetSizePolicy.forWidget(appWidgetManager, widgetId)
             BetaLogger.log(
                 "TaskWidget/Render",
-                "widgetId=$widgetId scope=${config.scope.key} customPath=${config.customRelativePath} size=$size result=${result?.javaClass?.simpleName ?: "loading"}",
+                "widgetId=$widgetId scope=${config.scope.key} customPath=${config.customRelativePath} " +
+                    "folderUri=${config.customFolderUri} folderWindow=${config.folderTimeWindow.key} " +
+                    "recursive=${config.folderIncludeSubfolders} size=$size result=${result?.javaClass?.simpleName ?: "loading"}",
             )
             WidgetAppearance.applyRoot(views, R.id.widget_root, appearance)
             WidgetAppearance.applyIcon(views, R.id.btn_refresh, appearance.iconForeground)
@@ -143,31 +181,45 @@ class TaskWidget : AppWidgetProvider() {
             WidgetAppearance.applyIcon(views, R.id.btn_add_task, appearance.iconForeground)
             WidgetAppearance.applyIcon(views, R.id.btn_home, appearance.iconForeground)
             WidgetSizePolicy.applyTaskChrome(views, size)
+            views.setContentDescription(R.id.btn_refresh, uiContext.getString(R.string.qd_widget_refresh))
+            views.setContentDescription(R.id.btn_scope, uiContext.getString(R.string.qd_widget_select_scope))
+            views.setContentDescription(R.id.btn_add_task, uiContext.getString(R.string.qd_widget_add_task))
+            views.setContentDescription(R.id.btn_home, uiContext.getString(R.string.qd_widget_open_editor))
 
-            val title = if (config.scope == TaskWidgetScope.CUSTOM) {
-                TaskWidgetConfigStore.displayName(config).ifBlank { config.scope.label }
+            val title = if (config.scope == TaskWidgetScope.CUSTOM || config.scope == TaskWidgetScope.CUSTOM_FOLDER) {
+                TaskWidgetConfigStore.displayName(uiContext, config).ifBlank { uiContext.getString(config.scope.labelRes) }
             } else {
-                config.scope.label
+                uiContext.getString(config.scope.labelRes)
             }
             views.setTextViewText(R.id.widget_title, title)
             views.setTextColor(R.id.widget_title, appearance.foreground)
             views.setTextColor(R.id.empty_view, appearance.muted)
 
-            val effectiveResult = result ?: WidgetLoadResult.Empty("正在加载…")
-            val status = when (effectiveResult) {
-                is WidgetLoadResult.Success -> "暂无待办事项"
-                is WidgetLoadResult.Empty -> effectiveResult.message
-                is WidgetLoadResult.Failure -> effectiveResult.message
+            val effectiveResult = result ?: WidgetLoadResult.Empty(UiText.Resource(R.string.qd_widget_loading))
+            val status: CharSequence = when (effectiveResult) {
+                is WidgetLoadResult.Success -> uiContext.getString(R.string.qd_widget_no_tasks)
+                is WidgetLoadResult.Empty -> effectiveResult.message.resolve(uiContext)
+                is WidgetLoadResult.Failure -> effectiveResult.message.resolve(uiContext)
             }
             views.setTextViewText(R.id.empty_view, status)
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val items = (effectiveResult as? WidgetLoadResult.Success)?.value.orEmpty()
-                views.setRemoteAdapter(R.id.task_list, TaskWidgetViews.collection(context, items, size))
+                views.setRemoteAdapter(
+                    R.id.task_list,
+                    TaskWidgetViews.collection(
+                        context = context,
+                        items = items,
+                        size = size,
+                        widgetId = widgetId,
+                        generation = renderGeneration,
+                    ),
+                )
             } else {
                 val serviceIntent = Intent(context, TaskWidgetService::class.java).apply {
-                    data = Uri.parse("quickdaily://task-widget/$widgetId")
+                    data = Uri.parse("quickdaily://task-widget/$widgetId/$renderGeneration")
                     putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+                    putExtra(WidgetFillInContract.EXTRA_GENERATION, renderGeneration)
                 }
                 views.setRemoteAdapter(R.id.task_list, serviceIntent)
             }
@@ -212,24 +264,42 @@ class TaskWidget : AppWidgetProvider() {
                 ),
             )
 
-            val addTaskIntent = Intent(context, TaskWidget::class.java).apply {
-                action = ACTION_ADD_TASK
-                putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+            val addTaskIntent = if (config.scope == TaskWidgetScope.CUSTOM_FOLDER) {
+                folderActionIntent(context, widgetId, renderGeneration, TaskWidgetFolderActionActivity.ACTION_ADD)
+            } else {
+                Intent(context, TaskWidget::class.java).apply {
+                    action = ACTION_ADD_TASK
+                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+                }
             }
-            views.setOnClickPendingIntent(
-                R.id.btn_add_task,
+            val addTaskPi = if (config.scope == TaskWidgetScope.CUSTOM_FOLDER) {
+                PendingIntent.getActivity(
+                    context,
+                    widgetId + 300,
+                    addTaskIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                )
+            } else {
                 PendingIntent.getBroadcast(
                     context,
                     widgetId + 300,
                     addTaskIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
-                ),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                )
+            }
+            views.setOnClickPendingIntent(
+                R.id.btn_add_task,
+                addTaskPi,
             )
 
-            val editorTarget = config.customRelativePath.takeIf {
-                config.scope == TaskWidgetScope.CUSTOM && it.isNotBlank()
+            val homeIntent = if (config.scope == TaskWidgetScope.CUSTOM_FOLDER) {
+                folderActionIntent(context, widgetId, renderGeneration, TaskWidgetFolderActionActivity.ACTION_OPEN)
+            } else {
+                val editorTarget = config.customRelativePath.takeIf {
+                    config.scope == TaskWidgetScope.CUSTOM && it.isNotBlank()
+                }
+                MainActivity.editorIntent(context, editorTarget)
             }
-            val homeIntent = MainActivity.editorIntent(context, editorTarget)
             val homePi = PendingIntent.getActivity(
                 context,
                 widgetId + 100,
@@ -239,7 +309,17 @@ class TaskWidget : AppWidgetProvider() {
             views.setOnClickPendingIntent(R.id.btn_home, homePi)
             views.setOnClickPendingIntent(R.id.widget_title, homePi)
 
-            appWidgetManager.updateAppWidget(widgetId, views)
+            return try {
+                appWidgetManager.updateAppWidget(widgetId, views)
+                true
+            } catch (error: Exception) {
+                BetaLogger.logException(
+                    "TaskWidget/Render",
+                    "update failed widgetId=$widgetId generation=$renderGeneration",
+                    error,
+                )
+                false
+            }
         }
 
         fun refreshAllWidgets(context: Context, immediate: Boolean = false) {
@@ -252,10 +332,32 @@ class TaskWidget : AppWidgetProvider() {
                 val ids = manager.getAppWidgetIds(ComponentName(context, TaskWidget::class.java))
                 BetaLogger.log("TaskWidget", "refreshNow widgetCount=${ids.size} widgetIds=${ids.joinToString()}")
                 ids.forEach { widgetId ->
+                    val generation = WidgetGeneration.next(
+                        context,
+                        WidgetFillInContract.KIND_TASK,
+                        widgetId,
+                    )
                     val config = TaskWidgetConfigStore.load(context, widgetId)
                     val result = WidgetContentLoader.loadTasks(context, config)
                     logWidgetResult("TaskWidget[$widgetId]", result)
-                    updateWidget(context, manager, widgetId, result)
+                    if (!WidgetGeneration.isCurrent(
+                            context,
+                            WidgetFillInContract.KIND_TASK,
+                            widgetId,
+                            generation,
+                        )
+                    ) {
+                        BetaLogger.log("TaskWidget", "discard stale refresh widgetId=$widgetId generation=$generation")
+                        return@forEach
+                    }
+                    updateWidget(
+                        context = context,
+                        appWidgetManager = manager,
+                        widgetId = widgetId,
+                        result = result,
+                        configOverride = config,
+                        generation = generation,
+                    )
                     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
                         manager.notifyAppWidgetViewDataChanged(intArrayOf(widgetId), R.id.task_list)
                     }
@@ -279,12 +381,35 @@ class TaskWidget : AppWidgetProvider() {
             } else {
                 null
             }
+            if (config.scope == TaskWidgetScope.CUSTOM_FOLDER) {
+                val generation = WidgetGeneration.current(
+                    context,
+                    WidgetFillInContract.KIND_TASK,
+                    widgetId,
+                )
+                context.startActivity(folderActionIntent(
+                    context,
+                    widgetId,
+                    generation,
+                    TaskWidgetFolderActionActivity.ACTION_ADD,
+                ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
+                return
+            }
             if (config.scope == TaskWidgetScope.CUSTOM && target.isNullOrBlank()) {
-                Toast.makeText(context, "自定义页面不可用", Toast.LENGTH_SHORT).show()
+                val uiContext = LocaleController.localizedContext(context)
+                Toast.makeText(
+                    uiContext,
+                    uiContext.getString(R.string.qd_editor_page_unlocatable),
+                    Toast.LENGTH_SHORT,
+                ).show()
                 return
             }
 
-            val title = target?.let { TaskWidgetConfigStore.displayName(config) + " 速记" }
+            val uiContext = LocaleController.localizedContext(context)
+            val title = target?.let {
+                TaskWidgetConfigStore.displayName(uiContext, config) + " " +
+                    uiContext.getString(R.string.qd_editor_quick_capture_suffix)
+            }
             val request = FloatingNoteRequest(
                 source = FloatingNoteSource.WIDGET,
                 prefillText = "- [ ] ",
@@ -314,7 +439,10 @@ class TaskWidget : AppWidgetProvider() {
             try {
                 val manager = AppWidgetManager.getInstance(context)
                 val views = RemoteViews(context.packageName, R.layout.widget_tasks)
-                views.setTextViewText(R.id.widget_title, "刷新成功")
+                views.setTextViewText(
+                    R.id.widget_title,
+                    LocaleController.localizedContext(context).getString(R.string.qd_widget_refresh_success),
+                )
                 views.setTextColor(R.id.widget_title, WidgetAppearance.colors(context).foreground)
                 manager.partiallyUpdateAppWidget(widgetId, views)
                 Handler(Looper.getMainLooper()).postDelayed({ refreshAllWidgets(context) }, 1_600L)
@@ -328,12 +456,14 @@ class TaskWidget : AppWidgetProvider() {
             path: String,
             lineIndex: Int,
             expectedRaw: String,
+            expectedSeparator: String?,
         ) {
             val result = TaskToggleUseCase.toggle(
                 context = context,
                 path = path,
                 lineIndex = lineIndex,
                 expectedRaw = expectedRaw,
+                expectedSeparator = expectedSeparator,
                 logTag = "TaskWidget",
             )
             if (!result.succeeded) {
@@ -357,6 +487,18 @@ class TaskWidget : AppWidgetProvider() {
                 TaskCompletionSoundPolicy.play(context, soundMode)
             }
             WidgetRefreshCoordinator.refreshAll(context, immediate = true)
+        }
+
+        private fun folderActionIntent(
+            context: Context,
+            widgetId: Int,
+            generation: Long,
+            action: String,
+        ): Intent = Intent(context, TaskWidgetFolderActionActivity::class.java).apply {
+            this.action = action
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+            putExtra(WidgetFillInContract.EXTRA_GENERATION, generation)
+            data = Uri.parse("quickdaily://task-widget-action/$widgetId/$generation/$action")
         }
     }
 }
