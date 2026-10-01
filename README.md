@@ -14,10 +14,10 @@ language：[English](#english) | [简体中文](#简体中文)
 
 <p align="center">
   <a href="https://github.com/agarcabin/QuickDaily/releases">
-    <img src="https://img.shields.io/github/downloads/agarcabin/QuickDaily/total?style=for-the-badge&logo=github&label=%E4%B8%8B%E8%BD%BD%E6%AC%A1%E6%95%B0%E7%BB%9F%E8%AE%A1" alt="下载次数统计" />
+    <img src="https://img.shields.io/github/downloads/agarcabin/QuickDaily/total?style=for-the-badge&logo=github&label=%E4%B8%8B%E8%BD%BD%E6%AC%A1%E6%95%B0" alt="下载次数" />
   </a>
   <a href="https://github.com/agarcabin/QuickDaily/releases">
-    <img src="https://img.shields.io/github/v/release/agarcabin/QuickDaily?style=for-the-badge&logo=github" alt="GitHub Release" />
+    <img src="https://img.shields.io/github/v/release/agarcabin/QuickDaily?style=for-the-badge&logo=github&label=%E4%B8%8B%E8%BD%BD%20APK" alt="下载 APK" />
   </a>
   <a href="https://www.coolapk.com/u/400522">
     <img src="https://img.shields.io/badge/CoolAPK-@附近的人-ff6900?style=for-the-badge" alt="CoolAPK" />
@@ -107,7 +107,7 @@ QuickDaily does one thing: **help you capture a thought for today as quickly as 
     <img src="https://img.shields.io/badge/下载-v1.9-brightgreen?style=for-the-badge&logo=github" alt="Download v1.9" />
   </a>
   <a href="https://github.com/agarcabin/QuickDaily/releases">
-    <img src="https://img.shields.io/github/v/release/agarcabin/QuickDaily?style=for-the-badge&logo=github" alt="GitHub Release" />
+    <img src="https://img.shields.io/github/v/release/agarcabin/QuickDaily?style=for-the-badge&logo=github&label=%E4%B8%8B%E8%BD%BD%20APK" alt="下载 APK" />
   </a>
   <a href="https://www.coolapk.com/u/400522">
     <img src="https://img.shields.io/badge/酷安-@附近的人-ff6900?style=for-the-badge" alt="CoolAPK" />
@@ -186,7 +186,7 @@ QuickDaily 只做一件事：**让你用最快的速度记下今天的一句话*
 
 | 渠道 | 链接 |
 |------|------|
-| GitHub Release | [QuickDaily-1.4.apk](https://github.com/agarcabin/QuickDaily/releases/tag/v1.4) |
+| GitHub Release | [下载 APK](https://github.com/agarcabin/QuickDaily/releases) |
 | 蓝奏云（国内分流） | [点此下载](https://github.com/agarcabin/QuickDaily/releases) (密码: fjdr) |
 | 酷安社区 | [@附近的人](https://www.coolapk.com/u/400522) |
 | QQ 交流群 | [1050092886](https://qm.qq.com/q/G2zLL5RpiU) — Obsidian 许愿屋 |
