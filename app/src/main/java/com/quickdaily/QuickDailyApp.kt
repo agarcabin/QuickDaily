@@ -1,6 +1,7 @@
 package com.quickdaily
 
 import android.app.Application
+import com.quickdaily.util.FileUtil
 import com.quickdaily.util.StorageContextHolder
 
 class QuickDailyApp : Application() {
@@ -13,5 +14,6 @@ class QuickDailyApp : Application() {
         super.onCreate()
         instance = this
         StorageContextHolder.init(this)
+        FileUtil.recoverPendingSaves()
     }
 }

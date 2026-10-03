@@ -336,6 +336,7 @@ class MainActivity : LocalizedComponentActivity() {
         }
         val mutationGuard = com.quickdaily.util.FileUtil.acquirePathMutation(path)
         try {
+            val initialFingerprint = com.quickdaily.util.FileUtil.fingerprint(path)
             var existing = com.quickdaily.util.FileUtil.read(path)
             if (existing.isBlank()) {
                 val template = prefs.getString("template_path", "").orEmpty()
@@ -359,10 +360,19 @@ class MainActivity : LocalizedComponentActivity() {
             } else {
                 body.trimEnd() + "\n" + lines.joinToString("\n") + "\n"
             }
-            com.quickdaily.util.FileUtil.write(
+            val saveResult = com.quickdaily.util.FileUtil.saveTextResult(
                 path,
                 if (parsed.hasFrontmatter) com.quickdaily.util.ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, newBody) else newBody,
+                expectedFingerprint = initialFingerprint,
             )
+            if (!saveResult.succeeded) {
+                android.widget.Toast.makeText(
+                    this@MainActivity,
+                    getString(R.string.qd_main_shared_file_save_failed),
+                    android.widget.Toast.LENGTH_LONG,
+                ).show()
+                return
+            }
         } finally {
             mutationGuard.close()
         }
@@ -389,6 +399,7 @@ class MainActivity : LocalizedComponentActivity() {
 
         val mutationGuard = com.quickdaily.util.FileUtil.acquirePathMutation(path)
         try {
+        val initialFingerprint = com.quickdaily.util.FileUtil.fingerprint(path)
         val line = when (timestampFormat) {
             "none" -> text
             "time_only" -> "${com.quickdaily.util.DateUtil.nowTimeStr()} $text"
@@ -465,7 +476,19 @@ class MainActivity : LocalizedComponentActivity() {
                     workingContent + "\n$line\n"
                 }
             }
-            com.quickdaily.util.FileUtil.write(path, nc)
+            val saveResult = com.quickdaily.util.FileUtil.saveTextResult(
+                path,
+                nc,
+                expectedFingerprint = initialFingerprint,
+            )
+            if (!saveResult.succeeded) {
+                android.widget.Toast.makeText(
+                    this@MainActivity,
+                    getString(R.string.qd_main_shared_file_save_failed),
+                    android.widget.Toast.LENGTH_LONG,
+                ).show()
+                return
+            }
         WidgetRefreshHelper.refreshAll(this)
 
         // 刷新编辑器内容，让用户立即看到新加入的分享内容
@@ -512,6 +535,7 @@ class MainActivity : LocalizedComponentActivity() {
         // 将图片引用插入日记（带 frontmatter 保护）
         val mutationGuard = com.quickdaily.util.FileUtil.acquirePathMutation(path)
         try {
+        val initialFingerprint = com.quickdaily.util.FileUtil.fingerprint(path)
         var existing = com.quickdaily.util.FileUtil.read(path)
         var parsed = com.quickdaily.util.ContentUtil.parseFrontmatter(existing)
         var body = if (parsed.hasFrontmatter) parsed.body else existing
@@ -544,7 +568,19 @@ class MainActivity : LocalizedComponentActivity() {
         } else {
             newBody
         }
-        com.quickdaily.util.FileUtil.write(path, saveContent)
+        val saveResult = com.quickdaily.util.FileUtil.saveTextResult(
+            path,
+            saveContent,
+            expectedFingerprint = initialFingerprint,
+        )
+        if (!saveResult.succeeded) {
+            android.widget.Toast.makeText(
+                this@MainActivity,
+                getString(R.string.qd_main_shared_file_save_failed),
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
+            return
+        }
         WidgetRefreshHelper.refreshAll(this)
 
         android.widget.Toast.makeText(this, getString(R.string.qd_main_images_saved, links.size), android.widget.Toast.LENGTH_SHORT).show()

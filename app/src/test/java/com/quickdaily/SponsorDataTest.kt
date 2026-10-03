@@ -9,13 +9,22 @@ class SponsorDataTest {
     fun defaultSponsorsAreRankedAndKeepFixedMessages() {
         val ranked = rankSponsorEntries(defaultSponsorEntries)
         assertEquals(
-            listOf("sponsor-pokewins", "sponsor-o", "sponsor-wei"),
+            listOf(
+                "sponsor-pokewins",
+                "sponsor-wang-sheep",
+                "sponsor-runaway",
+                "sponsor-o",
+                "sponsor-wei",
+            ),
             ranked.map { it.id },
         )
         assertEquals(100, ranked.first().amount)
-        assertEquals(0, ranked[1].amount)
+        assertEquals(100, ranked[1].amount)
+        assertEquals(30, ranked[2].amount)
         assertEquals("暂无留言", ranked[1].message)
-        assertTrue(ranked[2].message.contains("QuickDaily和讯飞输入法很好用"))
+        assertEquals("加油⛽", ranked[2].message)
+        assertEquals(null, ranked[2].avatarRes)
+        assertTrue(ranked[4].message.contains("QuickDaily和讯飞输入法很好用"))
     }
 
     @Test

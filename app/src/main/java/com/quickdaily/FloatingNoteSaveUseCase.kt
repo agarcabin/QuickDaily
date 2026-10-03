@@ -6,6 +6,8 @@ import com.quickdaily.util.ContentUtil
 import com.quickdaily.util.DateUtil
 import com.quickdaily.util.DiaryAppendUtil
 import com.quickdaily.util.FileUtil
+import com.quickdaily.util.FileSaveResult
+import com.quickdaily.util.FileSaveStatus
 import com.quickdaily.util.ImageUtil
 import com.quickdaily.util.RecentTags
 import com.quickdaily.util.VaultPathUtil
@@ -16,7 +18,10 @@ import kotlinx.coroutines.withContext
 sealed interface FloatingNoteSaveResult {
     data object Saved : FloatingNoteSaveResult
     data object NoContent : FloatingNoteSaveResult
-    data class Failed(val message: UiText) : FloatingNoteSaveResult
+    data class Failed(
+        val message: UiText,
+        val saveResult: FileSaveResult? = null,
+    ) : FloatingNoteSaveResult
 }
 
 /** The single save path used by NoteEditActivity and FloatingNoteService. */
@@ -88,6 +93,7 @@ class FloatingNoteSaveUseCase(private val context: Context) {
 
         val mutationGuard = FileUtil.acquirePathMutation(path)
         try {
+        val initialFingerprint = FileUtil.fingerprint(path)
         val existing = FileUtil.read(path)
         var parsed = ContentUtil.parseFrontmatter(existing)
         var body = if (parsed.hasFrontmatter) parsed.body else existing
@@ -156,8 +162,19 @@ class FloatingNoteSaveUseCase(private val context: Context) {
             ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, newContent)
         } else newContent
 
-        if (!FileUtil.write(path, output)) {
-            return@withContext FloatingNoteSaveResult.Failed(UiText.Resource(R.string.qd_editor_save_failed_permission))
+        val saveResult = FileUtil.saveTextResult(path, output, expectedFingerprint = initialFingerprint)
+        if (!saveResult.succeeded) {
+            val message = when (saveResult.status) {
+                FileSaveStatus.CONFLICT -> UiText.Resource(R.string.qd_editor_external_change)
+                FileSaveStatus.RECOVERED -> UiText.Resource(R.string.qd_editor_save_incomplete)
+                else -> UiText.Resource(R.string.qd_editor_save_failed_permission)
+            }
+            BetaLogger.log(
+                "FloatingNote/Save",
+                "coordinated_save_failed status=${saveResult.status} stage=${saveResult.stage} " +
+                    "targetKey=${saveResult.targetKey} backup=${saveResult.backup != null}",
+            )
+            return@withContext FloatingNoteSaveResult.Failed(message, saveResult)
         }
         RecentTags.recordFromText(context, text)
         WidgetRefreshHelper.refreshAll(context)

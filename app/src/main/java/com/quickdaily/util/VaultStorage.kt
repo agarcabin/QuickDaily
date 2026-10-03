@@ -435,92 +435,63 @@ object VaultStorage {
     }
 
     internal fun readText(context: Context, path: String): String? {
+        return readBytes(context, path)?.toString(Charsets.UTF_8)
+    }
+
+    internal fun readBytes(context: Context, path: String): ByteArray? {
         val document = documentForPath(context, path) ?: return null
         return runCatching {
-            context.contentResolver.openInputStream(document.uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+            context.contentResolver.openInputStream(document.uri)?.use { it.readBytes() }
         }.getOrNull()
     }
 
+    /**
+     * Legacy entry point retained for compatibility. It intentionally writes
+     * the existing DocumentFile URI in place and never renames or replaces it;
+     * FileUtil supplies the backup, conflict and post-write verification.
+     */
     internal fun writeText(context: Context, path: String, content: String): Boolean {
-        SafDocumentPath.parse(path)?.let { exact ->
-            val target = documentForPath(context, path)
-                ?.takeIf { it.isFile && it.canWrite() }
-                ?: return false
-            return try {
-                context.contentResolver.openOutputStream(target.uri, "w")?.use { output ->
-                    content.toByteArray(Charsets.UTF_8).inputStream().use { input -> input.copyTo(output) }
-                } != null
-            } catch (error: Exception) {
-                BetaLogger.logException("VaultStorage", "saf_exact_write_failed path=$path", error)
-                false
-            }
-        }
-        val parsed = SafVirtualPath.parse(path) ?: return false
-        val relative = parsed.relativePath
-        if (relative.isBlank()) return false
-        val pieces = relative.split('/')
-        val fileName = pieces.last()
-        val parentRelative = pieces.dropLast(1).joinToString("/")
-        val root = DocumentFile.fromTreeUri(context, parsed.rootUri) ?: return false
-        val parent = ensureDirectory(root, parentRelative) ?: return false
-        val target = parent.findFile(fileName)
-        val tempName = ".${fileName}.${System.nanoTime()}.quickdaily.tmp"
-        val temporary = parent.createFile("text/plain", tempName) ?: return false
-        return try {
-            val wrote = context.contentResolver.openOutputStream(temporary.uri, "w")?.use { output ->
-                content.toByteArray(Charsets.UTF_8).inputStream().use { input -> input.copyTo(output) }
-                true
-            } == true
-            if (!wrote) return false
-            fun copyTemporaryTo(destination: DocumentFile): Boolean =
-                context.contentResolver.openInputStream(temporary.uri)?.use { input ->
-                    context.contentResolver.openOutputStream(destination.uri, "w")?.use { output ->
-                        input.copyTo(output)
-                        true
-                    } ?: false
-                } == true
+        return writeExistingBytes(context, path, content.toByteArray(Charsets.UTF_8))
+    }
 
-            if (target == null) {
-                if (temporary.renameTo(fileName)) {
-                    true
-                } else {
-                    val replacement = parent.createFile("text/plain", fileName) ?: return false
-                    val copied = copyTemporaryTo(replacement)
-                    if (!copied) replacement.delete()
-                    copied
-                }
-            } else {
-                // Keep the existing document recoverable while the provider
-                // performs its rename. Some providers do not support rename;
-                // only then fall back to writing the existing document.
-                val backupName = ".${fileName}.${System.nanoTime()}.quickdaily.bak"
-                if (target.renameTo(backupName)) {
-                    if (temporary.renameTo(fileName)) {
-                        parent.findFile(backupName)?.delete()
-                        true
-                    } else {
-                        val replacement = parent.createFile("text/plain", fileName)
-                        val copied = replacement?.let(::copyTemporaryTo) == true
-                        if (copied) {
-                            parent.findFile(backupName)?.delete()
-                        } else {
-                            replacement?.delete()
-                            parent.findFile(backupName)?.renameTo(fileName)
-                        }
-                        copied
-                    }
-                } else {
-                    BetaLogger.log("VaultStorage", "saf_write_direct_fallback path=$path")
-                    copyTemporaryTo(target)
-                }
-            }
+    /** Writes the existing SAF document URI without rename or replacement. */
+    internal fun writeExistingBytes(context: Context, path: String, bytes: ByteArray): Boolean {
+        val target = documentForPath(context, path)
+            ?.takeIf { it.isFile && it.canWrite() }
+            ?: return false
+        val output = runCatching {
+            context.contentResolver.openOutputStream(target.uri, "rwt")
+        }.getOrNull() ?: runCatching {
+            // Some providers reject rwt but still support same-URI truncation
+            // with w. No replacement or rename is attempted in this fallback.
+            context.contentResolver.openOutputStream(target.uri, "w")
+        }.getOrNull() ?: return false
+        return try {
+            output.use { it.write(bytes) }
+            true
         } catch (error: Exception) {
-            BetaLogger.logException("VaultStorage", "saf_write_failed path=$path", error)
+            BetaLogger.logException("VaultStorage", "saf_in_place_write_failed", error)
             false
-        } finally {
-            if (temporary.exists()) temporary.delete()
         }
     }
+
+    /** Creates only a missing virtual-path document; an existing target is never replaced. */
+    internal fun createDocumentForPath(context: Context, path: String): DocumentFile? {
+        val parsed = SafVirtualPath.parse(path) ?: return null
+        if (parsed.relativePath.isBlank()) return null
+        val pieces = parsed.relativePath.split('/')
+        val fileName = pieces.last()
+        val parentRelative = pieces.dropLast(1).joinToString("/")
+        val root = DocumentFile.fromTreeUri(context, parsed.rootUri) ?: return null
+        val parent = ensureDirectory(root, parentRelative) ?: return null
+        if (parent.findFile(fileName) != null) return null
+        return parent.createFile("text/plain", fileName)
+    }
+
+    internal fun deleteDocumentForPath(context: Context, path: String): Boolean =
+        documentForPath(context, path)?.delete() == true
+
+    internal fun deleteDocument(document: DocumentFile): Boolean = document.delete()
 
     internal fun exists(context: Context, path: String): Boolean =
         documentForPath(context, path)?.exists() == true
@@ -553,6 +524,9 @@ object VaultStorage {
                 length = length,
                 sha256 = digest.digest().joinToString("") { byte -> "%02x".format(byte) },
                 lastModified = document.lastModified(),
+                identity = runCatching {
+                    DocumentsContract.getDocumentId(document.uri)
+                }.getOrNull() ?: document.uri.toString(),
             )
         }.getOrNull()
     }
@@ -597,28 +571,12 @@ object VaultStorage {
         input: java.io.InputStream,
         destinationPath: String,
     ): Boolean {
-        val parsed = SafVirtualPath.parse(destinationPath)
-        if (parsed != null) {
-            val pieces = parsed.relativePath.split('/').filter(String::isNotBlank)
-            if (pieces.isEmpty()) return false
-            val root = DocumentFile.fromTreeUri(context, parsed.rootUri) ?: return false
-            val parent = ensureDirectory(root, pieces.dropLast(1).joinToString("/")) ?: return false
-            val fileName = pieces.last()
-            val target = parent.findFile(fileName) ?: parent.createFile("application/octet-stream", fileName)
-                ?: return false
-            return runCatching {
-                context.contentResolver.openOutputStream(target.uri, "w")?.use { output ->
-                    input.copyTo(output)
-                    true
-                } ?: false
-            }.getOrDefault(false)
-        }
-        return runCatching {
-            val destination = File(destinationPath)
-            destination.parentFile?.mkdirs()
-            destination.outputStream().use { output -> input.copyTo(output) }
-            true
-        }.getOrDefault(false)
+        val bytes = runCatching { input.readBytes() }.getOrNull() ?: return false
+        return FileUtil.saveBytesResult(
+            path = destinationPath,
+            bytes = bytes,
+            rejectDifferentExisting = true,
+        ).succeeded
     }
 
     private fun resolveDocument(root: DocumentFile, relativePath: String): DocumentFile? {

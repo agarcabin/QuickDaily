@@ -264,6 +264,7 @@ class FloatingNoteService : LocalizedLifecycleService() {
                                 useInlineTargetMenu = true,
                                 onSave = { saveDraft() },
                                 onClose = { requestClose("close") },
+                                topActionText = getString(R.string.qd_common_close),
                                 onFullScreen = ::openFullScreen,
                                 floatingCoachStep = floatingCoachStep,
                                 onFloatingCoachPrevious = {

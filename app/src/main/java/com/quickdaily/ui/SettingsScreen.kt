@@ -32,6 +32,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
@@ -192,6 +193,39 @@ internal enum class SettingsTab(@androidx.annotation.StringRes val titleRes: Int
 }
 
 // localization-legacy-begin: version logs are deferred from phase one.
+private const val CHANGELOG_2_0 = """2.0:
+• 新增 多语言支持
+• 新增 新手引导
+• 新增 PDF、Word、PowerPoint、Excel、OpenDocument 与 WPS 等常见文档的分享捕获
+• 新增 悬浮窗保存后拉起 Obsidian 开关
+• 新增 任务完成提示音，可选择经典、木鱼、蜂鸣、系统或静音
+• 新增 任务完成时间戳格式自定义
+• 新增 任务小部件按日期分类
+• 新增 任务小部件显示自定义文件夹中的任务
+• 新增 编辑器换行自动继承缩进并续接列表和任务，退格可整段回退
+• 新增 编辑器屏蔽指定内容显示，仅影响只读渲染并保留原文
+• 新增 渲染模式和便签小部件双链渲染
+• 新增 使用双链别称时隐藏页面本名
+• 新增 赞助列表
+• 新增 文件保存冲突检测、备份恢复与写入结果校验
+• 调整 Tab 缩进宽度为 4 个空格
+• 调整 任务小部件按钮风格
+• 调整 小部件在 Android 桌面的样式预览图
+• 调整 小部件和悬浮窗对夜间模式的支持
+• 调整 默认应用图标
+• 调整 设置页布局和三级折叠结构，移除不必要的设置项
+• 调整 切换语言后保留当前设置页面，优化英文界面换行
+• 调整 Obsidian 仓库、自定义文件夹及 Vault ID 的兼容性
+• 调整 QuickDaily、Obsidian 与桌面小部件之间的内容同步
+• 修复 标签颜色不会跟随当前主题色的问题
+• 修复 便签小部件拉起悬浮窗时，标题错误显示为“今日日记”的问题
+• 修复 部分三星手机录入图片失败的问题
+• 修复 完成时间戳日期格式错误的问题
+• 修复 从全屏速录返回悬浮窗时，悬浮窗位置还原不正确的问题
+• 修复 相对路径识别异常及部分自定义文件夹无法正确读写的问题
+• 修复 文件读取竞争导致的内容读取异常
+• 修复 保存已有文件时可能出现的内容丢失、旧内容覆盖或内容不同步问题"""
+
 private const val CHANGELOG_1_9_7_BETA = """QuickDaily 1.9.7-beta
 • 新增 中文与 English 多语言支持，可在设置中手动切换
 • 优化 切换语言后保留当前设置页面
@@ -4200,7 +4234,7 @@ private fun OtherTab(
 
                 Text("更新内容：", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
                 if (showAllChangelog) {
-                Text(CHANGELOG_1_9_7_BETA + "\n\n" + CHANGELOG_1_9_6_BETA + "\n\n" + CHANGELOG_1_9_3_BETA + "\n\n" + CHANGELOG_1_9_2_BETA + "\n\n" + CHANGELOG_1_9_1_BETA + "\n\n" + CHANGELOG_1_9 + "\n\n" +
+                Text(CHANGELOG_2_0 + "\n\n" + CHANGELOG_1_9_7_BETA + "\n\n" + CHANGELOG_1_9_6_BETA + "\n\n" + CHANGELOG_1_9_3_BETA + "\n\n" + CHANGELOG_1_9_2_BETA + "\n\n" + CHANGELOG_1_9_1_BETA + "\n\n" + CHANGELOG_1_9 + "\n\n" +
                     "1.8:\n" +
                     "• 新增 小部件大小调整支持自适应\n" +
                     "• 新增 任务小部件滴声开关\n" +
@@ -4283,7 +4317,7 @@ private fun OtherTab(
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                 } else {
                 Text(
-                        CHANGELOG_1_9_7_BETA,
+                        CHANGELOG_2_0,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     )
@@ -4481,8 +4515,10 @@ private fun SponsorListCard(
                     .fillMaxWidth(),
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     entries.forEach { entry ->
@@ -4731,7 +4767,7 @@ private class SponsorSpeechBubbleShape(
     }
 }
 
-private val SponsorAvatarSize = 56.dp
+private val SponsorAvatarSize = 48.dp
 private val SponsorUnreadDotSize = 14.dp
 private val SponsorUnreadDotColor = Color(0xFFFF3B30)
 
@@ -4747,26 +4783,45 @@ private fun SponsorAvatar(
         modifier = modifier.size(SponsorAvatarSize),
         contentAlignment = Alignment.Center,
     ) {
-        Image(
-            painter = painterResource(entry.avatarRes),
-            contentDescription = "${entry.nickname} 的头像，点击查看付款留言",
-            modifier = Modifier
-                .size(SponsorAvatarSize)
-                .clip(CircleShape)
-                .clickable(
-                    role = Role.Button,
-                    onClickLabel = "查看 ${entry.nickname} 的付款留言",
-                    onClick = onClick,
+        val avatarModifier = Modifier
+            .size(SponsorAvatarSize)
+            .clip(CircleShape)
+            .clickable(
+                role = Role.Button,
+                onClickLabel = "查看 ${entry.nickname} 的付款留言",
+                onClick = onClick,
+            )
+            .semantics {
+                stateDescription = when {
+                    selected -> "留言已展开"
+                    unread -> "有未读留言"
+                    else -> "留言已读"
+                }
+            }
+        val avatarRes = entry.avatarRes
+        if (avatarRes != null) {
+            Image(
+                painter = painterResource(avatarRes),
+                contentDescription = "${entry.nickname} 的头像，点击查看付款留言",
+                modifier = avatarModifier,
+                contentScale = ContentScale.Crop,
+            )
+        } else {
+            Box(
+                modifier = avatarModifier
+                    .background(MaterialTheme.colorScheme.primaryContainer)
+                    .semantics {
+                        contentDescription = "${entry.nickname} 的默认头像，点击查看付款留言"
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = entry.nickname.take(1).uppercase(),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
                 )
-                .semantics {
-                    stateDescription = when {
-                        selected -> "留言已展开"
-                        unread -> "有未读留言"
-                        else -> "留言已读"
-                    }
-                },
-            contentScale = ContentScale.Crop,
-        )
+            }
+        }
         if (unread) {
             Box(
                 modifier = Modifier

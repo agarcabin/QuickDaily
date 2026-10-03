@@ -2,6 +2,7 @@ package com.quickdaily
 
 import android.content.Context
 import com.quickdaily.util.FileUtil
+import com.quickdaily.util.FileSaveStatus
 import com.quickdaily.util.ReadResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -69,7 +70,9 @@ internal object TaskToggleUseCase {
             return TaskToggleResult(false, failureReason = reason)
         }
 
-        val content = when (val result = FileUtil.readResult(path)) {
+        val readSnapshot = FileUtil.readStableSnapshot(path)
+        val initialFingerprint = readSnapshot.fingerprint
+        val content = when (val result = readSnapshot.result) {
             is ReadResult.Success -> result.content
             ReadResult.NotFound -> {
                 val reason = "file_not_found"
@@ -158,8 +161,18 @@ internal object TaskToggleUseCase {
                 "timestampAction=$timestampAction timestampEnabled=$timestampEnabled beforeRaw=${item.rawLine} afterRaw=$savedLine",
         )
 
-        if (!FileUtil.write(path, saveContent)) {
-            BetaLogger.log(logTag, "toggle failed to write path=$path line=$lineIndex afterRaw=$savedLine")
+        val saveResult = FileUtil.saveTextResult(
+            path,
+            saveContent,
+            expectedFingerprint = initialFingerprint,
+        )
+        if (!saveResult.succeeded) {
+            val failureReason = if (saveResult.status == FileSaveStatus.CONFLICT) "conflict" else "write_failed"
+            BetaLogger.log(
+                logTag,
+                "toggle failed status=${saveResult.status} stage=${saveResult.stage} " +
+                    "targetKey=${saveResult.targetKey} line=$lineIndex",
+            )
             return TaskToggleResult(
                 succeeded = false,
                 beforeChecked = item.checked,
@@ -167,7 +180,7 @@ internal object TaskToggleUseCase {
                 beforeLine = item.rawLine,
                 afterLine = savedLine,
                 timestampAction = timestampAction,
-                failureReason = "write_failed",
+                failureReason = failureReason,
             )
         }
 

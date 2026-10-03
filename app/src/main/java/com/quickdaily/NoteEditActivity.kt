@@ -1283,7 +1283,7 @@ fun NoteEditDialog(
     onSave: () -> Unit,
     onClose: () -> Unit,
     onTopAction: () -> Unit = onClose,
-    topActionText: String = "",
+    topActionText: String,
     fullScreen: Boolean = false,
     onHome: () -> Unit,
     onReturnToFloating: () -> Unit = {},

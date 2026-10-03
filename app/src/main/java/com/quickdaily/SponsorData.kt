@@ -7,7 +7,7 @@ internal data class SponsorEntry(
     val id: String,
     val nickname: String,
     val message: String,
-    @DrawableRes val avatarRes: Int,
+    @DrawableRes val avatarRes: Int?,
     /** Internal ranking value; never rendered in the sponsor UI. */
     val amount: Int = 0,
 )
@@ -17,6 +17,20 @@ internal interface SponsorEntrySource {
 }
 
 internal val defaultSponsorEntries = listOf(
+    SponsorEntry(
+        id = "sponsor-wang-sheep",
+        nickname = "王🐑",
+        message = "暂无留言",
+        avatarRes = R.drawable.sponsor_avatar_wang_yang,
+        amount = 100,
+    ),
+    SponsorEntry(
+        id = "sponsor-runaway",
+        nickname = "Runaway",
+        message = "加油⛽",
+        avatarRes = null,
+        amount = 30,
+    ),
     SponsorEntry(
         id = "sponsor-o",
         nickname = "*o",

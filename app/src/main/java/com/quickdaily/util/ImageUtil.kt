@@ -4,7 +4,6 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import java.io.File
-import java.io.FileOutputStream
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
@@ -12,6 +11,7 @@ import java.time.format.DateTimeFormatter
 object ImageUtil {
 
     private val TIMESTAMP_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd_HHmmss")
+    private const val ATTACHMENT_LEDGER_PREFS = "QuickDailyAttachmentLedger"
 
     /**
      * 根据命名格式生成图片文件名。
@@ -153,22 +153,28 @@ object ImageUtil {
         return try {
             val ext = getExtension(context, sourceUri)
             val displayName = getDisplayName(context, sourceUri)
-            val fileName = generateFileName(namingFormat, displayName, ext, customNamingFormat)
             // 确定存储目录
             val dir = if (storagePath.isBlank()) "" else storagePath.trim('/')
-            val relativePath = if (dir.isNotEmpty()) "$dir/$fileName" else fileName
+            val ledgerKey = attachmentLedgerKey(vaultPath, sourceUri.toString(), dir)
+            val ledger = context.getSharedPreferences(ATTACHMENT_LEDGER_PREFS, Context.MODE_PRIVATE)
+            val relativePath = ledger.getString(ledgerKey, null) ?: run {
+                val fileName = generateFileName(namingFormat, displayName, ext, customNamingFormat)
+                if (dir.isNotEmpty()) "$dir/$fileName" else fileName
+            }
             val destinationPath = VaultPathUtil.resolve(vaultPath, relativePath) ?: return null
             val copied = if (SafVirtualPath.isSafPath(destinationPath)) {
                 VaultStorage.copyUriToPath(context, sourceUri, destinationPath)
             } else {
-                val destDir = if (dir.isNotEmpty()) "${vaultPath.trimEnd('/')}/$dir" else vaultPath.trimEnd('/')
-                File(destDir).mkdirs()
-                val destFile = File(destDir, fileName)
-                context.contentResolver.openInputStream(sourceUri)?.use { input ->
-                    FileOutputStream(destFile).use { output -> input.copyTo(output) }
-                } != null
+                val bytes = context.contentResolver.openInputStream(sourceUri)?.use { it.readBytes() }
+                    ?: return null
+                FileUtil.saveBytesResult(
+                    path = destinationPath,
+                    bytes = bytes,
+                    rejectDifferentExisting = true,
+                ).succeeded
             }
             if (!copied) return null
+            ledger.edit().putString(ledgerKey, relativePath).apply()
             // 返回相对路径
             relativePath
         } catch (e: Exception) {
@@ -188,31 +194,35 @@ object ImageUtil {
         return try {
             if (!sourceFile.isFile) return null
             val ext = sourceFile.extension.takeIf { it.isNotBlank() }?.let { ".${it}" } ?: ".bin"
-            val fileName = generateFileName(
-                namingFormat,
-                sourceFile.nameWithoutExtension,
-                ext,
-                customNamingFormat,
-            )
             val dir = storagePath.trim('/').takeIf { it.isNotBlank() }.orEmpty()
-            val relativePath = if (dir.isNotEmpty()) "$dir/$fileName" else fileName
+            val ledgerKey = attachmentLedgerKey(
+                vaultPath,
+                "local:${sourceFile.absolutePath}:${sourceFile.length()}:${sourceFile.lastModified()}",
+                dir,
+            )
+            val ledger = StorageContextHolder.get()
+                ?.getSharedPreferences(ATTACHMENT_LEDGER_PREFS, Context.MODE_PRIVATE)
+            val relativePath = ledger?.getString(ledgerKey, null) ?: run {
+                val fileName = generateFileName(
+                    namingFormat,
+                    sourceFile.nameWithoutExtension,
+                    ext,
+                    customNamingFormat,
+                )
+                if (dir.isNotEmpty()) "$dir/$fileName" else fileName
+            }
             val destinationPath = VaultPathUtil.resolve(vaultPath, relativePath) ?: return null
             val copied = if (SafVirtualPath.isSafPath(destinationPath)) {
                 VaultStorage.copyLocalFileToPath(nullSafeContext(), sourceFile, destinationPath)
             } else {
-                val destDir = if (dir.isNotEmpty()) {
-                    File(vaultPath.trimEnd('/'), dir)
-                } else {
-                    File(vaultPath.trimEnd('/'))
-                }
-                if (!destDir.exists() && !destDir.mkdirs()) return null
-                val destFile = File(destDir, fileName)
-                sourceFile.inputStream().use { input ->
-                    FileOutputStream(destFile).use { output -> input.copyTo(output) }
-                }
-                true
+                FileUtil.saveBytesResult(
+                    path = destinationPath,
+                    bytes = sourceFile.readBytes(),
+                    rejectDifferentExisting = true,
+                ).succeeded
             }
             if (!copied) return null
+            ledger?.edit()?.putString(ledgerKey, relativePath)?.apply()
             relativePath
         } catch (_: Exception) {
             null
@@ -231,11 +241,15 @@ object ImageUtil {
         linkFormat: String,
         customNamingFormat: String = ""
     ): List<String> {
-        return uris.mapNotNull { uri ->
+        val links = uris.map { uri ->
             val relPath = copyToVault(context, uri, vaultPath, storagePath, namingFormat, linkFormat, customNamingFormat)
             relPath?.let { markdownLink(it, linkFormat) }
         }
+        return if (links.all { it != null }) links.filterNotNull() else emptyList()
     }
+
+    private fun attachmentLedgerKey(vaultPath: String, source: String, directory: String): String =
+        "attachment_${FileFingerprint.sha256("$vaultPath|$directory|$source".toByteArray(Charsets.UTF_8)).take(32)}"
 
     private fun nullSafeContext(): Context =
         StorageContextHolder.get() ?: throw IllegalStateException("SAF context unavailable")

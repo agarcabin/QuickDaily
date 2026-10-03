@@ -1145,14 +1145,31 @@ class AppState(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
 
-            val writeSucceeded = FileUtil.write(snapshot.path, snapshot.saveContent)
-            val writtenFingerprint = if (writeSucceeded) FileUtil.fingerprint(snapshot.path) else null
+            val saveResult = FileUtil.saveTextResult(
+                path = snapshot.path,
+                content = snapshot.saveContent,
+                expectedFingerprint = snapshot.ignoredExternalFingerprint
+                    ?: snapshot.lastLoadedFingerprint
+                    ?: observedFingerprint,
+            )
+            val writeSucceeded = saveResult.succeeded
+            val writtenFingerprint = saveResult.after ?: if (writeSucceeded) FileUtil.fingerprint(snapshot.path) else null
             val writtenMtime = writtenFingerprint?.lastModified ?: if (writeSucceeded) FileUtil.lastModified(snapshot.path) else 0L
             BetaLogger.log(
                 "SaveNow",
-                "identity backend=${VaultStoragePrefs.current(app).backend} target=${snapshot.path} " +
+                "coordinated_save status=${saveResult.status} stage=${saveResult.stage} " +
+                    "backend=${VaultStoragePrefs.current(app).backend} targetKey=${saveResult.targetKey} " +
                     "observedSha256=${observedFingerprint.sha256} writtenSha256=${writtenFingerprint?.sha256.orEmpty()}",
             )
+            if (saveResult.status == com.quickdaily.util.FileSaveStatus.CONFLICT) {
+                readEditorConflict(snapshot.path, observedMtime, observedFingerprint)?.let { conflict ->
+                    synchronized(loadLock) {
+                        if (_todayPath.value == snapshot.path && _isDirty.value) {
+                            _editorConflict.value = conflict
+                        }
+                    }
+                }
+            }
             synchronized(loadLock) {
                 if (writeSucceeded && _todayPath.value == snapshot.path) {
                     _lastLoadedMtime = writtenMtime
@@ -1172,9 +1189,12 @@ class AppState(application: Application) : AndroidViewModel(application) {
             }
             if (writeSucceeded) {
                 WidgetRefreshHelper.refreshAll(app)
-                BetaLogger.log("SaveNow", "written_ok path=${snapshot.path}")
+                BetaLogger.log("SaveNow", "written_ok targetKey=${saveResult.targetKey}")
             } else {
-                BetaLogger.log("SaveNow", "write_failed path=${snapshot.path}")
+                BetaLogger.log(
+                    "SaveNow",
+                    "write_failed status=${saveResult.status} stage=${saveResult.stage} targetKey=${saveResult.targetKey}",
+                )
             }
             } finally {
                 mutationGuard.close()
