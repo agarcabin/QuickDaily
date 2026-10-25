@@ -193,9 +193,13 @@ internal enum class SettingsTab(@androidx.annotation.StringRes val titleRes: Int
 }
 
 // localization-legacy-begin: version logs are deferred from phase one.
+private const val CHANGELOG_2_0_2 = """2.0.2:
+- 调整 附件链接格式 跟随 obsidian 设置
+- 修复 桌面小部件中有序列表被渲染成无序列表的 bug"""
+
 private const val CHANGELOG_2_0_1 = """2.0.1:
-1. 调整 SAF储存方式改为备选
-2. 修复 储存路径异常导致日记文件多次生成"""
+- 调整 SAF储存方式改为备选
+- 修复 储存路径异常导致日记文件多次生成"""
 
 private const val CHANGELOG_2_0 = """2.0:
 • 新增 多语言支持
@@ -1428,9 +1432,8 @@ private fun DiaryStorageTab(
                     },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                 )
-                TextButton(onClick = onPickSafVault) { Text(stringResource(R.string.qd_vault_saf_mode)) }
-
                 AnimatedSettingsVisibility(visible = config.fasCompatibilityMode) {
+                TextButton(onClick = onPickSafVault) { Text(stringResource(R.string.qd_vault_saf_mode)) }
                 OutlinedTextField(
                     value = obsidianVaultId,
                     onValueChange = onObsidianVaultIdChange,
@@ -4270,7 +4273,7 @@ private fun OtherTab(
 
                 Text("更新内容：", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
                 if (showAllChangelog) {
-                Text(CHANGELOG_2_0_1 + "\n\n" + CHANGELOG_2_0 + "\n\n" + CHANGELOG_1_9 + "\n\n" +
+                Text(CHANGELOG_2_0_2 + "\n\n" + CHANGELOG_2_0_1 + "\n\n" + CHANGELOG_2_0 + "\n\n" + CHANGELOG_1_9 + "\n\n" +
                     "1.8:\n" +
                     "• 新增 小部件大小调整支持自适应\n" +
                     "• 新增 任务小部件滴声开关\n" +
@@ -4353,7 +4356,7 @@ private fun OtherTab(
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                 } else {
                 Text(
-                        CHANGELOG_2_0_1,
+                        CHANGELOG_2_0_2,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     )
