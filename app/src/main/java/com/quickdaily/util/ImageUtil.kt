@@ -6,6 +6,10 @@ import android.provider.OpenableColumns
 import java.io.File
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import com.quickdaily.ObsidianConfigSync
+import com.quickdaily.ObsidianFileIndex
+import com.quickdaily.ObsidianLinkPolicy
+import com.quickdaily.ObsidianRules
 
 /** 图片处理工具 */
 object ImageUtil {
@@ -148,13 +152,15 @@ object ImageUtil {
         storagePath: String,
         namingFormat: String,
         linkFormat: String,
-        customNamingFormat: String = ""
+        customNamingFormat: String = "",
+        sourceNote: String? = null,
     ): String? {
         return try {
             val ext = getExtension(context, sourceUri)
             val displayName = getDisplayName(context, sourceUri)
             // 确定存储目录
-            val dir = if (storagePath.isBlank()) "" else storagePath.trim('/')
+            val source = sourceNote ?: ObsidianConfigSync.sourceNote(context, vaultPath)
+            val dir = ObsidianLinkPolicy.attachmentDirectory(storagePath, source) ?: return null
             val ledgerKey = attachmentLedgerKey(vaultPath, sourceUri.toString(), dir)
             val ledger = context.getSharedPreferences(ATTACHMENT_LEDGER_PREFS, Context.MODE_PRIVATE)
             val relativePath = ledger.getString(ledgerKey, null) ?: run {
@@ -175,6 +181,7 @@ object ImageUtil {
             }
             if (!copied) return null
             ledger.edit().putString(ledgerKey, relativePath).apply()
+            ObsidianFileIndex.added(vaultPath, relativePath)
             // 返回相对路径
             relativePath
         } catch (e: Exception) {
@@ -190,11 +197,13 @@ object ImageUtil {
         storagePath: String,
         namingFormat: String,
         customNamingFormat: String = "",
+        sourceNote: String? = null,
     ): String? {
         return try {
             if (!sourceFile.isFile) return null
             val ext = sourceFile.extension.takeIf { it.isNotBlank() }?.let { ".${it}" } ?: ".bin"
-            val dir = storagePath.trim('/').takeIf { it.isNotBlank() }.orEmpty()
+            val source = sourceNote ?: ObsidianConfigSync.sourceNote(nullSafeContext(), vaultPath)
+            val dir = ObsidianLinkPolicy.attachmentDirectory(storagePath, source) ?: return null
             val ledgerKey = attachmentLedgerKey(
                 vaultPath,
                 "local:${sourceFile.absolutePath}:${sourceFile.length()}:${sourceFile.lastModified()}",
@@ -223,6 +232,7 @@ object ImageUtil {
             }
             if (!copied) return null
             ledger?.edit()?.putString(ledgerKey, relativePath)?.apply()
+            ObsidianFileIndex.added(vaultPath, relativePath)
             relativePath
         } catch (_: Exception) {
             null
@@ -239,11 +249,20 @@ object ImageUtil {
         storagePath: String,
         namingFormat: String,
         linkFormat: String,
-        customNamingFormat: String = ""
+        customNamingFormat: String = "",
+        sourceNote: String? = null,
+        rules: ObsidianRules? = null,
     ): List<String> {
+        val state = ObsidianConfigSync.state(context, vaultPath)
+        val effective = rules ?: if (state.appLoaded) state.rules else state.rules.copy(
+            attachmentFolder = storagePath, markdownLinks = linkFormat != "obsidian_wikilink")
+        val source = sourceNote ?: ObsidianConfigSync.sourceNote(context, vaultPath, rules = effective)
+        ObsidianFileIndex.request(context, vaultPath)
         val links = uris.map { uri ->
-            val relPath = copyToVault(context, uri, vaultPath, storagePath, namingFormat, linkFormat, customNamingFormat)
-            relPath?.let { markdownLink(it, linkFormat) }
+            val relPath = copyToVault(context, uri, vaultPath, effective.attachmentFolder, namingFormat, linkFormat, customNamingFormat, source)
+            relPath?.let { runCatching { ObsidianLinkPolicy.link(source, it, effective,
+                label = if (!state.appLoaded && linkFormat == "bare") "" else it.substringAfterLast('/').substringBeforeLast('.'),
+                knownPaths = ObsidianFileIndex.paths(vaultPath)) }.getOrNull() }
         }
         return if (links.all { it != null }) links.filterNotNull() else emptyList()
     }

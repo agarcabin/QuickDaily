@@ -29,6 +29,8 @@ data class DiaryConfig(
     val vaultPath: String = "",
     val obsidianConfigUri: String = "",
     val useCustomObsidianConfigPath: Boolean = false,
+    val obsidianConfigFolder: String = ".obsidian",
+    val linkPathFormat: String = "absolute",
     val diaryFolder: String = "Daily",
     val dateFormat: String = "YYYY-MM-DD",
     val templatePath: String = "",
@@ -160,7 +162,8 @@ const val TASK_PERIOD_MONTH = "month"
 /** Obsidian 应用配置（来自 .obsidian/app.json） */
 data class ObsidianAppConfig(
     val attachmentFolderPath: String = "/",
-    val useMarkdownLinks: Boolean = false
+    val useMarkdownLinks: Boolean = false,
+    val newLinkFormat: String = "shortest",
 )
 
 data class ConfigUpdateResult(
@@ -181,6 +184,42 @@ class AppState(application: Application) : AndroidViewModel(application) {
 
     private val _config = MutableStateFlow(loadConfig())
     val config: StateFlow<DiaryConfig> = _config.asStateFlow()
+    private val _obsidianSync = MutableStateFlow(ObsidianConfigSync.state(app))
+    val obsidianSync: StateFlow<ObsidianSyncState> = _obsidianSync.asStateFlow()
+    private var configRefreshJob: kotlinx.coroutines.Job? = null
+    private var configRefreshIdentity: List<Any>? = null
+    private var deferredConfigReload = false
+
+    fun refreshObsidianConfig() {
+        val cfg = _config.value
+        val identity = listOf(cfg.vaultPath, cfg.obsidianConfigFolder, cfg.obsidianConfigUri, cfg.useCustomObsidianConfigPath)
+        if (configRefreshJob?.isActive == true && identity == configRefreshIdentity) return
+        configRefreshJob?.cancel()
+        configRefreshIdentity = identity
+        configRefreshJob = viewModelScope.launch { syncObsidianConfig() }
+    }
+
+    suspend fun syncObsidianConfig(): ObsidianSyncState {
+        val source = _config.value
+        val root = source.vaultPath
+        val state = ObsidianConfigSync.refresh(app)
+        kotlinx.coroutines.withContext(Dispatchers.Main) {
+            val current = _config.value
+            if (current.vaultPath == root && current.obsidianConfigFolder == source.obsidianConfigFolder &&
+                current.obsidianConfigUri == source.obsidianConfigUri && current.useCustomObsidianConfigPath == source.useCustomObsidianConfigPath) {
+                val previous = _config.value
+                val next = loadConfig()
+                _config.value = next
+                _obsidianSync.value = state
+                ObsidianFileIndex.request(app, root)
+                if (previous.requiresEditorReloadComparedTo(next)) {
+                    if (_isDirty.value) deferredConfigReload = true else loadEditorTarget(_editorTargetRelativePath.value)
+                    WidgetRefreshHelper.refreshAll(app)
+                }
+            }
+        }
+        return state
+    }
 
     private val _diaryContent = MutableStateFlow("")
     val diaryContent: StateFlow<String> = _diaryContent.asStateFlow()
@@ -300,6 +339,8 @@ class AppState(application: Application) : AndroidViewModel(application) {
         return DiaryConfig(
             vaultPath = vaultStorage.rootPath,
             obsidianConfigUri = obsidianConfigUri,
+            obsidianConfigFolder = ObsidianConfigSync.configFolder(prefs),
+            linkPathFormat = prefs.getString("link_path_format", "absolute").orEmpty(),
             useCustomObsidianConfigPath = if (prefs.contains("use_custom_obsidian_config_path")) {
                 prefs.getBoolean("use_custom_obsidian_config_path", false)
             } else {
@@ -387,14 +428,18 @@ class AppState(application: Application) : AndroidViewModel(application) {
             ),
             widgetOpacity = prefs.getInt("widget_opacity", WidgetAppearance.DEFAULT_OPACITY_PERCENT).coerceIn(0, 100),
             floatingOpacity = prefs.getInt(FloatingNoteAppearance.PREF_OPACITY, FloatingNoteAppearance.DEFAULT_OPACITY_PERCENT).coerceIn(0, 100),
-        )
+        ).let { ObsidianConfigSync.applyCached(app, it) }
     }
 
     private fun normalizeConfig(raw: DiaryConfig): DiaryConfig = DiaryConfig(
         vaultPath = raw.vaultPath.trim(),
         obsidianConfigUri = raw.obsidianConfigUri.trim(),
         useCustomObsidianConfigPath = raw.useCustomObsidianConfigPath,
-        diaryFolder = raw.diaryFolder.trim().ifBlank { "Daily" },
+        obsidianConfigFolder = raw.obsidianConfigFolder.trim().takeIf {
+            it.startsWith('.') && it != "." && !it.contains('/') && !it.contains('\\') && !it.contains(':')
+        } ?: ".obsidian",
+        linkPathFormat = raw.linkPathFormat,
+        diaryFolder = raw.diaryFolder.trim(),
         dateFormat = raw.dateFormat.trim().ifBlank { "YYYY-MM-DD" },
         templatePath = raw.templatePath.trim(),
         anchorText = raw.anchorText,
@@ -432,7 +477,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
         widgetBackgroundColor = raw.widgetBackgroundColor,
         floatingOpacity = raw.floatingOpacity.coerceIn(0, 100),
         widgetOpacity = raw.widgetOpacity.coerceIn(0, 100),
-    )
+    ).let { ObsidianConfigSync.applyCached(app, it) }
 
     private fun persistConfig(config: DiaryConfig) {
         val vaultEditor = prefs.edit()
@@ -460,6 +505,8 @@ class AppState(application: Application) : AndroidViewModel(application) {
         vaultEditor
             .putString("obsidian_config_uri", config.obsidianConfigUri)
             .putBoolean("use_custom_obsidian_config_path", config.useCustomObsidianConfigPath)
+            .putString("obsidian_config_folder", config.obsidianConfigFolder)
+            .putString("link_path_format", config.linkPathFormat)
             .putString("diary_folder", config.diaryFolder)
             .putString("date_format", config.dateFormat)
             .putString("template_path", config.templatePath)
@@ -518,7 +565,9 @@ class AppState(application: Application) : AndroidViewModel(application) {
             val previous = loadConfig()
             val current = normalizeConfig(change(previous))
             persistConfig(current)
+            ObsidianConfigSync.rememberSettings(app, current)
             _config.value = current
+            _obsidianSync.value = ObsidianConfigSync.state(app, current.vaultPath)
             ConfigUpdateResult(
                 previous = previous,
                 current = current,
@@ -535,8 +584,12 @@ class AppState(application: Application) : AndroidViewModel(application) {
                 "systemSidebarSupport=${result.current.systemSidebarSupport} hiddenDisplayTexts=${result.current.hiddenDisplayTexts.size}",
         )
         if (result.previous.requiresEditorReloadComparedTo(result.current)) {
-            loadEditorTarget(_editorTargetRelativePath.value)
+            if (_isDirty.value) deferredConfigReload = true else loadEditorTarget(_editorTargetRelativePath.value)
         }
+        if (result.previous.vaultPath != result.current.vaultPath ||
+            result.previous.obsidianConfigUri != result.current.obsidianConfigUri ||
+            result.previous.useCustomObsidianConfigPath != result.current.useCustomObsidianConfigPath ||
+            result.previous.obsidianConfigFolder != result.current.obsidianConfigFolder) refreshObsidianConfig()
         if (!VaultStoragePrefs.needsLegacyUpgrade(app)) {
             _vaultUpgrade.value = null
             upgradeCandidate = null
@@ -640,8 +693,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
     fun todayFilePath(): String {
         val cfg = _config.value
         val date = DateUtil.todayStr(cfg.dateFormat)
-        val base = cfg.vaultPath.trimEnd('/')
-        return "$base/${cfg.diaryFolder.trimEnd('/')}/${date}.md"
+        return VaultPathUtil.resolve(cfg.vaultPath, VaultPathUtil.dailyRelativePath(cfg.diaryFolder, date)).orEmpty()
     }
 
     fun loadToday() = loadEditorTarget("")
@@ -1248,6 +1300,12 @@ class AppState(application: Application) : AndroidViewModel(application) {
                 }
             }
             if (writeSucceeded) {
+                viewModelScope.launch {
+                    if (deferredConfigReload && !_isDirty.value) {
+                        deferredConfigReload = false
+                        loadEditorTarget(_editorTargetRelativePath.value)
+                    }
+                }
                 WidgetRefreshHelper.refreshAll(app)
                 BetaLogger.log("SaveNow", "written_ok targetKey=${saveResult.targetKey}")
             } else {

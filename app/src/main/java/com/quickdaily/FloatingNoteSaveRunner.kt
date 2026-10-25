@@ -21,6 +21,7 @@ internal data class FloatingNoteSaveRequest(
     val target: String?,
     val vault: String,
     val path: String,
+    val rules: ObsidianRules? = null,
 ) {
     fun matches(text: String, images: List<Uri>, attachments: List<Uri>, target: String?): Boolean =
         this.text == text && this.images == images && this.attachments == attachments && this.target == target
@@ -33,12 +34,12 @@ internal data class FloatingNoteSaveRequest(
         fun capture(context: Context, text: String, images: List<Uri>, attachments: List<Uri>, target: String?): FloatingNoteSaveRequest {
             val prefs = context.getSharedPreferences("QuickDaily", Context.MODE_PRIVATE)
             val vault = VaultStoragePrefs.current(context).rootPath
+            val rules = ObsidianConfigSync.rules(context, vault)
             val path = if (target.isNullOrBlank()) {
-                val relative = VaultPathUtil.dailyRelativePath(prefs.getString("diary_folder", "Daily").orEmpty(),
-                    DateUtil.todayStr(prefs.getString("date_format", "YYYY-MM-DD").orEmpty()))
+                val relative = VaultPathUtil.dailyRelativePath(rules.diaryFolder, DateUtil.todayStr(rules.dateFormat))
                 VaultPathUtil.resolveTarget(vault, relative.trimStart('/')).orEmpty()
             } else VaultPathUtil.resolveTarget(vault, target).orEmpty()
-            return FloatingNoteSaveRequest(text, images.toList(), attachments.toList(), target, vault, path)
+            return FloatingNoteSaveRequest(text, images.toList(), attachments.toList(), target, vault, path, rules)
         }
     }
 }

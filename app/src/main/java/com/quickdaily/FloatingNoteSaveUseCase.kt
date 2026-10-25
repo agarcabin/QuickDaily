@@ -42,8 +42,9 @@ class FloatingNoteSaveUseCase(private val context: Context) {
             return@withContext FloatingNoteSaveResult.Failed(UiText.Resource(R.string.qd_editor_vault_path_required))
         }
 
-        val diaryFolder = prefs.getString("diary_folder", "Daily").orEmpty()
-        val dateFormat = prefs.getString("date_format", "YYYY-MM-DD").orEmpty()
+        val rules = request?.rules ?: ObsidianConfigSync.rules(context, vaultPath)
+        val diaryFolder = rules.diaryFolder
+        val dateFormat = rules.dateFormat
         val path = request?.path ?: if (targetRelativePath.isNullOrBlank()) {
             VaultPathUtil.resolve(vaultPath, VaultPathUtil.dailyRelativePath(diaryFolder, DateUtil.todayStr(dateFormat)))
                 ?: return@withContext FloatingNoteSaveResult.Failed(UiText.Resource(R.string.qd_editor_target_unavailable))
@@ -52,6 +53,7 @@ class FloatingNoteSaveUseCase(private val context: Context) {
                 ?: return@withContext FloatingNoteSaveResult.Failed(UiText.Resource(R.string.qd_editor_target_unavailable))
         }
         val anchor = prefs.getString("anchor_text", "").orEmpty().trim()
+        val sourceNote = ObsidianConfigSync.sourceNote(context, vaultPath, path, rules)
         val timestampFormat = prefs.getString("timestamp_format", "list_time").orEmpty()
         val addAnchorIfMissing = prefs.getBoolean("add_anchor_if_missing", true)
         val timestampOrder = prefs.getString("timestamp_order", "above").orEmpty()
@@ -112,7 +114,7 @@ class FloatingNoteSaveUseCase(private val context: Context) {
         var body = if (parsed.hasFrontmatter) parsed.body else existing
 
         if (existing.isEmpty() || (parsed.hasFrontmatter && parsed.body.isBlank())) {
-            val templatePath = prefs.getString("template_path", "").orEmpty()
+            val templatePath = rules.templatePath
             if (templatePath.isNotBlank()) {
                 val template = VaultPathUtil.resolveTarget(vaultPath, templatePath) ?: templatePath
                 val templateContent = when (val read = FileUtil.readResult(template)) {
@@ -130,14 +132,15 @@ class FloatingNoteSaveUseCase(private val context: Context) {
 
         var resolvedLine = line
         for (uri in pendingAttachments) {
-            val attachStoragePath = prefs.getString("image_storage_path", "").orEmpty()
+            val attachStoragePath = rules.attachmentFolder
             val relPath = runCatching {
-                ImageUtil.copyToVault(context, uri, vaultPath, attachStoragePath, "original", "obsidian_wikilink")
+                ImageUtil.copyToVault(context, uri, vaultPath, attachStoragePath, "original", "obsidian_wikilink", sourceNote = sourceNote)
             }.getOrNull()
             if (relPath.isNullOrBlank()) {
                 return@withContext FloatingNoteSaveResult.Failed(UiText.Resource(R.string.qd_editor_attachment_save_failed))
             }
-            resolvedLine = resolvedLine.replace(uri.toString(), relPath)
+            val link = ObsidianLinkPolicy.link(sourceNote, relPath, rules, knownPaths = ObsidianFileIndex.paths(vaultPath))
+            resolvedLine = resolvedLine.replace("![[${uri}]]", link).replace(uri.toString(), relPath)
         }
 
         val imageLinks = if (selectedImages.isNotEmpty()) {
@@ -146,10 +149,11 @@ class FloatingNoteSaveUseCase(private val context: Context) {
                     context,
                     selectedImages,
                     vaultPath,
-                    prefs.getString("image_storage_path", "").orEmpty(),
+                    rules.attachmentFolder,
                     prefs.getString("image_naming_format", "timestamp_ext").orEmpty(),
-                    prefs.getString("image_link_format", "described").orEmpty(),
-                    prefs.getString("image_custom_naming_format", "").orEmpty()
+                    if (rules.markdownLinks) "described" else "obsidian_wikilink",
+                    prefs.getString("image_custom_naming_format", "").orEmpty(),
+                    sourceNote = sourceNote, rules = rules,
                 )
             }.getOrDefault(emptyList())
             if (links.isEmpty()) return@withContext FloatingNoteSaveResult.Failed(UiText.Resource(R.string.qd_editor_image_save_failed))

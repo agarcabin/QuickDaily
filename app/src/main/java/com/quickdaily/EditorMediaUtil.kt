@@ -9,8 +9,10 @@ import com.quickdaily.util.VaultStoragePrefs
 import java.io.File
 
 object EditorMediaUtil {
-    fun imageLink(context: Context, uri: Uri): String? {
+    fun imageLink(context: Context, uri: Uri, targetPath: String? = null): String? {
         val prefs = context.getSharedPreferences("QuickDaily", Context.MODE_PRIVATE)
+        val vault = VaultStoragePrefs.current(context).rootPath
+        val rules = ObsidianConfigSync.rules(context, vault)
         return ImageUtil.processImages(
             context = context,
             uris = listOf(uri),
@@ -19,19 +21,25 @@ object EditorMediaUtil {
             namingFormat = prefs.getString("image_naming_format", "timestamp_original").orEmpty(),
             linkFormat = prefs.getString("image_link_format", "described").orEmpty(),
             customNamingFormat = prefs.getString("image_custom_naming_format", "").orEmpty(),
+            sourceNote = ObsidianConfigSync.sourceNote(context, vault, targetPath, rules),
+            rules = rules,
         ).singleOrNull()
     }
 
-    fun audioLink(context: Context, file: File): String? {
+    fun audioLink(context: Context, file: File, targetPath: String? = null): String? {
         val prefs = context.getSharedPreferences("QuickDaily", Context.MODE_PRIVATE)
+        val vault = VaultStoragePrefs.current(context).rootPath
+        val rules = ObsidianConfigSync.rules(context, vault)
+        val source = ObsidianConfigSync.sourceNote(context, vault, targetPath, rules)
         val relativePath = ImageUtil.copyLocalFileToVault(
             sourceFile = file,
             vaultPath = VaultStoragePrefs.current(context).rootPath,
-            storagePath = prefs.getString("image_storage_path", "").orEmpty(),
+            storagePath = rules.attachmentFolder,
             namingFormat = prefs.getString("image_naming_format", "timestamp_original").orEmpty(),
             customNamingFormat = prefs.getString("image_custom_naming_format", "").orEmpty(),
+            sourceNote = source,
         ) ?: return null
-        return audioLinkForRelativePath(relativePath)
+        return ObsidianLinkPolicy.link(source, relativePath, rules, knownPaths = ObsidianFileIndex.paths(vault))
     }
 
     fun audioLinkForRelativePath(relativePath: String): String =

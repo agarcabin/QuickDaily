@@ -18,6 +18,8 @@ class QuickDailyApp : Application() {
         super.onCreate()
         instance = this
         StorageContextHolder.init(this)
+        ObsidianConfigSync.initialize(this)
+        ObsidianConfigSync.refreshAsync(this)
         // A stopped SAF provider must never block Application.onCreate or all entry points freeze.
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             runCatching {

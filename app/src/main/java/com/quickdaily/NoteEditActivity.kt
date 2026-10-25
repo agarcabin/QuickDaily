@@ -339,7 +339,7 @@ class NoteEditActivity : LocalizedComponentActivity() {
         }
         lifecycleScope.launch(Dispatchers.IO) {
             val links = EditorImageInsertPolicy.processInSelectionOrder(uris) { uri ->
-                runCatching { EditorMediaUtil.imageLink(this@NoteEditActivity, uri) }
+                runCatching { EditorMediaUtil.imageLink(this@NoteEditActivity, uri, targetRelativePath) }
                     .onFailure { error ->
                         BetaLogger.logException("FloatingNote/Picker", "image_process_failed uri=$uri", error)
                     }
@@ -390,6 +390,7 @@ class NoteEditActivity : LocalizedComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ObsidianConfigSync.refreshAsync(this)
         fullScreen = intent.getBooleanExtra(EXTRA_FULLSCREEN, false)
         BetaLogger.init(this, "NoteEditActivity")
         floatingSource = intent.getStringExtra("floating_source")
@@ -714,7 +715,7 @@ class NoteEditActivity : LocalizedComponentActivity() {
         pendingCameraFile = null
         if (success && uri != null) {
             lifecycleScope.launch(Dispatchers.IO) {
-                val link = runCatching { EditorMediaUtil.imageLink(this@NoteEditActivity, uri) }.getOrNull()
+                val link = runCatching { EditorMediaUtil.imageLink(this@NoteEditActivity, uri, targetRelativePath) }.getOrNull()
                 withContext(Dispatchers.Main) { if (link != null) insertMediaLink(link) }
             }
         } else {
@@ -1552,7 +1553,7 @@ fun NoteEditDialog(
 
     fun selectWikilink(candidate: WikilinkCandidate) {
         val currentTrigger = wikilinkTrigger ?: return
-        val replacement = candidate.insertionText
+        val replacement = ObsidianCompletion.link(neCtx, candidate, targetPath) ?: return
         val newText = tfv.text.substring(0, currentTrigger.start) + replacement + tfv.text.substring(currentTrigger.replaceEnd)
         applyTextChange(TextFieldValue(newText, TextRange(currentTrigger.start + replacement.length)), forceUndo = true)
         WikilinkRecentStore.record(neCtx, candidate)

@@ -319,20 +319,22 @@ class MainActivity : LocalizedComponentActivity() {
             android.widget.Toast.makeText(this, getString(R.string.qd_main_share_setup_required), android.widget.Toast.LENGTH_LONG).show()
             return
         }
+        val shareRules = ObsidianConfigSync.rules(this, vaultPath)
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
                 SharedDocumentImporter.import(
                     context = this@MainActivity,
                     uris = uris,
                     vaultPath = vaultPath,
-                    storagePath = prefs.getString("image_storage_path", "").orEmpty(),
+                    storagePath = shareRules.attachmentFolder,
+                    rules = shareRules,
                 )
             }
             if (result.links.isEmpty()) {
                 android.widget.Toast.makeText(this@MainActivity, getString(R.string.qd_main_shared_file_save_failed), android.widget.Toast.LENGTH_LONG).show()
                 return@launch
             }
-            appendSharedBlockToDiary(text, result.links)
+            appendSharedBlockToDiary(text, result.links, vaultPath, shareRules)
             android.widget.Toast.makeText(
                 this@MainActivity,
                 getString(R.string.qd_main_shared_files_saved, result.links.size, result.total),
@@ -341,16 +343,17 @@ class MainActivity : LocalizedComponentActivity() {
         }
     }
 
-    private fun appendSharedBlockToDiary(text: String?, links: List<String>) {
+    private fun appendSharedBlockToDiary(text: String?, links: List<String>,
+        vaultPath: String = VaultStoragePrefs.current(this).rootPath,
+        shareRules: ObsidianRules = ObsidianConfigSync.rules(this, vaultPath)) {
         val prefs = getSharedPreferences("QuickDaily", 0)
-        val vaultPath = VaultStoragePrefs.current(this).rootPath
-        val diaryFolder = prefs.getString("diary_folder", "Daily").orEmpty()
-        val dateFormat = prefs.getString("date_format", "YYYY-MM-DD").orEmpty()
+        val diaryFolder = shareRules.diaryFolder
+        val dateFormat = shareRules.dateFormat
         val timestampFormat = prefs.getString("timestamp_format", "list_time").orEmpty()
         val anchor = prefs.getString("anchor_text", "").orEmpty().trim()
         val addAnchorIfMissing = prefs.getBoolean("add_anchor_if_missing", false)
         val timestampOrder = prefs.getString("timestamp_order", "below").orEmpty()
-        val path = "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/${com.quickdaily.util.DateUtil.todayStr(dateFormat)}.md"
+        val path = VaultPathUtil.resolve(vaultPath, VaultPathUtil.dailyRelativePath(diaryFolder, com.quickdaily.util.DateUtil.todayStr(dateFormat))) ?: return
         val lines = buildList {
             text?.takeIf(String::isNotBlank)?.let { value ->
                 add(when (timestampFormat) {
@@ -373,7 +376,7 @@ class MainActivity : LocalizedComponentActivity() {
             val initialFingerprint = com.quickdaily.util.FileUtil.fingerprint(path)
             var existing = com.quickdaily.util.FileUtil.read(path)
             if (existing.isBlank()) {
-                val template = prefs.getString("template_path", "").orEmpty()
+                val template = shareRules.templatePath
                 if (template.isNotBlank()) {
                     val templatePath = VaultPathUtil.resolveTarget(vaultPath, template) ?: template
                     existing = com.quickdaily.util.FileUtil.readOrNull(templatePath).orEmpty()
@@ -422,14 +425,15 @@ class MainActivity : LocalizedComponentActivity() {
             return
         }
         
-        val diaryFolder = prefs.getString("diary_folder", "Daily") ?: "Daily"
-        val dateFormat = prefs.getString("date_format", "YYYY-MM-DD") ?: "YYYY-MM-DD"
+        val shareRules = ObsidianConfigSync.rules(this, vaultPath)
+        val diaryFolder = shareRules.diaryFolder
+        val dateFormat = shareRules.dateFormat
         val timestampFormat = prefs.getString("timestamp_format", "list_time") ?: "list_time"
         val addAnchorIfMissing = prefs.getBoolean("add_anchor_if_missing", false)
         val timestampOrder = prefs.getString("timestamp_order", "below") ?: "below"
         val anchor = (prefs.getString("anchor_text", "") ?: "").trim()
         val d = com.quickdaily.util.DateUtil.todayStr(dateFormat)
-        val path = "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/$d.md"
+        val path = VaultPathUtil.resolve(vaultPath, VaultPathUtil.dailyRelativePath(diaryFolder, d)) ?: return
 
         val mutationGuard = com.quickdaily.util.FileUtil.acquirePathMutation(path)
         try {
@@ -455,7 +459,7 @@ class MainActivity : LocalizedComponentActivity() {
 
         // 今日文件不存在或为空时，从模板加载
         if (existing.isEmpty() || (parsed.hasFrontmatter && parsed.body.isBlank())) {
-            val tplPathPref = prefs.getString("template_path", "") ?: ""
+            val tplPathPref = shareRules.templatePath
             if (tplPathPref.isNotBlank()) {
                 val tplPath = VaultPathUtil.resolveTarget(vaultPath, tplPathPref) ?: tplPathPref
                 val tplContent = com.quickdaily.util.FileUtil.readOrNull(tplPath)
@@ -551,16 +555,18 @@ class MainActivity : LocalizedComponentActivity() {
         val namingFormat = prefs.getString("image_naming_format", "timestamp_ext") ?: "timestamp_ext"
         val linkFormat = prefs.getString("image_link_format", "described") ?: "described"
         val customNamingFormat = prefs.getString("image_custom_naming_format", "") ?: ""
-        val diaryFolder = prefs.getString("diary_folder", "Daily") ?: "Daily"
-        val dateFormat = prefs.getString("date_format", "YYYY-MM-DD") ?: "YYYY-MM-DD"
+        val shareRules = ObsidianConfigSync.rules(this, vaultPath)
+        val diaryFolder = shareRules.diaryFolder
+        val dateFormat = shareRules.dateFormat
         val textAnchor = (prefs.getString("anchor_text", "") ?: "").trim()
         val addAnchorIfMissing = prefs.getBoolean("add_anchor_if_missing", false)
         val timestampOrder = prefs.getString("timestamp_order", "below") ?: "below"
         val d = com.quickdaily.util.DateUtil.todayStr(dateFormat)
-        val path = "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/$d.md"
+        val path = VaultPathUtil.resolve(vaultPath, VaultPathUtil.dailyRelativePath(diaryFolder, d)) ?: return
 
         // 处理图片
-        val links = ImageUtil.processImages(this, uris, vaultPath, storagePath, namingFormat, linkFormat, customNamingFormat)
+        val links = ImageUtil.processImages(this, uris, vaultPath, storagePath, namingFormat, linkFormat, customNamingFormat,
+            sourceNote = ObsidianConfigSync.sourceNote(this, vaultPath, path, shareRules), rules = shareRules)
         if (links.isEmpty()) {
             android.widget.Toast.makeText(this, getString(R.string.qd_main_copy_image_failed), android.widget.Toast.LENGTH_SHORT).show()
             return
@@ -724,6 +730,7 @@ class MainActivity : LocalizedComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (::appState.isInitialized) appState.refreshObsidianConfig()
         appState.preferLocalVault()
         BetaLogger.log("Lifecycle", "onResume")
         com.quickdaily.QuickDailyReadWidget.scheduleMidnightRefresh(this)

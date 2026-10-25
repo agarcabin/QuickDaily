@@ -135,14 +135,18 @@ internal object SharedPayloadParser {
 }
 
 internal object SharedDocumentImporter {
-    fun import(context: Context, uris: List<Uri>, vaultPath: String, storagePath: String): DocumentImportResult {
+    fun import(context: Context, uris: List<Uri>, vaultPath: String, storagePath: String,
+        rules: ObsidianRules = ObsidianConfigSync.rules(context, vaultPath),
+        sourceNote: String = ObsidianConfigSync.sourceNote(context, vaultPath, rules = rules)): DocumentImportResult {
         if (uris.isEmpty()) return DocumentImportResult(0, emptyList(), 0)
+        val directoryPath = ObsidianLinkPolicy.attachmentDirectory(rules.attachmentFolder, sourceNote)
+            ?: return DocumentImportResult(uris.size, emptyList(), uris.size)
         if (SafVirtualPath.isSafPath(vaultPath)) {
-            return importSaf(context, uris, vaultPath, storagePath)
+            return importSaf(context, uris, vaultPath, directoryPath, rules, sourceNote)
         }
         val root = runCatching { File(vaultPath).canonicalFile }.getOrNull()
             ?: return DocumentImportResult(uris.size, emptyList(), uris.size)
-        val requestedDirectory = VaultPathUtil.resolveTarget(vaultPath, storagePath)
+        val requestedDirectory = VaultPathUtil.resolveTarget(vaultPath, directoryPath)
             ?.let(::File)
             ?: root
         val directory = runCatching { requestedDirectory.canonicalFile }.getOrNull()
@@ -176,7 +180,8 @@ internal object SharedDocumentImporter {
                 return@forEach
             }
             val relativePath = destination.relativeTo(root).path.replace('\\', '/')
-            links += "![[${relativePath}]]"
+            ObsidianFileIndex.added(vaultPath, relativePath)
+            links += ObsidianLinkPolicy.link(sourceNote, relativePath, rules, knownPaths = ObsidianFileIndex.paths(vaultPath))
         }
         return DocumentImportResult(uris.size, links, failed)
     }
@@ -186,6 +191,8 @@ internal object SharedDocumentImporter {
         uris: List<Uri>,
         vaultPath: String,
         storagePath: String,
+        rules: ObsidianRules,
+        sourceNote: String,
     ): DocumentImportResult {
         val cleanDirectory = storagePath.trim().trim('/').takeIf { it.isNotBlank() }.orEmpty()
         val links = mutableListOf<String>()
@@ -214,7 +221,8 @@ internal object SharedDocumentImporter {
                 BetaLogger.log("SharedDocument", "saf_copy_failed uri=$uri destination=$destination")
                 return@forEach
             }
-            links += "![[${relativePath.replace('\\', '/')}]]"
+            ObsidianFileIndex.added(vaultPath, relativePath)
+            links += ObsidianLinkPolicy.link(sourceNote, relativePath, rules, knownPaths = ObsidianFileIndex.paths(vaultPath))
         }
         return DocumentImportResult(uris.size, links, failed)
     }

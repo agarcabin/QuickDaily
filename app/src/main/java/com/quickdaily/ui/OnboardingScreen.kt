@@ -135,24 +135,9 @@ fun OnboardingScreen(
         if (path.isBlank()) return
         detectionMessage = context.getString(com.quickdaily.R.string.qd_onboarding_reading_config)
         val detection = try {
-            val daily = appState.loadObsidianConfig(path)
-            val obsidianApp = appState.loadObsidianAppConfig(path)
-            appState.updateConfig { current ->
-                if (daily != null) {
-                    current.copy(
-                        vaultPath = path,
-                        diaryFolder = daily.diaryFolder,
-                        dateFormat = daily.dateFormat,
-                        templatePath = daily.templatePath,
-                        imageStoragePath = obsidianApp?.attachmentFolderPath
-                            ?.let { if (it == "/") "" else it.trimStart('/') }
-                            ?: current.imageStoragePath,
-                        imageLinkFormat = if (obsidianApp?.useMarkdownLinks == true) "described" else current.imageLinkFormat,
-                    )
-                } else {
-                    current.copy(vaultPath = path)
-                }
-            }
+            appState.updateConfig { current -> current.copy(vaultPath = path) }
+            val synced = appState.syncObsidianConfig()
+            val daily = synced.takeIf { it.dailyLoaded || it.appLoaded }
             val manageFiles = PermissionPolicy.all().firstOrNull { it.id == PermissionPolicy.MANAGE_FILES_ID }
             val permissionMissing = manageFiles?.let {
                 safePermissionStatus(context, it) == PermissionStatus.NOT_GRANTED

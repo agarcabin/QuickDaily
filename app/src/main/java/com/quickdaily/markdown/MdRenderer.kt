@@ -37,6 +37,14 @@ import com.quickdaily.SourceDocument
 import com.quickdaily.TaskActionRef
 import com.quickdaily.util.SafVirtualPath
 import com.quickdaily.util.VaultStorage
+import com.quickdaily.util.VaultPathUtil
+import com.quickdaily.ObsidianConfigSync
+import com.quickdaily.ObsidianFileIndex
+import com.quickdaily.ObsidianLinkPolicy
+import com.quickdaily.BoundedLoader
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 // ── Renderer ────────────────────────────────────────────
 
@@ -45,6 +53,7 @@ fun MdRenderer(
     text: String,
     vaultBasePath: String? = null,
     imageStoragePath: String? = null,
+    sourceNotePath: String? = null,
     hiddenDisplayTexts: List<String> = emptyList(),
     onToggleCheckbox: ((TaskActionRef) -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -54,6 +63,8 @@ fun MdRenderer(
     }
     val colors = MaterialTheme.colorScheme
     val context = LocalContext.current
+    val indexedPaths by ObsidianFileIndex.entries.collectAsStateWithLifecycle()
+    LaunchedEffect(vaultBasePath) { vaultBasePath?.let { ObsidianFileIndex.request(context, it) } }
     Column(modifier = modifier.fillMaxWidth()) {
         lines.forEach { prepared ->
             if (prepared.collapseLine) return@forEach
@@ -132,20 +143,23 @@ fun MdRenderer(
                     }
                 }
                 is MdLine.Image -> {
-                    val paths = remember(line.path, vaultBasePath, imageStoragePath) {
-                        val primary = resolveImagePath(line.path, vaultBasePath)
-                        val fallback = if (imageStoragePath != null && !line.path.startsWith("/")) {
-                            resolveImagePath("${imageStoragePath.trimEnd('/')}/${line.path.trimStart('/')}", vaultBasePath)
-                        } else null
-                        Pair(primary, fallback)
+                    val known = indexedPaths[vaultBasePath]
+                    val bitmap by produceState<android.graphics.Bitmap?>(null, line, vaultBasePath, sourceNotePath, imageStoragePath, known) {
+                        value = null
+                        value = withContext(Dispatchers.IO) {
+                            runCatching {
+                                val input = listOf(line, vaultBasePath, sourceNotePath, imageStoragePath, known)
+                                imageReader.load("image:${vaultBasePath}:${sourceNotePath}:${line.wiki}:${line.path}", input) {
+                                    val paths = resolveImagePaths(context, line, vaultBasePath, sourceNotePath, imageStoragePath, known.orEmpty())
+                                    ImageRead(paths.firstNotNullOfOrNull { decodeImageBitmap(context, it) })
+                                }.bitmap
+                            }.getOrNull()
+                        }
                     }
-                    val bitmap = remember(paths, context) {
-                        decodeImageBitmap(context, paths.first)
-                            ?: paths.second?.let { decodeImageBitmap(context, it) }
-                    }
-                    if (bitmap != null) {
+                    val loadedBitmap = bitmap
+                    if (loadedBitmap != null) {
                         Image(
-                            bitmap = bitmap.asImageBitmap(),
+                            bitmap = loadedBitmap.asImageBitmap(),
                             contentDescription = line.alt,
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                             contentScale = ContentScale.Fit
@@ -272,7 +286,7 @@ private fun TagHighlightedBasicText(
 sealed class MdLine {
     data object Blank : MdLine()
     data class Heading(val level: Int, val text: String) : MdLine()
-    data class Image(val path: String, val alt: String) : MdLine()
+    data class Image(val path: String, val alt: String, val wiki: Boolean = false) : MdLine()
     data class Task(
         val index: Int,
         val checked: Boolean,
@@ -287,7 +301,7 @@ sealed class MdLine {
 // ── Parser ───────────────────────────────────────────────
 
 private val ORDERED_LIST_RE = Regex("^\\d+\\.\\s.*")
-private val IMAGE_INLINE_RE = Regex("""^!\[([^\]]*)\]\(([^)]+)\)\s*$""")
+private val IMAGE_INLINE_RE = Regex("""^!\[((?:\\.|[^\]])*)\]\((.+)\)\s*$""")
 private val TOGGLE_CHECK_RE = Regex("- \\[x\\]", RegexOption.IGNORE_CASE)
 private val IMAGE_WIKI_RE = Regex("""^!\[\[([^\]|]+)(?:\|([^\]]*))?\]\]\s*$""")
 
@@ -311,7 +325,7 @@ fun parseLines(markdown: String): List<MdLine> {
                 val match = IMAGE_WIKI_RE.find(trimmed)!!
                 val path = match.groupValues[1]
                 val alt = match.groupValues.getOrElse(2) { "" }
-                result.add(MdLine.Image(path, alt))
+                result.add(MdLine.Image(path, alt, wiki = true))
             }
             // 标题
             trimmed.matches(Regex("^#{1,6} .*")) -> {
@@ -365,15 +379,21 @@ private data class TaskIndentEntry(
 
 // ── 编辑器中切换勾选 ────────────────────────────────────
 
-/** 解析 Markdown 图片路径为本地文件系统绝对路径 */
-private fun resolveImagePath(path: String, vaultBasePath: String?): String {
-    if (vaultBasePath == null) return path
-    // 已经是绝对路径或 URI
-    if (path.startsWith("/") || path.startsWith("file:") || Regex("^[A-Za-z]:").containsMatchIn(path)) {
-        return path
+private val imageReader = BoundedLoader(timeoutMs = 3_000, capacity = 2)
+private data class ImageRead(val bitmap: android.graphics.Bitmap?)
+
+private fun resolveImagePaths(context: android.content.Context, image: MdLine.Image, vault: String?,
+    source: String?, attachmentFolder: String?, known: List<String>): List<String> {
+    if (vault.isNullOrBlank()) return emptyList()
+    val path = image.path.removeSurrounding("<", ">")
+    if (SafVirtualPath.isSafPath(path)) return if (VaultPathUtil.relativePath(vault, path) != null) listOf(path) else emptyList()
+    val local = if (path.startsWith("file:")) ObsidianLinkPolicy.decode(path.removePrefix("file://")) ?: return emptyList() else path
+    if (local.startsWith('/') || Regex("^[A-Za-z]:").containsMatchIn(local)) {
+        return if (VaultPathUtil.relativePath(vault, local) != null) listOf(local) else emptyList()
     }
-    // 相对路径，拼接 vault 根路径
-    return "${vaultBasePath.trimEnd('/')}/${path.trimStart('/')}"
+    val note = ObsidianConfigSync.sourceNote(context, vault, source)
+    return ObsidianLinkPolicy.candidates(path, note, image.wiki, known, attachmentFolder.orEmpty())
+        .mapNotNull { VaultPathUtil.resolve(vault, it) }
 }
 
 private fun decodeImageBitmap(context: android.content.Context, path: String): android.graphics.Bitmap? {
