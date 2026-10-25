@@ -20,6 +20,8 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
 
       - name: Generate debug keystore
         run: |
@@ -28,13 +30,13 @@ jobs:
             -validity 10000 -storepass android -keypass android \
             -dname "CN=Android Debug, O=Android, C=US"
 
-      - name: Build release APK
+      - name: Test and build release APK
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease
+          ./gradlew :app:testDebugUnitTest :app:verifyLocalizationStrict :app:assembleRelease
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: QuickDaily-1.3
+          name: QuickDaily-${{ github.sha }}
           path: app/build/outputs/apk/release/app-release.apk
