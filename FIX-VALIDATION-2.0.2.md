@@ -118,3 +118,13 @@ git diff --check
 SHA-256：`8094b0d22fb85bc3d5c3f53f05902c98e50a58691094def2faaa05f1b5a0046b`。
 
 本轮交付更新后的 Release 安装包供覆盖验证，未替换 GitHub 上版本码 87 的已发行资产或移动原 tag；尚未进行真机交互验收。
+
+## 读取按钮位置与日志圆点调整：2.0.2 / 89
+
+按最新截图反馈，把“从 Obsidian 读取配置”按钮移到自定义配置控件下方、“Obsidian 配置文件路径”标签上方；2.0.2 和 2.0.1 日志统一使用原有圆点 `•` 样式。两个修改不改变配置读取逻辑。
+
+320 项单元测试、严格本地化检查、Release 构建和 `git diff --check` 通过。安装包 `app/build/outputs/apk/release/QuickDaily-2.0.2-layout-release.apk` 的版本为 `2.0.2` / `89`，签名与前版一致，无 debuggable 标记。
+
+SHA-256：`db610f5573fa8c7a2f8798f03f66a6dd2f38f9188f402e79493e724fd8af2c5e`。
+
+本轮未执行真机交互验收，未替换 GitHub 已发行的版本码 87 安装包。

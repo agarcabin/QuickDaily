@@ -194,12 +194,12 @@ internal enum class SettingsTab(@androidx.annotation.StringRes val titleRes: Int
 
 // localization-legacy-begin: version logs are deferred from phase one.
 private const val CHANGELOG_2_0_2 = """2.0.2:
-- 调整 附件链接格式 跟随 obsidian 设置
-- 修复 桌面小部件中有序列表被渲染成无序列表的 bug"""
+• 调整 附件链接格式 跟随 obsidian 设置
+• 修复 桌面小部件中有序列表被渲染成无序列表的 bug"""
 
 private const val CHANGELOG_2_0_1 = """2.0.1:
-- 调整 SAF储存方式改为备选
-- 修复 储存路径异常导致日记文件多次生成"""
+• 调整 SAF储存方式改为备选
+• 修复 储存路径异常导致日记文件多次生成"""
 
 private const val CHANGELOG_2_0 = """2.0:
 • 新增 多语言支持
@@ -1454,14 +1454,6 @@ private fun DiaryStorageTab(
 
                 SettingsDivider()
 
-                Button(onClick = { onConfigChange { copy(obsidianConfigFolder = folderDraft) }; onReadObsidianConfig() }, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Default.Folder, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.qd_settings_read_obsidian))
-                }
-
-                SettingsDivider()
-
                 ListItem(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1518,6 +1510,12 @@ private fun DiaryStorageTab(
                         }
                     },
                 )
+                }
+                SettingsDivider()
+                Button(onClick = { onConfigChange { copy(obsidianConfigFolder = folderDraft) }; onReadObsidianConfig() }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Folder, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.qd_settings_read_obsidian))
                 }
                 SettingsDivider()
                 Text(
