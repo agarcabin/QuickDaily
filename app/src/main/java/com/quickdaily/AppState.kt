@@ -30,6 +30,7 @@ data class DiaryConfig(
     val obsidianConfigUri: String = "",
     val useCustomObsidianConfigPath: Boolean = false,
     val obsidianConfigFolder: String = ".obsidian",
+    val fasCompatibilityMode: Boolean = false,
     val linkPathFormat: String = "absolute",
     val diaryFolder: String = "Daily",
     val dateFormat: String = "YYYY-MM-DD",
@@ -339,7 +340,9 @@ class AppState(application: Application) : AndroidViewModel(application) {
         return DiaryConfig(
             vaultPath = vaultStorage.rootPath,
             obsidianConfigUri = obsidianConfigUri,
-            obsidianConfigFolder = ObsidianConfigSync.configFolder(prefs),
+            obsidianConfigFolder = prefs.getString("obsidian_config_folder", ".obsidian").orEmpty()
+                .takeIf(ObsidianConfigFolderPolicy::isValidName) ?: ".obsidian",
+            fasCompatibilityMode = prefs.getBoolean("fas_compatibility_mode", false),
             linkPathFormat = prefs.getString("link_path_format", "absolute").orEmpty(),
             useCustomObsidianConfigPath = if (prefs.contains("use_custom_obsidian_config_path")) {
                 prefs.getBoolean("use_custom_obsidian_config_path", false)
@@ -436,6 +439,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
         obsidianConfigUri = raw.obsidianConfigUri.trim(),
         useCustomObsidianConfigPath = raw.useCustomObsidianConfigPath,
         obsidianConfigFolder = raw.obsidianConfigFolder.trim().takeIf(ObsidianConfigFolderPolicy::isValidName) ?: ".obsidian",
+        fasCompatibilityMode = raw.fasCompatibilityMode,
         linkPathFormat = raw.linkPathFormat,
         diaryFolder = raw.diaryFolder.trim(),
         dateFormat = raw.dateFormat.trim().ifBlank { "YYYY-MM-DD" },
@@ -504,6 +508,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
             .putString("obsidian_config_uri", config.obsidianConfigUri)
             .putBoolean("use_custom_obsidian_config_path", config.useCustomObsidianConfigPath)
             .putString("obsidian_config_folder", config.obsidianConfigFolder)
+            .putBoolean("fas_compatibility_mode", config.fasCompatibilityMode)
             .putString("link_path_format", config.linkPathFormat)
             .putString("diary_folder", config.diaryFolder)
             .putString("date_format", config.dateFormat)

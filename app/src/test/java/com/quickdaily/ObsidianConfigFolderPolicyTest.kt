@@ -4,6 +4,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ObsidianConfigFolderPolicyTest {
+    @Test fun turningOffCustomConfigUsesTheDefaultWithoutErasingTheSavedChoice() {
+        val saved = ".obsidian-mobile"
+        assertEquals(".obsidian", ObsidianConfigFolderPolicy.effectiveName(false, saved))
+        assertEquals(saved, ObsidianConfigFolderPolicy.effectiveName(true, saved))
+        assertEquals(".obsidian", ObsidianConfigFolderPolicy.effectiveName(true, "../outside"))
+    }
+
     @Test fun selectedConfigDirectoryMustBeADirectChildOfTheCurrentVault() {
         assertEquals(".obsidian", ObsidianConfigFolderPolicy.fromLocalSelection("/vault", "/vault/.obsidian"))
         assertEquals(".obsidian-mobile", ObsidianConfigFolderPolicy.fromLocalSelection("/vault", "/vault/.obsidian-mobile"))

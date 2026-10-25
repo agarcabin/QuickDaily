@@ -974,7 +974,8 @@ fun SettingsScreen(
                 return@launch
             }
             runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-            appState.updateConfig { current -> current.copy(vaultPath = requestedVault, obsidianConfigFolder = selectedFolder) }
+            appState.updateConfig { current -> current.copy(vaultPath = requestedVault, obsidianConfigFolder = selectedFolder,
+                useCustomObsidianConfigPath = true) }
             launchObsidianConfigRead(requestedVaultPath = requestedVault)
         }
     }
@@ -1416,8 +1417,20 @@ private fun DiaryStorageTab(
                 )
 
                 Text(stringResource(R.string.qd_vault_local_hint), style = MaterialTheme.typography.bodySmall)
+                ListItem(
+                    headlineContent = { Text(stringResource(R.string.qd_settings_fas_mode)) },
+                    trailingContent = {
+                        Checkbox(checked = config.fasCompatibilityMode,
+                            onCheckedChange = { enabled -> onConfigChange { copy(fasCompatibilityMode = enabled) } })
+                    },
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        onConfigChange { copy(fasCompatibilityMode = !fasCompatibilityMode) }
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                )
                 TextButton(onClick = onPickSafVault) { Text(stringResource(R.string.qd_vault_saf_mode)) }
 
+                AnimatedSettingsVisibility(visible = config.fasCompatibilityMode) {
                 OutlinedTextField(
                     value = obsidianVaultId,
                     onValueChange = onObsidianVaultIdChange,
@@ -1434,6 +1447,7 @@ private fun DiaryStorageTab(
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                 )
+                }
 
                 SettingsDivider()
 
@@ -1487,6 +1501,7 @@ private fun DiaryStorageTab(
                     }
                 }
 
+                AnimatedSettingsVisibility(visible = useCustomObsidianConfigPath) {
                 OutlinedTextField(
                     value = folderDraft,
                     onValueChange = { folderDraft = it },
@@ -1500,6 +1515,7 @@ private fun DiaryStorageTab(
                         }
                     },
                 )
+                }
                 SettingsDivider()
                 Text(
                     text = stringResource(R.string.qd_settings_config_path),
@@ -1507,7 +1523,8 @@ private fun DiaryStorageTab(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = SettingsContentInset),
                 )
-                val defaultConfigPath = "${vaultPath.trimEnd('/')}/${config.obsidianConfigFolder}/daily-notes.json"
+                val effectiveFolder = com.quickdaily.ObsidianConfigFolderPolicy.effectiveName(useCustomObsidianConfigPath, config.obsidianConfigFolder)
+                val defaultConfigPath = "${vaultPath.trimEnd('/')}/$effectiveFolder/daily-notes.json"
                 val configPathText = if (!useCustomObsidianConfigPath) {
                     defaultConfigPath
                 } else if (obsidianConfigUri.isBlank()) {

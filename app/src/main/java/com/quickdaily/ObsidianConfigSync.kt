@@ -38,8 +38,10 @@ object ObsidianConfigSync {
         }
     }
 
-    fun configFolder(prefs: SharedPreferences): String = prefs.getString("obsidian_config_folder", ".obsidian").orEmpty()
-        .takeIf(ObsidianConfigFolderPolicy::isValidName) ?: ".obsidian"
+    fun configFolder(prefs: SharedPreferences): String = ObsidianConfigFolderPolicy.effectiveName(
+        prefs.getBoolean("use_custom_obsidian_config_path", false),
+        prefs.getString("obsidian_config_folder", ".obsidian").orEmpty(),
+    )
 
     private fun identity(prefs: SharedPreferences, vault: String): String = listOf(vault.trimEnd('/'), configFolder(prefs),
         if (prefs.getBoolean("use_custom_obsidian_config_path", false)) prefs.getString("obsidian_config_uri", "").orEmpty() else "")
@@ -111,7 +113,7 @@ object ObsidianConfigSync {
         val fallback = if (sameVault) ObsidianRules(config.diaryFolder, config.dateFormat, config.templatePath,
             config.imageStoragePath.ifEmpty { "/" }, config.imageLinkFormat != "obsidian_wikilink", config.linkPathFormat) else ObsidianRules()
         // Use the draft's source identity, without temporarily changing global preferences.
-        val id = listOf(config.vaultPath.trimEnd('/'), config.obsidianConfigFolder,
+        val id = listOf(config.vaultPath.trimEnd('/'), ObsidianConfigFolderPolicy.effectiveName(config.useCustomObsidianConfigPath, config.obsidianConfigFolder),
             config.obsidianConfigUri.takeIf { config.useCustomObsidianConfigPath }.orEmpty()).joinToString("\u0000")
         val state = cached(context, id, fallback, sameVault)
         val rules = state.rules

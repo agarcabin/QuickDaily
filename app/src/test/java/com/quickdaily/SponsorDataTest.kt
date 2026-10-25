@@ -27,6 +27,7 @@ class SponsorDataTest {
         assertEquals(null, ranked[2].avatarRes)
         assertEquals("s*y", ranked[3].nickname)
         assertEquals(5, ranked[3].amount)
+        assertEquals(R.drawable.sponsor_avatar_s_y, ranked[3].avatarRes)
         assertTrue(ranked.single { it.id == "sponsor-wei" }.message.contains("QuickDaily和讯飞输入法很好用"))
     }
 

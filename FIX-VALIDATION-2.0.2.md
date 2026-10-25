@@ -2,9 +2,9 @@
 
 日期：2026-10-25。开发分支：`codex/obsidian-config-sync-2.0.2`。基于已发布的 2.0.1（`2f5f1c0`）及工作流修复（`a86fd96`）。
 
-本版完成 OB 配置同步执行计划第 1～5 阶段的代码修改及自动化验证。尚未安装到设备、执行真实 OB 互操作验收或发布 2.0.2。
+本版完成 OB 配置同步执行计划第 1～5 阶段的代码修改及自动化验证。根据用户要求构建正式发行包，版本 `2.0.2` / `87`；尚未安装到设备或执行真实 OB 互操作验收。
 
-最新追加调整：已完成下方“截图反馈调整”，319 项测试通过。初次实现的测试包和验证记录仍保留，最新测试包使用单独文件名区分。
+已完成下方“截图反馈调整”与“正式发行包检查”。本轮共 320 项测试通过；之前的测试包和验证记录保留用于区分。
 
 ## 已实现
 
@@ -33,7 +33,7 @@ git diff --check
 
 另执行了 `:app:lintDebug`。任务成功，但项目设置为不因 lint 错误中止；报告仍有 2 项既有错误，分别位于未修改的 `util/UpdateChecker.kt`（SuspiciousIndentation）和 `FloatingNoteService.kt` 原有 localeReceiver 注册代码（UnspecifiedRegisterReceiverFlag）。本次新增的同步与路径类没有 Error 级别报告。不能把该任务成功表述为零 lint 错误。
 
-## 测试包
+## 初次实现的测试包（历史记录）
 
 - 版本：`2.0.2`，versionCode `86`，applicationId `com.quickdaily`。
 - 文件：`app/build/outputs/apk/debug/QuickDaily-2.0.2-debug.apk`。
@@ -76,8 +76,30 @@ git diff --check
 
 目录选择策略新增两项测试，覆盖仓库内直接子目录、合法自定义目录、仓库外和相似前缀目录、嵌套目录、非法名称与 SAF 相对目录规则；捐赠名单原有排序回归同步更新。全量共 319 项测试通过，0 失败、0 错误、0 跳过。Debug 构建和严格本地化检查通过，`git diff --check` 通过。
 
-最新测试包：`app/build/outputs/apk/debug/QuickDaily-2.0.2-ui-update-debug.apk`，版本仍为 `2.0.2` / `86`。
+该轮测试包：`app/build/outputs/apk/debug/QuickDaily-2.0.2-ui-update-debug.apk`，版本为 `2.0.2` / `86`。
 
 SHA-256：`1efd8396e29223ad45ee730059e2c9cba35792c444dd8dd7d9b5856ac8b93860`。
 
 本轮再次检查 ADB，USB 设备列表和 mDNS 服务列表均为空。尚未在设备实际点击目录选择器、验证新手引导或查看捐赠名单；未安装或发行该包。
+
+## 正式发行包检查：2026-10-25
+
+根据用户最新要求，从原始截图的头像区域提取 137 × 137 PNG，保存为 `drawable/sponsor_avatar_s_y.png` 并关联该捐赠用户；检查最终 APK 的资源表确认头像已被打包。没有把完整交易截图或单号加入仓库。
+
+设置中新增持久化的 FAS 勾选项，仅启用时显示仓库 ID 编辑框；取消时保留 ID。自定义配置目录仅在启用自定义配置路径时显示，关闭时使用默认 `.obsidian`；原自定义目录值保留，重新启用可继续使用。补充默认目录切换测试，捐赠名单回归验证头像资源。
+
+以下检查通过：
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest :app:assembleRelease :app:verifyLocalizationStrict --console=plain
+git diff --check
+```
+
+- 320 项测试，0 失败、0 错误、0 跳过。
+- 严格本地化检查与 Release 构建成功。
+- 正式包 `app/build/outputs/apk/release/QuickDaily-2.0.2.apk`，applicationId `com.quickdaily`，版本 `2.0.2` / `87`，无 debuggable 标记。
+- APK SHA-256：`65aed8c97adb54db0285411bf03824f7bf6f49fc8b822cbce5e5da828c27e74e`，配套 `.apk.sha256` 文件已生成。
+- 签名 SHA-256 与 2.0、2.0.1 一致：`14952748ea7a4a7c60b2689cb1f952b0ee827cc90818bd8498bc9a2303cf9bd3`。
+- 在线更新元数据同步为 2.0.2。正式发布记录见 `RELEASE-2.0.2.md`。
+
+本轮未新增设备证据：USB 和 mDNS 列表均为空。用户提供的截图能确认上一轮界面在其设备上的展示，但不能代替新开关、最终安装包与完整设备矩阵的验收。既有 lint 问题及本记录其他未覆盖项仍保留说明。

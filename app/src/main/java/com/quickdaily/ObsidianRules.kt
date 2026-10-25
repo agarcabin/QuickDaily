@@ -17,6 +17,9 @@ data class ObsidianRules(
 internal data class ObsidianRulesRead(val rules: ObsidianRules, val invalidFields: List<String> = emptyList())
 
 object ObsidianConfigFolderPolicy {
+    fun effectiveName(customEnabled: Boolean, configured: String): String =
+        if (customEnabled && isValidName(configured)) configured else ".obsidian"
+
     fun isValidName(name: String): Boolean = name.startsWith('.') && name !in setOf(".", "..") &&
         name == name.trim() && name.none { it in "/\\:\u0000" }
 
