@@ -360,4 +360,6 @@ Added to home screen</string>
     <string name="qd_ob_custom_daily_source">Custom daily note configuration</string>
     <string name="qd_ob_same_folder">Same folder as the current note</string>
     <string name="qd_ob_subfolder">%1$s subfolder of the current note folder</string>
+    <string name="qd_onboarding_selected_vault_hint">The selected folder is used automatically and requires All files access. You can edit its path in Settings.</string>
+    <string name="qd_ob_config_folder_invalid">Select a configuration folder directly inside the current vault, with a name starting with a dot, such as .obsidian.</string>
 </resources>

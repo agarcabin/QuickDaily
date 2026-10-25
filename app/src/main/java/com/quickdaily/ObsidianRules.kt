@@ -16,6 +16,16 @@ data class ObsidianRules(
 
 internal data class ObsidianRulesRead(val rules: ObsidianRules, val invalidFields: List<String> = emptyList())
 
+object ObsidianConfigFolderPolicy {
+    fun isValidName(name: String): Boolean = name.startsWith('.') && name !in setOf(".", "..") &&
+        name == name.trim() && name.none { it in "/\\:\u0000" }
+
+    fun fromRelativePath(relative: String): String? = relative.takeIf(::isValidName)
+
+    fun fromLocalSelection(vault: String, selected: String): String? =
+        com.quickdaily.util.VaultPathUtil.relativePath(vault, selected)?.let(::fromRelativePath)
+}
+
 internal object ObsidianSyncPolicy {
     fun merge(previous: ObsidianSyncState, dailyRaw: String?, appRaw: String?,
         dailySource: String, appSource: String, dailyFailure: String = "unavailable", appFailure: String = "unavailable"): ObsidianSyncState {

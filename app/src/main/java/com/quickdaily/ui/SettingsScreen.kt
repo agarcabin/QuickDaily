@@ -952,6 +952,33 @@ fun SettingsScreen(
         }
     }
 
+    var configFolderPickerVault by remember { mutableStateOf("") }
+    val obsidianFolderPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        uri ?: return@rememberLauncherForActivityResult
+        val requestedVault = configFolderPickerVault
+        scope.launch {
+            val selectedFolder = withContext(Dispatchers.IO) {
+                runCatching {
+                    val relative = VaultStoragePrefs.relativePathForTreeUri(requestedVault, uri)
+                    if (relative != null) com.quickdaily.ObsidianConfigFolderPolicy.fromRelativePath(relative)
+                    else if (!SafVirtualPath.isSafPath(requestedVault)) {
+                        UriUtil.treeUriToPath(uri)?.let { com.quickdaily.ObsidianConfigFolderPolicy.fromLocalSelection(requestedVault, it) }
+                    } else null
+                }.getOrNull()
+            }
+            if (vaultPath.trim() != requestedVault) return@launch
+            if (selectedFolder == null) {
+                android.widget.Toast.makeText(context, context.getString(R.string.qd_ob_config_folder_invalid), android.widget.Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            appState.updateConfig { current -> current.copy(vaultPath = requestedVault, obsidianConfigFolder = selectedFolder) }
+            launchObsidianConfigRead(requestedVaultPath = requestedVault)
+        }
+    }
+
     val obsidianConfigPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -1234,6 +1261,13 @@ fun SettingsScreen(
                         },
                         onPickVault = { useSafVaultPicker = false; onExternalLaunch(); vaultPicker.launch(null) },
                         onPickSafVault = { useSafVaultPicker = true; onExternalLaunch(); vaultPicker.launch(null) },
+                        onPickObsidianFolder = {
+                            configFolderPickerVault = vaultPath.trim()
+                            onExternalLaunch()
+                            val initial = SafVirtualPath.parse(configFolderPickerVault)?.rootUri
+                                ?: vaultInitialDocumentUri("${configFolderPickerVault.trimEnd('/')}/${appState.config.value.obsidianConfigFolder}")
+                            obsidianFolderPicker.launch(initial)
+                        },
                         onPickObsidianConfig = {
                             onExternalLaunch()
                             obsidianConfigPicker.launch(arrayOf("application/json", "text/plain"))
@@ -1333,6 +1367,7 @@ private fun DiaryStorageTab(
     onCustomObsidianConfigPathChange: (Boolean) -> Unit,
     onReadObsidianConfig: () -> Unit,
     onPickObsidianConfig: () -> Unit,
+    onPickObsidianFolder: () -> Unit,
     onClearObsidianConfig: () -> Unit,
     onPickVault: () -> Unit,
     onPickTemplate: () -> Unit,
@@ -1459,6 +1494,11 @@ private fun DiaryStorageTab(
                     supportingText = { Text(stringResource(R.string.qd_ob_config_folder_hint)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
+                    trailingIcon = {
+                        IconButton(onClick = onPickObsidianFolder, enabled = vaultEnabled) {
+                            Icon(Icons.Default.FolderOpen, stringResource(R.string.qd_settings_choose_folder))
+                        }
+                    },
                 )
                 SettingsDivider()
                 Text(
@@ -1501,7 +1541,6 @@ private fun DiaryStorageTab(
             ),
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                ObsidianSyncSummary(sync, config.obsidianConfigFolder)
                 Text(stringResource(R.string.qd_settings_diary_config), style = MaterialTheme.typography.titleSmall)
                 if (dailySynced) {
                     ObsidianConfigValue(stringResource(R.string.qd_settings_diary_folder), config.diaryFolder.ifEmpty { stringResource(R.string.qd_ob_root) })
@@ -1692,20 +1731,6 @@ private fun ObsidianConfigValue(label: String, value: String) {
         Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
     }
-}
-
-@Composable
-private fun ObsidianSyncSummary(state: com.quickdaily.ObsidianSyncState, folder: String) {
-    Text(stringResource(R.string.qd_ob_follow_title), style = MaterialTheme.typography.titleSmall, modifier = Modifier.semantics { heading(); liveRegion = LiveRegionMode.Polite })
-    fun status(status: String, loaded: Boolean): Int = when {
-        status == "ok" -> R.string.qd_ob_status_ok
-        status == "invalid_fields" -> R.string.qd_ob_status_partial
-        loaded -> R.string.qd_ob_status_cached
-        else -> R.string.qd_ob_status_fallback
-    }
-    val dailySource = if (state.dailySource.startsWith("content:")) stringResource(R.string.qd_ob_custom_daily_source) else "$folder/daily-notes.json"
-    ObsidianConfigValue(dailySource, stringResource(status(state.dailyStatus, state.dailyLoaded)))
-    ObsidianConfigValue("$folder/app.json", stringResource(status(state.appStatus, state.appLoaded)))
 }
 
 // ══════════════════════════════════════════════════════════
@@ -3975,6 +4000,7 @@ private fun OtherTab(
     onCustomObsidianConfigPathChange: (Boolean) -> Unit,
     onPickVault: () -> Unit,
     onPickObsidianConfig: () -> Unit,
+    onPickObsidianFolder: () -> Unit,
     onClearObsidianConfig: () -> Unit,
     onPickTemplate: () -> Unit,
     onPickImageStorage: () -> Unit,
@@ -4048,6 +4074,7 @@ private fun OtherTab(
                 onCustomObsidianConfigPathChange = onCustomObsidianConfigPathChange,
                 onReadObsidianConfig = onReadObsidianConfig,
                 onPickObsidianConfig = onPickObsidianConfig,
+                onPickObsidianFolder = onPickObsidianFolder,
                 onClearObsidianConfig = onClearObsidianConfig,
                 onPickVault = onPickVault,
                 onPickSafVault = onPickSafVault,

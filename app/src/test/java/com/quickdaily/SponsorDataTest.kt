@@ -13,6 +13,7 @@ class SponsorDataTest {
                 "sponsor-pokewins",
                 "sponsor-wang-sheep",
                 "sponsor-runaway",
+                "sponsor-s-y-20261025",
                 "sponsor-o",
                 "sponsor-wei",
             ),
@@ -24,7 +25,9 @@ class SponsorDataTest {
         assertEquals("暂无留言", ranked[1].message)
         assertEquals("加油⛽", ranked[2].message)
         assertEquals(null, ranked[2].avatarRes)
-        assertTrue(ranked[4].message.contains("QuickDaily和讯飞输入法很好用"))
+        assertEquals("s*y", ranked[3].nickname)
+        assertEquals(5, ranked[3].amount)
+        assertTrue(ranked.single { it.id == "sponsor-wei" }.message.contains("QuickDaily和讯飞输入法很好用"))
     }
 
     @Test

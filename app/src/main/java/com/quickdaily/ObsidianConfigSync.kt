@@ -39,7 +39,7 @@ object ObsidianConfigSync {
     }
 
     fun configFolder(prefs: SharedPreferences): String = prefs.getString("obsidian_config_folder", ".obsidian").orEmpty()
-        .takeIf { it.startsWith('.') && it != "." && !it.contains('/') && !it.contains('\\') && !it.contains(':') } ?: ".obsidian"
+        .takeIf(ObsidianConfigFolderPolicy::isValidName) ?: ".obsidian"
 
     private fun identity(prefs: SharedPreferences, vault: String): String = listOf(vault.trimEnd('/'), configFolder(prefs),
         if (prefs.getBoolean("use_custom_obsidian_config_path", false)) prefs.getString("obsidian_config_uri", "").orEmpty() else "")

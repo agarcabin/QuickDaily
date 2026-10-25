@@ -435,9 +435,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
         vaultPath = raw.vaultPath.trim(),
         obsidianConfigUri = raw.obsidianConfigUri.trim(),
         useCustomObsidianConfigPath = raw.useCustomObsidianConfigPath,
-        obsidianConfigFolder = raw.obsidianConfigFolder.trim().takeIf {
-            it.startsWith('.') && it != "." && !it.contains('/') && !it.contains('\\') && !it.contains(':')
-        } ?: ".obsidian",
+        obsidianConfigFolder = raw.obsidianConfigFolder.trim().takeIf(ObsidianConfigFolderPolicy::isValidName) ?: ".obsidian",
         linkPathFormat = raw.linkPathFormat,
         diaryFolder = raw.diaryFolder.trim(),
         dateFormat = raw.dateFormat.trim().ifBlank { "YYYY-MM-DD" },
