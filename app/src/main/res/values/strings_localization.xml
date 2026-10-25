@@ -337,4 +337,25 @@
         <item quantity="one">当前已显示 %1$d 项工具，点击调整工具项目的启用和顺序。</item>
         <item quantity="other">当前已显示 %1$d 项工具，点击调整工具项目的启用和顺序。</item>
     </plurals>
+    <string name="qd_ob_follow_title">跟随 Obsidian</string>
+    <string name="qd_ob_root">仓库根目录</string>
+    <string name="qd_ob_none">不使用模板</string>
+    <string name="qd_ob_link_path">链接路径格式</string>
+    <string name="qd_ob_relative">相对当前笔记</string>
+    <string name="qd_ob_shortest">尽可能使用最短唯一路径</string>
+    <string name="qd_ob_absolute">仓库内完整路径</string>
+    <string name="qd_ob_config_folder">Obsidian 配置目录</string>
+    <string name="qd_ob_config_folder_hint">默认 .obsidian；自定义目录须以点开头，填写后点击读取配置或保存。</string>
+    <string name="qd_ob_sync_done">已更新可读取的 Obsidian 配置，请查看各配置文件状态。</string>
+    <string name="qd_ob_sync_retained">未能更新配置，已保留上次有效配置或兼容设置。</string>
+    <string name="qd_ob_status_ok">已同步，相关规则跟随 Obsidian</string>
+    <string name="qd_ob_status_partial">部分字段无法识别，已保留对应的有效值</string>
+    <string name="qd_ob_status_cached">读取失败，继续使用上次成功同步的配置</string>
+    <string name="qd_ob_status_fallback">尚未成功读取，暂用下方兼容设置</string>
+    <string name="qd_ob_custom_daily_source">自定义日记配置文件</string>
+    <string name="qd_ob_same_folder">当前笔记所在目录</string>
+    <string name="qd_ob_subfolder">当前笔记目录下的 %1$s 子目录</string>
+    <string name="qd_onboarding_selected_vault_hint">选择后自动使用该目录，需要授予所有文件访问权限。如需手动修改路径，可前往设置。</string>
+    <string name="qd_ob_config_folder_invalid">请选择当前仓库下以点开头的配置目录，例如 .obsidian。</string>
+    <string name="qd_settings_fas_mode">FAS 兼容模式</string>
 </resources>

@@ -135,24 +135,9 @@ fun OnboardingScreen(
         if (path.isBlank()) return
         detectionMessage = context.getString(com.quickdaily.R.string.qd_onboarding_reading_config)
         val detection = try {
-            val daily = appState.loadObsidianConfig(path)
-            val obsidianApp = appState.loadObsidianAppConfig(path)
-            appState.updateConfig { current ->
-                if (daily != null) {
-                    current.copy(
-                        vaultPath = path,
-                        diaryFolder = daily.diaryFolder,
-                        dateFormat = daily.dateFormat,
-                        templatePath = daily.templatePath,
-                        imageStoragePath = obsidianApp?.attachmentFolderPath
-                            ?.let { if (it == "/") "" else it.trimStart('/') }
-                            ?: current.imageStoragePath,
-                        imageLinkFormat = if (obsidianApp?.useMarkdownLinks == true) "described" else current.imageLinkFormat,
-                    )
-                } else {
-                    current.copy(vaultPath = path)
-                }
-            }
+            appState.updateConfig { current -> current.copy(vaultPath = path) }
+            val synced = appState.syncObsidianConfig()
+            val daily = synced.takeIf { it.dailyLoaded || it.appLoaded }
             val manageFiles = PermissionPolicy.all().firstOrNull { it.id == PermissionPolicy.MANAGE_FILES_ID }
             val permissionMissing = manageFiles?.let {
                 safePermissionStatus(context, it) == PermissionStatus.NOT_GRANTED
@@ -375,14 +360,6 @@ fun OnboardingScreen(
                             message = detectionMessage,
                             useSaf = useSafPicker,
                             onUseSafChange = { useSafPicker = it },
-                            onUseLocalPath = { input ->
-                                val path = com.quickdaily.util.LocalVaultPathPolicy.normalize(input)
-                                if (path == null) detectionMessage = context.getString(com.quickdaily.R.string.qd_vault_absolute_required)
-                                else {
-                                    appState.updateConfig { it.copy(vaultPath = path) }
-                                    scope.launch { detectObsidian(path) }
-                                }
-                            },
                             onPickVault = {
                                 onExternalLaunch()
                                 runCatching { vaultPicker.launch(null) }
@@ -490,11 +467,8 @@ private fun WelcomePage() {
 @Composable
 private fun VaultPage(
     config: DiaryConfig, message: String, onPickVault: () -> Unit,
-    useSaf: Boolean, onUseSafChange: (Boolean) -> Unit, onUseLocalPath: (String) -> Unit,
+    useSaf: Boolean, onUseSafChange: (Boolean) -> Unit,
 ) {
-    var pathInput by rememberSaveable(config.vaultPath) {
-        mutableStateOf(VaultStoragePrefs.visibleLocalPath(config.vaultPath))
-    }
     val safModeLabel = stringResource(com.quickdaily.R.string.qd_vault_saf_mode)
     OnboardingHeader(
         Icons.Default.FolderOpen,
@@ -508,17 +482,13 @@ private fun VaultPage(
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(stringResource(com.quickdaily.R.string.qd_onboarding_current_vault), style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(
-                value = pathInput, onValueChange = { pathInput = it },
+                value = VaultStoragePrefs.visibleLocalPath(config.vaultPath), onValueChange = {}, readOnly = true,
                 label = { Text(stringResource(com.quickdaily.R.string.qd_settings_vault_path)) },
                 placeholder = { Text("/storage/emulated/0/Documents/Vault") },
                 modifier = Modifier.fillMaxWidth(), minLines = 1, maxLines = 3, enabled = !useSaf,
             )
             if (!useSaf) {
-                OutlinedButton(onClick = { onUseLocalPath(pathInput) }, enabled = pathInput.isNotBlank(),
-                    modifier = Modifier.fillMaxWidth().height(48.dp)) {
-                    Text(stringResource(com.quickdaily.R.string.qd_vault_use_absolute))
-                }
-                Text(stringResource(com.quickdaily.R.string.qd_vault_local_hint), style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(com.quickdaily.R.string.qd_onboarding_selected_vault_hint), style = MaterialTheme.typography.bodySmall)
             } else {
                 Text(stringResource(com.quickdaily.R.string.qd_vault_saf_hint), style = MaterialTheme.typography.bodySmall)
             }

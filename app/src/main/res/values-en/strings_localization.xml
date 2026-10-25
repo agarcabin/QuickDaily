@@ -342,4 +342,25 @@ Added to home screen</string>
         <item quantity="one">%1$d tool is visible. Tap to change tools and their order.</item>
         <item quantity="other">%1$d tools are visible. Tap to change tools and their order.</item>
     </plurals>
+    <string name="qd_ob_follow_title">Follow Obsidian</string>
+    <string name="qd_ob_root">Vault root</string>
+    <string name="qd_ob_none">No template</string>
+    <string name="qd_ob_link_path">Link path format</string>
+    <string name="qd_ob_relative">Relative to the current note</string>
+    <string name="qd_ob_shortest">Shortest unique path when possible</string>
+    <string name="qd_ob_absolute">Full path within the vault</string>
+    <string name="qd_ob_config_folder">Obsidian configuration folder</string>
+    <string name="qd_ob_config_folder_hint">Defaults to .obsidian. Custom names must start with a dot. Read the configuration or save to apply.</string>
+    <string name="qd_ob_sync_done">Available Obsidian settings updated. Check each configuration file status below.</string>
+    <string name="qd_ob_sync_retained">Could not update settings. Previous valid settings or compatibility settings were retained.</string>
+    <string name="qd_ob_status_ok">Synced; these rules follow Obsidian</string>
+    <string name="qd_ob_status_partial">Some fields were not recognized; their previous valid values were retained</string>
+    <string name="qd_ob_status_cached">Read failed; using the last successfully synced settings</string>
+    <string name="qd_ob_status_fallback">No successful read yet; using the compatibility settings below</string>
+    <string name="qd_ob_custom_daily_source">Custom daily note configuration</string>
+    <string name="qd_ob_same_folder">Same folder as the current note</string>
+    <string name="qd_ob_subfolder">%1$s subfolder of the current note folder</string>
+    <string name="qd_onboarding_selected_vault_hint">The selected folder is used automatically and requires All files access. You can edit its path in Settings.</string>
+    <string name="qd_ob_config_folder_invalid">Select a configuration folder directly inside the current vault, with a name starting with a dot, such as .obsidian.</string>
+    <string name="qd_settings_fas_mode">FAS compatibility mode</string>
 </resources>

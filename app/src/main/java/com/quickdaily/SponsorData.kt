@@ -52,6 +52,13 @@ internal val defaultSponsorEntries = listOf(
         avatarRes = R.drawable.sponsor_avatar_pokewins,
         amount = 100,
     ),
+    SponsorEntry(
+        id = "sponsor-s-y-20261025",
+        nickname = "s*y",
+        message = "您好，我非常喜欢qd，但是我在2.0版本配置出现了问题保存失败，请检查仓库路径权限，手机小米15安卓16请问是什么问题",
+        avatarRes = R.drawable.sponsor_avatar_s_y,
+        amount = 5,
+    ),
 )
 
 internal object DefaultSponsorEntrySource : SponsorEntrySource {

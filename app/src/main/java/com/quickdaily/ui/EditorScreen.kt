@@ -187,7 +187,7 @@ fun EditorScreen(
 
     fun insertImage(uri: Uri) {
         scope.launch(Dispatchers.IO) {
-            val link = runCatching { EditorMediaUtil.imageLink(context, uri) }.getOrNull()
+            val link = runCatching { EditorMediaUtil.imageLink(context, uri, appState.todayPath.value) }.getOrNull()
             withContext(Dispatchers.Main) {
                 if (link != null) applyInsertedLink(link)
             }
@@ -197,7 +197,7 @@ fun EditorScreen(
     fun insertImagesInSelectionOrder(uris: List<Uri>) {
         scope.launch(Dispatchers.IO) {
             val links = EditorImageInsertPolicy.processInSelectionOrder(uris) { uri ->
-                runCatching { EditorMediaUtil.imageLink(context, uri) }.getOrNull()
+                runCatching { EditorMediaUtil.imageLink(context, uri, appState.todayPath.value) }.getOrNull()
             }
             withContext(Dispatchers.Main) {
                 links.filterNotNull().forEach(::applyInsertedLink)
@@ -221,7 +221,8 @@ fun EditorScreen(
         }
         val host = context as? androidx.activity.ComponentActivity
         (host?.lifecycleScope ?: scope).launch(Dispatchers.IO) {
-            val link = runCatching { EditorMediaUtil.audioLink(context, file) }.getOrNull()
+            val target = appState.todayPath.value
+            val link = runCatching { EditorMediaUtil.audioLink(context, file, target) }.getOrNull()
             if (link != null) file.delete()
             withContext(Dispatchers.Main) {
                 if (link != null) applyInsertedLink(link)
@@ -326,12 +327,15 @@ fun EditorScreen(
                 val links = ImageUtil.processImages(
                     context, listOf(uri), config.vaultPath,
                     config.imageStoragePath, config.imageNamingFormat,
-                    config.imageLinkFormat, config.imageCustomNamingFormat
+                    config.imageLinkFormat, config.imageCustomNamingFormat,
+                    sourceNote = com.quickdaily.ObsidianConfigSync.sourceNote(context, config.vaultPath, appState.todayPath.value),
                 )
                 links.firstOrNull() ?: return@launch
             } else {
                 val storagePath = config.imageStoragePath
-                val dir = if (storagePath.isBlank()) "" else storagePath.trim('/')
+                val rules = com.quickdaily.ObsidianConfigSync.rules(context, config.vaultPath)
+                val source = com.quickdaily.ObsidianConfigSync.sourceNote(context, config.vaultPath, appState.todayPath.value, rules)
+                val dir = com.quickdaily.ObsidianLinkPolicy.attachmentDirectory(rules.attachmentFolder, source) ?: return@launch
                 val displayName = com.quickdaily.util.ImageUtil.getDisplayName(context, uri)
                 val ext = com.quickdaily.util.ImageUtil.getExtension(context, uri)
                 val fileName = com.quickdaily.util.ImageUtil.generateFileName(config.imageNamingFormat, displayName, ext, config.imageCustomNamingFormat)
@@ -340,7 +344,9 @@ fun EditorScreen(
                     com.quickdaily.util.VaultStorage.copyUriToPath(context, uri, destination)
                 } == true
                 if (!copied) return@launch
-                "![[$relativePath]]"
+                com.quickdaily.ObsidianFileIndex.added(config.vaultPath, relativePath)
+                runCatching { com.quickdaily.ObsidianLinkPolicy.link(source, relativePath, rules,
+                    knownPaths = com.quickdaily.ObsidianFileIndex.paths(config.vaultPath)) }.getOrNull() ?: return@launch
             }
             withContext(Dispatchers.Main) {
                 val next = EditorMediaUtil.insertLink(
@@ -452,7 +458,7 @@ fun EditorScreen(
 
     fun selectWikilink(candidate: WikilinkCandidate) {
         val currentTrigger = wikilinkTrigger ?: return
-        val replacement = candidate.insertionText
+        val replacement = com.quickdaily.ObsidianCompletion.link(context, candidate, appState.todayPath.value) ?: return
         val text = textFieldValue.text
         val newText = text.substring(0, currentTrigger.start) + replacement + text.substring(currentTrigger.replaceEnd)
         val cursor = currentTrigger.start + replacement.length
@@ -841,6 +847,7 @@ fun EditorScreen(
                         MdRenderer(
                             text = diaryContent,
                             vaultBasePath = config.vaultPath,
+                            sourceNotePath = appState.todayPath.value,
                             imageStoragePath = config.imageStoragePath.takeIf { it.isNotBlank() },
                             hiddenDisplayTexts = config.hiddenDisplayTexts,
                             onToggleCheckbox = { actionRef ->

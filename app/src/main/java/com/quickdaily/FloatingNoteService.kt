@@ -99,6 +99,7 @@ class FloatingNoteService : LocalizedLifecycleService() {
 
     override fun onCreate() {
         super.onCreate()
+        ObsidianConfigSync.refreshAsync(this)
         FloatingNoteTiming.mark("service_create")
         BetaLogger.init(this)
         OnboardingStore.initialize(this)
