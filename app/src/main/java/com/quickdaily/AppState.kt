@@ -193,9 +193,16 @@ class AppState(application: Application) : AndroidViewModel(application) {
 
     private val _isLoaded = MutableStateFlow(false)
     val isLoaded: StateFlow<Boolean> = _isLoaded.asStateFlow()
+    private val _editorLoadError = MutableStateFlow<UiText?>(null)
+    val editorLoadError: StateFlow<UiText?> = _editorLoadError.asStateFlow()
+    private val editorReadLoader = EditorDocumentLoader.readWorker
+    private var editorDeadlineJob: kotlinx.coroutines.Job? = null
+    private var localMigrationJob: kotlinx.coroutines.Job? = null
 
     private val _isDirty = MutableStateFlow(false)
     val isDirty: StateFlow<Boolean> = _isDirty.asStateFlow()
+    private val _lastSaveFailure = MutableStateFlow<UiText?>(null)
+    val lastSaveFailure: StateFlow<UiText?> = _lastSaveFailure.asStateFlow()
 
     private val _editorConflict = MutableStateFlow<EditorConflict?>(null)
     internal val editorConflict: StateFlow<EditorConflict?> = _editorConflict.asStateFlow()
@@ -226,6 +233,60 @@ class AppState(application: Application) : AndroidViewModel(application) {
     val canRedo: StateFlow<Boolean> = _canRedo.asStateFlow()
 
     // ── Config ──────────────────────────────────────────
+
+    private val _vaultUpgrade = MutableStateFlow<VaultUpgradeResult?>(null)
+    internal val vaultUpgrade: StateFlow<VaultUpgradeResult?> = _vaultUpgrade.asStateFlow()
+    private var upgradeDismissed = false
+    private var upgradeCandidate: String? = null
+
+    fun dismissVaultUpgrade() {
+        upgradeDismissed = true
+        _vaultUpgrade.value = null
+    }
+
+    fun pauseVaultUpgradePrompt() {
+        _vaultUpgrade.value = null
+    }
+
+    fun reconnectLegacyVault(path: String) {
+        upgradeCandidate = path
+        localMigrationJob?.cancel()
+        localMigrationJob = null
+        preferLocalVault(forcePrompt = true)
+    }
+
+    /** Preserve the old config until a local directory passes an actual read/write probe. */
+    fun preferLocalVault(forcePrompt: Boolean = false) {
+        if (forcePrompt) upgradeDismissed = false
+        val source = _config.value.vaultPath
+        if ((!SafVirtualPath.isSafPath(source) && !VaultStoragePrefs.needsLegacyUpgrade(app)) || VaultStoragePrefs.isExplicitSaf(app)) {
+            _vaultUpgrade.value = null
+            upgradeCandidate = null
+            return
+        }
+        if (_isDirty.value || upgradeDismissed || localMigrationJob?.isActive == true) return
+        val candidate = upgradeCandidate ?: VaultStoragePrefs.visibleLocalPath(source).takeIf(String::isNotBlank)
+        localMigrationJob = viewModelScope.launch {
+            val checked = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                VaultUpgradePolicy.check(candidate, VaultStoragePrefs.hasLocalFileAccess(app),
+                    com.quickdaily.util.LocalVaultAccess::verify)
+            }
+            if (_config.value.vaultPath == source && !_isDirty.value && !VaultStoragePrefs.isExplicitSaf(app)) {
+                if (checked is VaultUpgradeResult.Ready) {
+                    val local = checked.path
+                    val updated = updateConfig { current -> if (current.vaultPath == source || current.vaultPath == local) current.copy(vaultPath = local) else current }
+                    if (updated.current.vaultPath == local) {
+                        _vaultUpgrade.value = null
+                        upgradeCandidate = null
+                        if (updated.previous.vaultPath == updated.current.vaultPath) loadEditorTarget(_editorTargetRelativePath.value)
+                        WidgetRefreshHelper.refreshAll(app)
+                    }
+                } else if (!upgradeDismissed) {
+                    _vaultUpgrade.value = checked
+                }
+            }
+        }
+    }
 
     private fun loadConfig(): DiaryConfig {
         // These effects were removed in 1.8.5. Drop their legacy flags without
@@ -388,6 +449,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
         } else if (config.vaultPath.isNotBlank()) {
             vaultEditor
                 .putString(VaultStoragePrefs.BACKEND_KEY, VaultBackend.FILE.name.lowercase())
+                .remove("vault_explicit_saf")
                 .remove(VaultStoragePrefs.TREE_URI_KEY)
         } else {
             vaultEditor
@@ -474,6 +536,10 @@ class AppState(application: Application) : AndroidViewModel(application) {
         )
         if (result.previous.requiresEditorReloadComparedTo(result.current)) {
             loadEditorTarget(_editorTargetRelativePath.value)
+        }
+        if (!VaultStoragePrefs.needsLegacyUpgrade(app)) {
+            _vaultUpgrade.value = null
+            upgradeCandidate = null
         }
         return result
     }
@@ -588,6 +654,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
             contentVersion += 1L
             _editorTargetRelativePath.value = normalized
             _isLoaded.value = false
+            _editorLoadError.value = null
             _isDirty.value = false
             _editorConflict.value = null
             ignoredExternalMtime = 0L
@@ -609,86 +676,70 @@ class AppState(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        viewModelScope.launch(Dispatchers.IO) {
-            val path = if (normalized.isBlank()) {
-                todayFilePath()
-            } else {
-                VaultPathUtil.resolveTarget(_config.value.vaultPath, normalized).orEmpty()
-            }
-            val loadedSnapshot = FileUtil.readStableSnapshot(path)
-            val loadedMtime = loadedSnapshot.fingerprint?.lastModified ?: FileUtil.lastModified(path)
-            val isToday = normalized.isBlank()
-            val logTag = if (isToday) "LoadToday" else "LoadEditorTarget"
-            BetaLogger.log(logTag, "path=$path | mtime=$loadedMtime")
-
-            val content = when (val result = loadedSnapshot.result) {
-                is ReadResult.Success -> result.content
-                is ReadResult.NotFound -> null
-                is ReadResult.Error -> {
-                    BetaLogger.logException(logTag, "read_error path=$path", result.exception)
-                    null
-                }
-            }
-
-            val rawContent: String
-            var contentSource = "empty"
-            if (content != null && content.isNotEmpty()) {
-                val parsedContent = ContentUtil.parseFrontmatter(content)
-                if (isToday && parsedContent.hasFrontmatter && parsedContent.body.isBlank() && config.value.templatePath.isNotBlank()) {
-                    val tpl = loadTemplate()
-                    rawContent = if (tpl.isNotEmpty()) tpl else content
-                    contentSource = if (tpl.isNotEmpty()) "template(fm-file)" else "file(fm-only,no-tpl)"
-                } else {
-                    rawContent = content
-                    contentSource = "file"
-                }
-            } else if (isToday) {
-                rawContent = loadTemplate()
-                contentSource = if (rawContent.isNotEmpty()) "template" else "empty"
-            } else {
-                rawContent = ""
-            }
-            BetaLogger.log(logTag, "rawContent from=$contentSource raw_len=${rawContent.length}")
-            val loadedMtimeAfterRead = loadedSnapshot.fingerprint?.lastModified ?: loadedMtime
-            val loadedFingerprint = loadedSnapshot.fingerprint
-            BetaLogger.log(
-                logTag,
-                "identity backend=${VaultStoragePrefs.current(app).backend} target=$path " +
-                    "contentSha256=${loadedFingerprint?.sha256.orEmpty()} " +
-                    "vaultId=${prefs.getString(VaultStoragePrefs.OBSIDIAN_VAULT_ID_KEY, "").orEmpty()}",
-            )
-
-            val parsed = ContentUtil.parseFrontmatter(rawContent)
-            val applied = synchronized(loadLock) {
-                if (generation != loadGeneration) {
-                    false
-                } else {
-                    _todayPath.value = path
-                    _lastLoadedMtime = loadedMtimeAfterRead
-                    _lastLoadedFingerprint = loadedFingerprint
-                    ignoredExternalMtime = 0L
-                    ignoredExternalFingerprint = null
-                    _isDirty.value = false
-                    _editorConflict.value = null
-                    _frontmatter.value = parsed.frontmatter
-                    _diaryContent.value = if (parsed.hasFrontmatter && config.value.filterFrontmatter) {
-                        parsed.body
-                    } else {
-                        rawContent
-                    }
-                    _undoStack.clear()
-                    _redoStack.clear()
-                    _canUndo.value = false
-                    _canRedo.value = false
-                    _lastUndoPushTime = 0L
+        val cfg = _config.value
+        editorDeadlineJob?.cancel()
+        val deadline = viewModelScope.launch {
+            kotlinx.coroutines.delay(8_000)
+            synchronized(loadLock) {
+                if (generation == loadGeneration && !_isLoaded.value) {
+                    // This watchdog is independent of IO admission and provider cancellation.
+                    loadGeneration += 1
+                    _editorLoadError.value = UiText.Resource(R.string.qd_editor_load_failed)
                     _isLoaded.value = true
                     autoSave?.cancel()
-                    autoSave = Debounce(scope = viewModelScope, onFire = { saveNow() })
-                    true
                 }
             }
-            if (!applied) {
-                BetaLogger.log(logTag, "discarded_stale_load generation=$generation")
+        }
+        editorDeadlineJob = deadline
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val relative = if (normalized.isBlank()) VaultPathUtil.dailyRelativePath(cfg.diaryFolder, DateUtil.todayStr(cfg.dateFormat)) else normalized
+                val path = VaultPathUtil.resolveTarget(cfg.vaultPath, relative)
+                    ?: throw java.io.IOException("editor_target_invalid")
+                val loaded = editorReadLoader.load("editor/$path", cfg) {
+                    if (!SafVirtualPath.isSafPath(cfg.vaultPath)) {
+                        val root = File(cfg.vaultPath)
+                        if (!root.isDirectory || !root.canRead()) throw SecurityException("vault_directory_unreadable")
+                    }
+                    EditorDocumentLoader.load(normalized.isBlank(),
+                        read = { FileUtil.readStableSnapshot(path) }, template = { loadTemplate(cfg) })
+                }
+                val parsed = ContentUtil.parseFrontmatter(loaded.rawContent)
+                synchronized(loadLock) {
+                    if (generation == loadGeneration) {
+                        _todayPath.value = path
+                        _lastLoadedMtime = loaded.snapshot.fingerprint?.lastModified ?: 0L
+                        _lastLoadedFingerprint = loaded.snapshot.fingerprint
+                        ignoredExternalMtime = 0L
+                        ignoredExternalFingerprint = null
+                        _isDirty.value = false
+                        _editorConflict.value = null
+                        _frontmatter.value = parsed.frontmatter
+                        _diaryContent.value = if (parsed.hasFrontmatter && cfg.filterFrontmatter) parsed.body else loaded.rawContent
+                        _undoStack.clear()
+                        _redoStack.clear()
+                        _canUndo.value = false
+                        _canRedo.value = false
+                        _lastUndoPushTime = 0L
+                        _editorLoadError.value = null
+                        _isLoaded.value = true
+                        autoSave?.cancel()
+                        autoSave = Debounce(scope = viewModelScope, onFire = { saveNow() })
+                    }
+                }
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                synchronized(loadLock) {
+                    if (generation == loadGeneration) {
+                        _editorLoadError.value = UiText.Resource(R.string.qd_editor_load_failed)
+                        _isLoaded.value = true
+                        autoSave?.cancel()
+                    }
+                }
+                runCatching { BetaLogger.logException("EditorLoad", "load_failed generation=$generation", error) }
+            } finally {
+                deadline.cancel()
             }
         }
     }
@@ -697,7 +748,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
         val target = _editorTargetRelativePath.value
         if (target.isNotBlank()) return target
         val cfg = _config.value
-        return "${cfg.diaryFolder.trimEnd('/')}/${DateUtil.todayStr(cfg.dateFormat)}.md"
+        return VaultPathUtil.dailyRelativePath(cfg.diaryFolder, DateUtil.todayStr(cfg.dateFormat))
     }
 
     fun reloadIfNewerOnDisk() {
@@ -847,15 +898,17 @@ class AppState(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun loadTemplate(): String {
-        val cfg = _config.value
+    private fun loadTemplate(cfg: DiaryConfig = _config.value): String {
         if (cfg.templatePath.isBlank()) {
             BetaLogger.log("LoadTemplate", "templatePath empty in config")
             return ""
         }
         val tplPath = VaultPathUtil.resolveTarget(cfg.vaultPath, cfg.templatePath)
             ?: cfg.templatePath
-        val tplContent = FileUtil.readOrNull(tplPath) ?: ""
+        val tplContent = when (val result = FileUtil.readResult(tplPath)) {
+            is ReadResult.Success -> result.content
+            else -> throw java.io.IOException("editor_template_unreadable")
+        }
         if (tplContent.isEmpty()) {
             BetaLogger.log("LoadTemplate", "template file empty or not found path=" + tplPath)
         } else {
@@ -865,6 +918,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
     }
 
     fun onContentChanged(newContent: String, forceUndoPoint: Boolean = false) {
+        if (!_isLoaded.value || _editorLoadError.value != null) return
         if (newContent == _diaryContent.value) return
         saveUndoPoint(forceUndoPoint)
         _diaryContent.value = newContent
@@ -1051,6 +1105,11 @@ class AppState(application: Application) : AndroidViewModel(application) {
     }
 
     fun saveNow(force: Boolean = false, onComplete: ((Boolean) -> Unit)? = null) {
+        if (!_isLoaded.value || _editorLoadError.value != null) {
+            _lastSaveFailure.value = _editorLoadError.value
+            onComplete?.invoke(false)
+            return
+        }
         var immediateResult: Boolean? = null
         val snapshot = synchronized(loadLock) {
             val path = _todayPath.value
@@ -1153,6 +1212,7 @@ class AppState(application: Application) : AndroidViewModel(application) {
                     ?: observedFingerprint,
             )
             val writeSucceeded = saveResult.succeeded
+            _lastSaveFailure.value = if (writeSucceeded) null else saveResult.failureMessage()
             val writtenFingerprint = saveResult.after ?: if (writeSucceeded) FileUtil.fingerprint(snapshot.path) else null
             val writtenMtime = writtenFingerprint?.lastModified ?: if (writeSucceeded) FileUtil.lastModified(snapshot.path) else 0L
             BetaLogger.log(

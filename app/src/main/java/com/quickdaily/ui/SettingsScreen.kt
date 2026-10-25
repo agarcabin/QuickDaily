@@ -193,6 +193,10 @@ internal enum class SettingsTab(@androidx.annotation.StringRes val titleRes: Int
 }
 
 // localization-legacy-begin: version logs are deferred from phase one.
+private const val CHANGELOG_2_0_1 = """2.0.1:
+1. 调整 SAF储存方式改为备选
+2. 修复 储存路径异常导致日记文件多次生成"""
+
 private const val CHANGELOG_2_0 = """2.0:
 • 新增 多语言支持
 • 新增 新手引导
@@ -226,37 +230,12 @@ private const val CHANGELOG_2_0 = """2.0:
 • 修复 文件读取竞争导致的内容读取异常
 • 修复 保存已有文件时可能出现的内容丢失、旧内容覆盖或内容不同步问题"""
 
-private const val CHANGELOG_1_9_7_BETA = """QuickDaily 1.9.7-beta
-• 新增 中文与 English 多语言支持，可在设置中手动切换
-• 优化 切换语言后保留当前设置页面
-• 优化 英文界面按完整单词换行"""
-
-private const val CHANGELOG_1_9_6_BETA = """QuickDaily 1.9.6-beta
-• 新增 渲染模式和便签小部件渲染双链，双链使用当前主题色
-• 新增 编辑器设置中的屏蔽指定文本，仅影响只读渲染显示并保留原文"""
-
-private const val CHANGELOG_1_9_3_BETA = """QuickDaily 1.9.3-beta
-• 新增 首次使用引导与悬浮窗控件教学
-• 新增 PDF、Word、PowerPoint、Excel、OpenDocument 与 WPS 文档分享捕获
-• 新增 任务完成提示音可选经典、木鱼、蜂鸣、系统或静音
-• 新增 任务完成时间戳格式自定义
-• 优化 设置页三级折叠结构、仓库配置与任务完成日期格式
-• 优化 设置页下拉框、锚点文本、小部件外观与提示音试听"""
-
 private const val DEFAULT_ANCHOR_TEXT = "## 今日速记" // localization-legacy: user/template content
 
 private data class HiddenTextDraftRow(
     val id: Long,
     val text: String,
 )
-
-private const val CHANGELOG_1_9_2_BETA = """QuickDaily 1.9.2-beta
-• 新增 悬浮窗设置可选择保存后拉起 Obsidian；仅在 Obsidian 不在后台运行时拉起并自动回到桌面，默认关闭"""
-
-private const val CHANGELOG_1_9_1_BETA = """QuickDaily 1.9.1-beta
-• 新增 换行使用 4 空格继承缩进并续接无序列表、有序列表和任务，退格可整段回退
-• 调整 便签小部件悬浮窗标题为“日期/页面名 + 速记”
-• 新增 #标签仅在渲染模式和小部件中使用当前主题色文字"""
 
 private const val CHANGELOG_1_9 = """1.9:
 • 新增 悬浮窗透明度设置
@@ -766,7 +745,8 @@ fun SettingsScreen(
     val initialConfig = remember { appState.config.value }
 
     // ── Local edit state ──
-    var vaultPath by remember { mutableStateOf(initialConfig.vaultPath) }
+    var vaultPath by remember { mutableStateOf(VaultStoragePrefs.visibleLocalPath(initialConfig.vaultPath).ifBlank { initialConfig.vaultPath }) }
+    var useSafVaultPicker by remember { mutableStateOf(false) }
     var obsidianVaultId by remember {
         mutableStateOf(
             context.getSharedPreferences("QuickDaily", android.content.Context.MODE_PRIVATE)
@@ -933,9 +913,9 @@ fun SettingsScreen(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri: Uri? ->
         uri?.let {
-            val path = VaultStoragePrefs.saveSaf(context, it)
-            val validation = VaultStoragePrefs.validate(context)
-            if (path != null && validation.status == VaultValidationStatus.VALID) {
+            scope.launch {
+            val path = withContext(Dispatchers.IO) { VaultStoragePrefs.selectVault(context, it, useSafVaultPicker) }
+            if (path != null) {
                 vaultPath = path
                 obsidianConfigUri = ""
                 useCustomObsidianConfigPath = false
@@ -946,7 +926,8 @@ fun SettingsScreen(
                 )
                 WikilinkIndexRepository.refresh(context, path)
             } else {
-                obsidianMsg = validation.message.resolve(context).toString()
+                obsidianMsg = context.getString(R.string.qd_vault_local_unavailable)
+            }
             }
         }
     }
@@ -1308,7 +1289,8 @@ fun SettingsScreen(
                             useCustomObsidianConfigPath = enabled
                             if (!enabled) obsidianConfigUri = ""
                         },
-                        onPickVault = { onExternalLaunch(); vaultPicker.launch(null) },
+                        onPickVault = { useSafVaultPicker = false; onExternalLaunch(); vaultPicker.launch(null) },
+                        onPickSafVault = { useSafVaultPicker = true; onExternalLaunch(); vaultPicker.launch(null) },
                         onPickObsidianConfig = {
                             onExternalLaunch()
                             obsidianConfigPicker.launch(arrayOf("application/json", "text/plain"))
@@ -1416,6 +1398,7 @@ private fun DiaryStorageTab(
     onSave: () -> Unit,
     vaultEnabled: Boolean,
     embedded: Boolean = false,
+    onPickSafVault: () -> Unit = onPickVault,
 ) {
     val todayPath by todayPathState
     val config by configState
@@ -1447,6 +1430,9 @@ private fun DiaryStorageTab(
                         }
                     }
                 )
+
+                Text(stringResource(R.string.qd_vault_local_hint), style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = onPickSafVault) { Text(stringResource(R.string.qd_vault_saf_mode)) }
 
                 OutlinedTextField(
                     value = obsidianVaultId,
@@ -4003,6 +3989,7 @@ private fun OtherTab(
     context: android.content.Context,
     onConfigChange: OnConfigChange,
     onCheckUpdate: () -> Unit,
+    onPickSafVault: () -> Unit = onPickVault,
 ) {
     val config by configState
     val otherScrollState = rememberScrollState()
@@ -4059,6 +4046,7 @@ private fun OtherTab(
                 onPickObsidianConfig = onPickObsidianConfig,
                 onClearObsidianConfig = onClearObsidianConfig,
                 onPickVault = onPickVault,
+                onPickSafVault = onPickSafVault,
                 onPickTemplate = onPickTemplate,
                 onPickImageStorage = onPickImageStorage,
                 onPickDiaryFolder = onPickDiaryFolder,
@@ -4234,7 +4222,7 @@ private fun OtherTab(
 
                 Text("更新内容：", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
                 if (showAllChangelog) {
-                Text(CHANGELOG_2_0 + "\n\n" + CHANGELOG_1_9_7_BETA + "\n\n" + CHANGELOG_1_9_6_BETA + "\n\n" + CHANGELOG_1_9_3_BETA + "\n\n" + CHANGELOG_1_9_2_BETA + "\n\n" + CHANGELOG_1_9_1_BETA + "\n\n" + CHANGELOG_1_9 + "\n\n" +
+                Text(CHANGELOG_2_0_1 + "\n\n" + CHANGELOG_2_0 + "\n\n" + CHANGELOG_1_9 + "\n\n" +
                     "1.8:\n" +
                     "• 新增 小部件大小调整支持自适应\n" +
                     "• 新增 任务小部件滴声开关\n" +
@@ -4317,7 +4305,7 @@ private fun OtherTab(
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                 } else {
                 Text(
-                        CHANGELOG_2_0,
+                        CHANGELOG_2_0_1,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     )

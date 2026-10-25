@@ -281,7 +281,9 @@ class NoteEditActivity : LocalizedComponentActivity() {
     private val pendingAttachments = mutableStateListOf<Uri>()
     private var noteAddAnchorIfMissing by mutableStateOf(true)
     private var noteTimestampOrder by mutableStateOf("above")
-    private var noteSaveInProgress = false
+    private var noteSaveInProgress by mutableStateOf(false)
+    private var closingEditor by mutableStateOf(false)
+    private var draftCloseJob: kotlinx.coroutines.Job? = null
     private var noteEnterToSave by mutableStateOf(false)
     private var noteTagAutocomplete by mutableStateOf(true)
     private var noteWikilinkAutocomplete by mutableStateOf(true)
@@ -549,7 +551,8 @@ class NoteEditActivity : LocalizedComponentActivity() {
                     CompositionLocalProvider(LocalFloaterColors provides quickDailyFloaterColors()) {
                         NoteEditDialog(
                         text = noteText,
-                        onTextChange = { noteText = it },
+                        saving = noteSaveInProgress || closingEditor,
+                        onTextChange = { if (!noteSaveInProgress) noteText = it },
                         enterToSave = noteEnterToSave,
                         tagAutocomplete = noteTagAutocomplete,
                         wikilinkAutocomplete = noteWikilinkAutocomplete,
@@ -557,6 +560,7 @@ class NoteEditActivity : LocalizedComponentActivity() {
                         targetPath = targetRelativePath,
                         targetOptions = targetOptions,
                         onTargetChange = { option ->
+                            if (noteSaveInProgress) return@NoteEditDialog
                             targetRelativePath = option.path
                             dialogTitle = titleForCurrentMode(option.title)
                             if (rememberTarget) {
@@ -568,9 +572,10 @@ class NoteEditActivity : LocalizedComponentActivity() {
                             )
                         },
                         onAddCustomPage = {
-                            customPagePicker.launch(arrayOf("text/*", "application/octet-stream", "*/*"))
+                            if (!noteSaveInProgress) customPagePicker.launch(arrayOf("text/*", "application/octet-stream", "*/*"))
                         },
                         onRemoveTarget = { path ->
+                            if (noteSaveInProgress) return@NoteEditDialog
                             BetaLogger.log("FloatingNote/Selection", "remove path=$path")
                             if (targetRelativePath == path) {
                                 targetRelativePath = null
@@ -631,7 +636,15 @@ class NoteEditActivity : LocalizedComponentActivity() {
                              )
                          },
 
-                         onRemoveImage = { index -> selectedImages.removeAt(index) }
+                         onRemoveImage = { index -> if (!noteSaveInProgress) selectedImages.removeAt(index) },
+                         onRemoveAttachment = { index ->
+                             if (!noteSaveInProgress) pendingAttachments.getOrNull(index)?.let { uri ->
+                                 pendingAttachments.remove(uri)
+                                 noteText = noteText.replace("![[${uri}]]", "")
+                                 syncFloatingDraft()
+                                 FloatingNoteDraftStore.persist(this@NoteEditActivity, floatingDraft)
+                             }
+                         },
                         )
                     }
                 }
@@ -786,7 +799,7 @@ class NoteEditActivity : LocalizedComponentActivity() {
         recordingStartedAt = SystemClock.elapsedRealtime()
     }
 
-    private fun stopRecording() {
+    private fun stopRecording(keepAttachment: Boolean = true) {
         val activeRecorder = recorder ?: return
         val file = recordingFile
         recorder = null
@@ -796,21 +809,15 @@ class NoteEditActivity : LocalizedComponentActivity() {
         val stopped = runCatching { activeRecorder.stop() }.isSuccess
         runCatching { activeRecorder.reset() }
         runCatching { activeRecorder.release() }
-        if (!stopped || file == null) {
+        if (!stopped || file == null || !keepAttachment) {
             file?.delete()
             return
         }
-        lifecycleScope.launch(Dispatchers.IO) {
-            val link = runCatching { EditorMediaUtil.audioLink(this@NoteEditActivity, file) }.getOrNull()
-            if (link != null) file.delete()
-            withContext(Dispatchers.Main) {
-                if (link != null) insertMediaLink(link) else Toast.makeText(
-                    this@NoteEditActivity,
-                    getString(R.string.qd_editor_record_save_failed),
-                    Toast.LENGTH_SHORT,
-                ).show()
-            }
-        }
+        val uri = CaptureFileUtil.fileUri(this, file)
+        pendingAttachments.add(uri)
+        insertMediaLink("![[${uri}]]")
+        syncFloatingDraft()
+        FloatingNoteDraftStore.persist(this, floatingDraft)
     }
 
     private val customPagePicker = registerForActivityResult(
@@ -900,9 +907,19 @@ class NoteEditActivity : LocalizedComponentActivity() {
         openHomeAfterClose: Boolean = false,
         animateToWidget: Boolean = false,
     ) {
+        if (draftCloseJob?.isActive == true || isFinishing) return
+        stopRecording()
         syncFloatingDraft()
-        FloatingNoteDraftStore.persistOrClear(this, floatingDraft)
-        finishEditor(openHomeAfterClose, animateToWidget = animateToWidget)
+        val draftWrite = FloatingNoteDraftStore.preparePersist(this, floatingDraft)
+        closingEditor = true
+        draftCloseJob = lifecycleScope.launch {
+            if (withContext(Dispatchers.IO) { draftWrite.commit() }) {
+                finishEditor(openHomeAfterClose, animateToWidget = animateToWidget)
+            } else {
+                closingEditor = false
+                Toast.makeText(this@NoteEditActivity, getString(R.string.qd_save_draft_failed), Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     private fun preparePredictiveExit(): Boolean {
@@ -1112,6 +1129,8 @@ class NoteEditActivity : LocalizedComponentActivity() {
         suppressQuickDailyHome: Boolean = false,
         animateToWidget: Boolean = false,
     ) {
+        if (isFinishing || isDestroyed) return
+        closingEditor = true
         val canAnimateToWidget = animateToWidget &&
             !openHomeAfterClose &&
             !returnToHomeAfterClose &&
@@ -1133,7 +1152,7 @@ class NoteEditActivity : LocalizedComponentActivity() {
         suppressQuickDailyHome: Boolean,
     ) {
         FloatingNoteTiming.mark("hide_start", "host=activity")
-        stopRecording()
+        stopRecording(keepAttachment = false)
         requestActivityImeHide()
         if (!suppressQuickDailyHome && (returnToHomeAfterClose || openHomeAfterClose)) {
             startActivity(MainActivity.editorIntent(this, targetRelativePath))
@@ -1143,7 +1162,8 @@ class NoteEditActivity : LocalizedComponentActivity() {
     }
 
     private fun saveEditor() {
-        if (hasRealContent(noteText) || selectedImages.isNotEmpty() || pendingAttachments.isNotEmpty()) {
+        if (closingEditor || isFinishing) return
+        if (hasRealContent(noteText) || selectedImages.isNotEmpty() || pendingAttachments.isNotEmpty() || recorder != null) {
             appendToDiary(noteText.trim())
         } else {
             FloatingNoteDraftStore.clear(this, targetRelativePath)
@@ -1156,7 +1176,11 @@ class NoteEditActivity : LocalizedComponentActivity() {
         discard: Boolean = false,
         fromBack: Boolean = false,
     ) {
-        if (noteSaveInProgress) return
+        if (closingEditor || isFinishing || draftCloseJob?.isActive == true) return
+        if (noteSaveInProgress) {
+            persistDraftAndFinish(openHomeAfterClose)
+            return
+        }
         val animateToWidget = fromBack &&
             floatingSource == FloatingNoteSource.WIDGET &&
             sourceBounds != null
@@ -1165,7 +1189,7 @@ class NoteEditActivity : LocalizedComponentActivity() {
             finishEditor(openHomeAfterClose, animateToWidget = animateToWidget)
             return
         }
-        val hasContent = hasRealContent(noteText) || selectedImages.isNotEmpty() || pendingAttachments.isNotEmpty()
+        val hasContent = hasRealContent(noteText) || selectedImages.isNotEmpty() || pendingAttachments.isNotEmpty() || recorder != null
         BetaLogger.log("FloatingNote/Exit", "activity exit fromBack=$fromBack saveOnClose=${FloatingNoteEntryPolicy.shouldSaveOnClose(this)} hasContent=$hasContent")
         if (FloatingNoteEntryPolicy.shouldSaveOnClose(this) && hasContent) {
             appendToDiary(noteText.trim(), openHomeAfterClose, animateToWidget)
@@ -1179,7 +1203,7 @@ class NoteEditActivity : LocalizedComponentActivity() {
         animateToWidget: Boolean = false,
     ) {
         stopRecording()
-        if (noteSaveInProgress) return
+        if (noteSaveInProgress || closingEditor) return
         if (!hasRealContent(text) && selectedImages.isEmpty() && pendingAttachments.isEmpty()) {
             FloatingNoteDraftStore.clear(this, targetRelativePath)
             finishEditor(openHomeAfterClose, animateToWidget = animateToWidget)
@@ -1187,18 +1211,32 @@ class NoteEditActivity : LocalizedComponentActivity() {
         }
         noteSaveInProgress = true
         syncFloatingDraft()
-        FloatingNoteDraftStore.persist(this, floatingDraft)
+        val draftWrite = FloatingNoteDraftStore.preparePersist(this, floatingDraft)
+        val request = FloatingNoteSaveRequest.capture(this, noteText.trim(), selectedImages.toList(), pendingAttachments.toList(), targetRelativePath)
         lifecycleScope.launch {
-            when (val result = FloatingNoteSaveUseCase(this@NoteEditActivity).save(
-                text,
-                selectedImages.toList(),
-                pendingAttachments.toList(),
-                targetRelativePath = targetRelativePath,
-            )) {
+            val slowNotice = launch {
+                delay(3_000)
+                if (!closingEditor) Toast.makeText(this@NoteEditActivity, getString(R.string.qd_save_slow), Toast.LENGTH_LONG).show()
+            }
+            try {
+            if (!withContext(Dispatchers.IO) { draftWrite.commit() }) {
+                Toast.makeText(this@NoteEditActivity, getString(R.string.qd_save_draft_failed), Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            val result = FloatingNoteSaveRunner.start(applicationContext, request).await()
+            if (closingEditor || isFinishing || isDestroyed) return@launch
+            when (result) {
                 FloatingNoteSaveResult.Saved -> {
+                    if (!request.matches(noteText.trim(), selectedImages.toList(), pendingAttachments.toList(), targetRelativePath)) return@launch
+                    val clearDraft = FloatingNoteDraftStore.prepareClear(this@NoteEditActivity, request.target)
+                    if (!withContext(Dispatchers.IO) { clearDraft.commit() }) {
+                        showFloatingNoteRecovery(this@NoteEditActivity, UiText.Resource(R.string.qd_save_draft_failed), onKeepDraft = { persistDraftAndFinish() })
+                        return@launch
+                    }
+                    if (closingEditor || isFinishing || isDestroyed) return@launch
                     selectedImages.clear()
                     pendingAttachments.clear()
-                    FloatingNoteDraftStore.clear(this@NoteEditActivity, targetRelativePath)
+                    FloatingNoteSaveReceipts(this@NoteEditActivity).acknowledge(request.path)
                     Toast.makeText(this@NoteEditActivity, getString(R.string.qd_editor_saved), Toast.LENGTH_SHORT).show()
                     val openedObsidian = FloatingNoteObsidianLauncher.openAfterSuccessfulSave(
                         this@NoteEditActivity,
@@ -1215,10 +1253,25 @@ class NoteEditActivity : LocalizedComponentActivity() {
                     finishEditor(openHomeAfterClose, animateToWidget = animateToWidget)
                 }
                 is FloatingNoteSaveResult.Failed -> {
-                    noteSaveInProgress = false
                     BetaLogger.log("NoteEdit", "save failed messageType=${result.message::class.simpleName}")
-                    Toast.makeText(this@NoteEditActivity, result.message.resolve(this@NoteEditActivity), Toast.LENGTH_LONG).show()
+                    showFloatingNoteRecovery(this@NoteEditActivity, result.message,
+                        onKeepDraft = { persistDraftAndFinish() },
+                        onVerifiedRetry = if ((result.message as? UiText.Resource)?.resId == R.string.qd_save_unconfirmed) ({
+                            FloatingNoteSaveReceipts(this@NoteEditActivity).acknowledge(request.path)
+                            saveEditor()
+                        }) else null,
+                    )
                 }
+            }
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                BetaLogger.logException("NoteEdit", "save_failed", error)
+                if (!closingEditor && !isFinishing) showFloatingNoteRecovery(this@NoteEditActivity,
+                    UiText.Resource(R.string.qd_editor_save_failed_generic), onKeepDraft = { persistDraftAndFinish() })
+            } finally {
+                slowNotice.cancel()
+                noteSaveInProgress = false
             }
         }
     }
@@ -1271,6 +1324,7 @@ fun NoteEditDialog(
     text: String,
     onTextChange: (String) -> Unit,
     enterToSave: Boolean,
+    saving: Boolean = false,
     tagAutocomplete: Boolean = true,
     wikilinkAutocomplete: Boolean = true,
     title: String = "",
@@ -1356,6 +1410,7 @@ fun NoteEditDialog(
         forceUndo: Boolean = false,
         invalidateStamp: Boolean = true,
     ) {
+        if (saving) return
         val oldText = tfv.text
         if (oldText == newValue.text) {
             tfv = newValue
@@ -1529,6 +1584,7 @@ fun NoteEditDialog(
     }
 
     fun handleToolbarAction(action: EditorToolbarAction) {
+        if (saving) return
         when (action) {
             EditorToolbarAction.IMAGE -> onPickImages()
             EditorToolbarAction.CAMERA -> onTakePhoto()
@@ -1634,6 +1690,7 @@ fun NoteEditDialog(
 
     if (fullScreen) {
         FullScreenNoteEditSurface(
+            saving = saving,
             title = title,
             targetPath = targetPath,
             targetOptions = targetOptions,
@@ -1885,7 +1942,7 @@ fun NoteEditDialog(
                     }
                 }
             }
-            BasicTextField(value = tfv, onValueChange = { newTfv ->
+            BasicTextField(value = tfv, readOnly = saving, onValueChange = { newTfv ->
                     val oldText = tfv.text
                     val newText = newTfv.text
                     val insertedNewlines = newText.count { it == '\n' } - oldText.count { it == '\n' }
@@ -2096,7 +2153,7 @@ fun NoteEditDialog(
                     recording = recording,
                     recordingDurationMs = recordingDurationMs,
                     enabled = { action ->
-                        when (action) {
+                        !saving && when (action) {
                             EditorToolbarAction.UNDO -> localUndoStack.isNotEmpty()
                             EditorToolbarAction.REDO -> localRedoStack.isNotEmpty()
                             else -> true
@@ -2105,6 +2162,7 @@ fun NoteEditDialog(
                     onAction = ::handleToolbarAction,
                 )
                 TextButton(
+                    enabled = !saving,
                     onClick = {
                         val t = tfv.text
                         if (t.isNotBlank() || imageUris.isNotEmpty() || hasAttachments) onSave() else onClose()
@@ -2241,6 +2299,7 @@ private fun FloatingCoachCard(
 @Composable
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 private fun FullScreenNoteEditSurface(
+    saving: Boolean,
     title: String,
     targetPath: String?,
     targetOptions: List<FloatingNoteTargetOption>,
@@ -2426,7 +2485,7 @@ private fun FullScreenNoteEditSurface(
                             visible = toolbarVisible,
                             tint = MaterialTheme.colorScheme.primary,
                             enabled = { action ->
-                                when (action) {
+                                !saving && when (action) {
                                     EditorToolbarAction.UNDO -> canUndo
                                     EditorToolbarAction.REDO -> canRedo
                                     else -> true
@@ -2566,6 +2625,7 @@ private fun FullScreenNoteEditSurface(
                         }
                     }
                     BasicTextField(
+                        readOnly = saving,
                         value = textFieldValue,
                         onValueChange = { newValue ->
                             val insertedNewlines = newValue.text.count { it == '\n' } - textFieldValue.text.count { it == '\n' }

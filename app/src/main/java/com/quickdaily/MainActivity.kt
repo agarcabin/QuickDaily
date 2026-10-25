@@ -36,9 +36,11 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.quickdaily.ui.EditorScreen
 import com.quickdaily.ui.OnboardingScreen
 import com.quickdaily.ui.SettingsScreen
+import com.quickdaily.ui.VaultUpgradeDialog
 import com.quickdaily.ui.theme.QuickDailyTheme
 import com.quickdaily.ui.theme.rememberQuickDailyMotionPolicy
 import com.quickdaily.util.ImageUtil
@@ -78,6 +80,19 @@ class MainActivity : LocalizedComponentActivity() {
     ) {
         // 从系统设置返回后刷新状态
         recreate()
+    }
+
+    private val upgradeVaultPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            val path = VaultStoragePrefs.localPathForTree(uri)
+            if (path != null) appState.reconnectLegacyVault(path)
+            else android.widget.Toast.makeText(this, getString(R.string.qd_vault_local_unavailable), android.widget.Toast.LENGTH_LONG).show()
+        }
+        appState.preferLocalVault(forcePrompt = true)
+    }
+
+    private val upgradeStoragePermission = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        appState.preferLocalVault(forcePrompt = true)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -120,6 +135,25 @@ class MainActivity : LocalizedComponentActivity() {
                         Navigator(showOnboarding, firstLaunch, restoredScreen).also { mainNavigator = it }
                     }
                     val motionPolicy = rememberQuickDailyMotionPolicy()
+                    val vaultUpgrade by appState.vaultUpgrade.collectAsStateWithLifecycle()
+                    if (!showOnboarding && navigator.screen != Screen.SETTINGS) {
+                        vaultUpgrade?.let { state ->
+                            VaultUpgradeDialog(state,
+                                onGrantAccess = {
+                                    appState.pauseVaultUpgradePrompt()
+                                    externalLaunching = true
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) requestManageStorage()
+                                    else upgradeStoragePermission.launch(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE))
+                                },
+                                onReselect = {
+                                    appState.pauseVaultUpgradePrompt()
+                                    externalLaunching = true
+                                    upgradeVaultPicker.launch(null)
+                                },
+                                onDismiss = appState::dismissVaultUpgrade,
+                            )
+                        }
+                    }
                     val reducedMotion = motionPolicy.reducedMotion
                     val firstLaunchEntrance = remember(firstLaunch) {
                         MutableTransitionState(!firstLaunch).apply { targetState = true }
@@ -590,6 +624,7 @@ class MainActivity : LocalizedComponentActivity() {
     }
 
     private fun shouldOpenQuickNote(intent: Intent?): Boolean {
+        if (VaultStoragePrefs.needsLegacyUpgrade(this)) return false
         return QuickLaunchPolicy.shouldOpenQuickNote(
             action = intent?.action,
             categories = intent?.categories,
@@ -601,7 +636,7 @@ class MainActivity : LocalizedComponentActivity() {
 
     private fun hasStorageAccess(): Boolean {
         if (VaultStoragePrefs.current(this).backend == VaultBackend.SAF) {
-            return VaultStoragePrefs.validate(this).status == com.quickdaily.util.VaultValidationStatus.VALID
+            return VaultStoragePrefs.hasPersistedSafGrant(this)
         }
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             Environment.isExternalStorageManager()
@@ -649,13 +684,12 @@ class MainActivity : LocalizedComponentActivity() {
     private fun checkPermissions() {
         val storage = VaultStoragePrefs.current(this)
         if (storage.backend == VaultBackend.SAF) {
-            val validation = VaultStoragePrefs.validate(this)
-            if (validation.status != com.quickdaily.util.VaultValidationStatus.VALID) {
+            if (!VaultStoragePrefs.hasPersistedSafGrant(this)) {
                 android.widget.Toast.makeText(
                     this,
                     getString(
                         R.string.qd_main_validation_reselect,
-                        validation.message.resolve(this).toString(),
+                        getString(R.string.qd_vault_saf_not_readable),
                     ),
                     android.widget.Toast.LENGTH_LONG,
                 ).show()
@@ -690,6 +724,7 @@ class MainActivity : LocalizedComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        appState.preferLocalVault()
         BetaLogger.log("Lifecycle", "onResume")
         com.quickdaily.QuickDailyReadWidget.scheduleMidnightRefresh(this)
         com.quickdaily.TaskWidget.scheduleMidnightRefresh(this)

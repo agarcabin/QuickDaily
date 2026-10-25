@@ -4,6 +4,10 @@ import java.io.File
 
 /** Safe conversion between a vault-relative Markdown path and a filesystem path. */
 object VaultPathUtil {
+    /** Obsidian permits an empty daily-note folder, meaning the vault root. */
+    fun dailyRelativePath(folder: String, date: String): String =
+        listOf(folder.trim().trim('/'), "$date.md").filter(String::isNotBlank).joinToString("/")
+
     /** Resolve either an absolute filesystem path or a vault-relative path. */
     fun resolveTarget(vaultPath: String, targetPath: String): String? {
         if (targetPath.isBlank()) return null

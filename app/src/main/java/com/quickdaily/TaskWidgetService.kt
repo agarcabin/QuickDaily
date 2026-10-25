@@ -28,20 +28,21 @@ class TaskViewsFactory(
     private val widgetId: Int,
     private val generation: Long,
 ) : RemoteViewsService.RemoteViewsFactory {
-    private val tasks = mutableListOf<PreparedTaskWidgetItem>()
+    @Volatile
+    private var tasks: List<PreparedTaskWidgetItem> = emptyList()
 
     override fun onCreate() {
-        synchronized(TaskWidgetService.taskLoadLock) { loadTasks() }
+        loadTasks()
     }
 
     override fun onDataSetChanged() {
         BetaLogger.log("TaskWidgetSvc", "onDataSetChanged start")
-        synchronized(TaskWidgetService.taskLoadLock) { loadTasks() }
+        loadTasks()
         BetaLogger.log("TaskWidgetSvc", "onDataSetChanged complete tasks=${tasks.size}")
     }
 
     override fun onDestroy() {
-        tasks.clear()
+        tasks = emptyList()
     }
 
     override fun getCount(): Int = tasks.size
@@ -67,46 +68,18 @@ class TaskViewsFactory(
     override fun hasStableIds(): Boolean = false
 
     private fun loadTasks() {
-        tasks.clear()
-        if (!WidgetGeneration.isCurrent(
-                context,
-                WidgetFillInContract.KIND_TASK,
-                widgetId,
-                generation,
-            )
-        ) {
-            BetaLogger.log("TaskWidgetSvc", "skip stale factory widgetId=$widgetId generation=$generation")
+        if (!WidgetGeneration.isCurrent(context, WidgetFillInContract.KIND_TASK, widgetId, generation)) {
+            tasks = emptyList()
             return
         }
-        val config = TaskWidgetConfigStore.load(context, widgetId)
-        val result = WidgetContentLoader.loadTasks(context, config)
-        if (!WidgetGeneration.isCurrent(
-                context,
-                WidgetFillInContract.KIND_TASK,
-                widgetId,
-                generation,
-            )
-        ) {
-            BetaLogger.log("TaskWidgetSvc", "discard loaded stale factory widgetId=$widgetId generation=$generation")
-            return
-        }
-        if (result is WidgetLoadResult.Success) {
-            tasks.addAll(
-                WidgetDisplayPreparer.prepareTasks(
-                    result.value,
-                    WidgetDisplayPreparer.rules(context),
-                ),
-            )
+        val snapshot = WidgetSnapshots.tasks[widgetId]?.takeIf { generation <= 0 || it.generation == generation }
+        tasks = snapshot?.items.orEmpty()
+        if (snapshot == null) {
+            publishEmptyStatus(UiText.Resource(R.string.qd_widget_refresh_ready))
+            WidgetRefreshCoordinator.refreshTasks(context)
         } else {
-            publishEmptyStatus(
-                when (result) {
-                    is WidgetLoadResult.Empty -> result.message
-                    is WidgetLoadResult.Failure -> result.message
-                    is WidgetLoadResult.Success -> UiText.Raw("")
-                }
-            )
+            snapshot.message?.let(::publishEmptyStatus)
         }
-        logWidgetResult("TaskWidgetSvc", result)
     }
 
     private fun publishEmptyStatus(message: UiText) {
@@ -115,13 +88,8 @@ class TaskViewsFactory(
         if (resolvedMessage.isBlank()) return
         try {
             val manager = android.appwidget.AppWidgetManager.getInstance(context)
-            val ids = if (widgetId >= 0) {
-                intArrayOf(widgetId)
-            } else {
-                manager.getAppWidgetIds(
-                    android.content.ComponentName(context, TaskWidget::class.java)
-                )
-            }
+            if (widgetId < 0 || !WidgetGeneration.isCurrent(context, WidgetFillInContract.KIND_TASK, widgetId, generation)) return
+            val ids = intArrayOf(widgetId)
             if (ids.isNotEmpty()) {
                 val views = RemoteViews(context.packageName, R.layout.widget_tasks)
                 views.setTextViewText(R.id.empty_view, resolvedMessage)

@@ -38,9 +38,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -81,7 +78,6 @@ class FloatingNoteService : LocalizedLifecycleService() {
     private var overlayView: FloatingNoteComposeView? = null
     private lateinit var state: FloatingNoteEditorState
     private lateinit var viewTreeOwner: FloatingNoteViewTreeOwner
-    private val saveUseCase by lazy { FloatingNoteSaveUseCase(applicationContext) }
     private var targetOptions by mutableStateOf<List<FloatingNoteTargetOption>>(emptyList())
     private var windowParams: WindowManager.LayoutParams? = null
     private var windowDragOrigin: FloatingNotePosition? = null
@@ -95,9 +91,9 @@ class FloatingNoteService : LocalizedLifecycleService() {
     private var recordingElapsedMs by mutableStateOf(0L)
     private var floatingCoachStep by mutableStateOf<Int?>(null)
     private var appearanceRefreshToken by mutableIntStateOf(0)
-    private val recordingScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var recordingJob: Job? = null
-    private var closeJob: Job? = null
+    private var saveJob: Job? = null
+    private var draftCloseJob: Job? = null
+    private var recoveryDialog: android.app.AlertDialog? = null
     @Volatile
     private var recordingState = FloatingNoteRecordingState.Idle
 
@@ -128,6 +124,7 @@ class FloatingNoteService : LocalizedLifecycleService() {
             ACTION_START_RECORDING -> startRecording()
             ACTION_REFRESH_APPEARANCE -> refreshAppearance()
             ACTION_REFRESH -> {
+                if (state.isSaving) return START_NOT_STICKY
                 val previousTarget = intent.getStringExtra(EXTRA_PREVIOUS_TARGET_PATH)
                 val refreshSource = intent.getStringExtra(EXTRA_SOURCE)
                     ?.let { runCatching { FloatingNoteSource.valueOf(it) }.getOrNull() }
@@ -226,7 +223,9 @@ class FloatingNoteService : LocalizedLifecycleService() {
                         androidx.compose.runtime.CompositionLocalProvider(LocalFloaterColors provides quickDailyFloaterColors()) {
                             NoteEditDialog(
                                 text = state.text,
+                                saving = state.isSaving || closingOverlay,
                                 onTextChange = {
+                                    if (state.isSaving) return@NoteEditDialog
                                     state.text = it
                                     FloatingNoteDraftStore.persistOrClear(this@FloatingNoteService, state)
                                 },
@@ -246,6 +245,7 @@ class FloatingNoteService : LocalizedLifecycleService() {
                                     openPicker(FloatingNotePickerActivity.MODE_CUSTOM_PAGE)
                                 },
                                 onRemoveTarget = { path ->
+                                    if (state.isSaving) return@NoteEditDialog
                                     BetaLogger.log("FloatingNote/Selection", "overlay remove path=$path")
                                     if (state.targetRelativePath == path) {
                                         state.targetRelativePath = null
@@ -323,12 +323,14 @@ class FloatingNoteService : LocalizedLifecycleService() {
                                 onMoveWindow = ::moveOverlay,
                                 onMoveWindowEnd = ::persistWindowPosition,
                                 onRemoveImage = { index ->
+                                    if (state.isSaving) return@NoteEditDialog
                                     if (index in state.selectedImages.indices) {
                                         state.selectedImages.removeAt(index)
                                         FloatingNoteDraftStore.persistOrClear(this@FloatingNoteService, state)
                                     }
                                 },
                                 onRemoveAttachment = { index ->
+                                    if (state.isSaving) return@NoteEditDialog
                                     val all = state.pendingAttachments.toList() + state.invalidAttachments.toList()
                                     all.getOrNull(index)?.let { uri ->
                                         state.pendingAttachments.remove(uri)
@@ -407,6 +409,7 @@ class FloatingNoteService : LocalizedLifecycleService() {
     }
 
     private fun switchTarget(option: FloatingNoteTargetOption) {
+        if (state.isSaving) return
         val oldTarget = state.targetRelativePath
         if (FloatingNoteDraftTargetPolicy.keyFor(this, oldTarget) ==
             FloatingNoteDraftTargetPolicy.keyFor(this, option.path)
@@ -434,39 +437,99 @@ class FloatingNoteService : LocalizedLifecycleService() {
     }
 
     private fun requestClose(reason: String, openHomeAfterClose: Boolean = false) {
-        if (overlayView == null || closingOverlay || closeJob?.isActive == true) return
+        if (overlayView == null || closingOverlay || draftCloseJob?.isActive == true) return
         FloatingNoteTiming.mark("close_requested", "reason=$reason target=${state.targetRelativePath.orEmpty()}")
+        if (state.isSaving) {
+            keepDraftAndClose(reason, openHomeAfterClose)
+            return
+        }
         if (FloatingNoteExitPolicy.shouldDiscard(reason)) {
             FloatingNoteDraftStore.clear(this, state.targetRelativePath)
             completeClose(reason, openHomeAfterClose)
             return
         }
         val saveOnClose = FloatingNoteEntryPolicy.shouldSaveOnClose(this)
-        if (!FloatingNoteExitPolicy.shouldSave(reason, saveOnClose, state.hasContent())) {
-            FloatingNoteDraftStore.persistOrClear(this, state)
-            completeClose(reason, openHomeAfterClose)
+        if (!FloatingNoteExitPolicy.shouldSave(reason, saveOnClose, state.hasContent() || recorder != null)) {
+            keepDraftAndClose(reason, openHomeAfterClose)
+            return
+        }
+        saveDraft(reason, openHomeAfterClose)
+    }
+
+    private fun keepDraftAndClose(reason: String, openHomeAfterClose: Boolean = false) {
+        if (draftCloseJob?.isActive == true) return
+        stopRecording()
+        val draftWrite = FloatingNoteDraftStore.preparePersist(this, state)
+        draftCloseJob = lifecycleScope.launch {
+            if (withContext(Dispatchers.IO) { draftWrite.commit() }) {
+                // The observer cannot clear this draft or launch another app after detachment.
+                saveJob?.cancel()
+                hideOverlay(reason, persistDraft = false)
+                if (openHomeAfterClose) openHome()
+            } else {
+                Toast.makeText(this@FloatingNoteService, getString(R.string.qd_save_draft_failed), Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+    private fun completeClose(reason: String, openHomeAfterClose: Boolean) {
+        if (openHomeAfterClose) openHome() else hideOverlay(reason, persistDraft = false)
+    }
+    private fun showSaveRecovery(message: UiText, onVerifiedRetry: (() -> Unit)? = null) {
+        recoveryDialog?.dismiss()
+        recoveryDialog = showFloatingNoteRecovery(this, message, overlay = true,
+            onKeepDraft = { keepDraftAndClose("keep_draft") }, onVerifiedRetry = onVerifiedRetry)
+    }
+
+    private fun saveDraft(reason: String = "saved", openHomeAfterClose: Boolean = false) {
+        FloatingNoteTiming.mark("save_requested")
+        if (state.isSaving || closingOverlay || draftCloseJob?.isActive == true) return
+        if (state.invalidAttachments.isNotEmpty()) {
+            showSaveRecovery(UiText.Resource(R.string.qd_editor_attachment_save_failed))
+            return
+        }
+        if (recorder != null) stopRecording()
+        if (recordingState != FloatingNoteRecordingState.Idle) {
+            Toast.makeText(this, getString(R.string.qd_editor_recording_pending), Toast.LENGTH_LONG).show()
+            return
+        }
+        if (!state.hasContent()) {
+            requestClose("save_empty")
             return
         }
         state.isSaving = true
-        FloatingNoteDraftStore.persist(this, state)
-        closeJob = lifecycleScope.launch {
-            val result = try {
-                saveUseCase.save(
-                    state.text,
-                    state.selectedImages.toList(),
-                    state.pendingAttachments.toList(),
-                    targetRelativePath = state.targetRelativePath,
-                )
-            } catch (error: Throwable) {
-                BetaLogger.logException("FloatingNote/Close", "save_use_case_failed", error)
-                FloatingNoteSaveResult.Failed(UiText.Resource(R.string.qd_editor_save_failed_generic))
+        val draftWrite = FloatingNoteDraftStore.preparePersist(this, state)
+        val request = FloatingNoteSaveRequest.capture(this, state.text, state.selectedImages.toList(), state.pendingAttachments.toList(), state.targetRelativePath)
+        BetaLogger.log(
+            "FloatingNote/Save",
+            "images=${state.selectedImages.size} attachments=${state.pendingAttachments.size}"
+        )
+        saveJob = lifecycleScope.launch {
+            FloatingNoteTiming.mark("save_start")
+            val slowNotice = launch {
+                delay(3_000)
+                if (!closingOverlay) Toast.makeText(this@FloatingNoteService, getString(R.string.qd_save_slow), Toast.LENGTH_LONG).show()
             }
-            withContext(Dispatchers.Main) {
-                closeJob = null
-                state.isSaving = false
+            try {
+                if (!withContext(Dispatchers.IO) { draftWrite.commit() }) {
+                    Toast.makeText(this@FloatingNoteService, getString(R.string.qd_save_draft_failed), Toast.LENGTH_LONG).show()
+                    return@launch
+                }
+                val result = FloatingNoteSaveRunner.start(applicationContext, request).await()
+                if (closingOverlay || draftCloseJob?.isActive == true || overlayView == null) return@launch
+                FloatingNoteTiming.mark("save_use_case_done", "result=${result::class.simpleName}")
                 when (result) {
                     FloatingNoteSaveResult.Saved -> {
-                        FloatingNoteDraftStore.clear(this@FloatingNoteService, state.targetRelativePath)
+                        if (!request.matches(state.text, state.selectedImages.toList(), state.pendingAttachments.toList(), state.targetRelativePath)) return@launch
+                        val clearDraft = FloatingNoteDraftStore.prepareClear(this@FloatingNoteService, request.target)
+                        if (!withContext(Dispatchers.IO) { clearDraft.commit() }) {
+                            showSaveRecovery(UiText.Resource(R.string.qd_save_draft_failed))
+                            return@launch
+                        }
+                        if (closingOverlay || draftCloseJob?.isActive == true || overlayView == null) return@launch
+                        FloatingNoteSaveReceipts(this@FloatingNoteService).acknowledge(request.path)
+                        if (!FloatingNoteEntryPolicy.isSystemSidebarSupportEnabled(this@FloatingNoteService)) {
+                            Toast.makeText(this@FloatingNoteService, getString(R.string.qd_editor_saved), Toast.LENGTH_SHORT).show()
+                        }
                         val openedObsidian = FloatingNoteObsidianLauncher.openAfterSuccessfulSave(
                             this@FloatingNoteService,
                             state.targetRelativePath,
@@ -475,74 +538,32 @@ class FloatingNoteService : LocalizedLifecycleService() {
                     }
                     FloatingNoteSaveResult.NoContent -> {
                         FloatingNoteDraftStore.clear(this@FloatingNoteService, state.targetRelativePath)
-                        completeClose(reason, openHomeAfterClose)
-                    }
-                    is FloatingNoteSaveResult.Failed -> {
-                        BetaLogger.log("FloatingNote/Close", "save_failed reason=$reason messageType=${result.message::class.simpleName}")
-                        Toast.makeText(this@FloatingNoteService, result.message.resolve(this@FloatingNoteService), Toast.LENGTH_LONG).show()
-                    }
-                }
-            }
-        }
-    }
-    private fun completeClose(reason: String, openHomeAfterClose: Boolean) {
-        if (openHomeAfterClose) openHome() else hideOverlay(reason, persistDraft = false)
-    }
-    private fun saveDraft() {
-        FloatingNoteTiming.mark("save_requested")
-        if (state.isSaving) return
-        if (!state.hasContent()) {
-            requestClose("save_empty")
-            return
-        }
-        state.isSaving = true
-        FloatingNoteDraftStore.persistOrClear(this, state)
-        BetaLogger.log(
-            "FloatingNote/Save",
-            "images=${state.selectedImages.size} attachments=${state.pendingAttachments.size}"
-        )
-        lifecycleScope.launch {
-            FloatingNoteTiming.mark("save_start")
-            val result = try {
-                saveUseCase.save(
-                    state.text,
-                    state.selectedImages.toList(),
-                    state.pendingAttachments.toList(),
-                    targetRelativePath = state.targetRelativePath,
-                )
-            } catch (error: Throwable) {
-                BetaLogger.logException("FloatingNote/Save", "save_use_case_failed", error)
-                FloatingNoteSaveResult.Failed(UiText.Resource(R.string.qd_editor_save_failed_generic))
-            }
-            withContext(Dispatchers.Main) {
-                FloatingNoteTiming.mark("save_use_case_done", "result=${result::class.simpleName}")
-                state.isSaving = false
-                when (result) {
-                    FloatingNoteSaveResult.Saved -> {
-                        FloatingNoteDraftStore.clear(this@FloatingNoteService, state.targetRelativePath)
-                        if (!FloatingNoteEntryPolicy.isSystemSidebarSupportEnabled(this@FloatingNoteService)) {
-                            Toast.makeText(this@FloatingNoteService, getString(R.string.qd_editor_saved), Toast.LENGTH_SHORT).show()
-                        }
-                        FloatingNoteObsidianLauncher.openAfterSuccessfulSave(
-                            this@FloatingNoteService,
-                            state.targetRelativePath,
-                        )
-                        hideOverlay("saved", persistDraft = false)
-                    }
-                    FloatingNoteSaveResult.NoContent -> {
-                        FloatingNoteDraftStore.clear(this@FloatingNoteService, state.targetRelativePath)
                         completeClose("saved_empty", state.returnToHomeAfterClose)
                     }
                     is FloatingNoteSaveResult.Failed -> {
                         BetaLogger.log("FloatingNote/Save", "failed messageType=${result.message::class.simpleName}")
-                        Toast.makeText(this@FloatingNoteService, result.message.resolve(this@FloatingNoteService), Toast.LENGTH_LONG).show()
+                        showSaveRecovery(result.message,
+                            onVerifiedRetry = if ((result.message as? UiText.Resource)?.resId == R.string.qd_save_unconfirmed) ({
+                                FloatingNoteSaveReceipts(this@FloatingNoteService).acknowledge(request.path)
+                                saveDraft()
+                            }) else null,
+                        )
                     }
                 }
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                BetaLogger.logException("FloatingNote/Save", "save_failed", error)
+                if (!closingOverlay) showSaveRecovery(UiText.Resource(R.string.qd_editor_save_failed_generic))
+            } finally {
+                slowNotice.cancel()
+                state.isSaving = false
             }
         }
     }
 
     private fun openPicker(mode: String) {
+        if (state.isSaving) return
         FloatingNoteDraftStore.persistOrClear(this, state)
         if (mode == FloatingNotePickerActivity.MODE_IMAGES ||
             mode == FloatingNotePickerActivity.MODE_ATTACHMENT ||
@@ -604,7 +625,7 @@ class FloatingNoteService : LocalizedLifecycleService() {
         FloatingNoteDraftStore.persistOrClear(this, state)
     }
 
-    private fun stopRecording(refreshOverlay: Boolean = isWindowShowing) {
+    private fun stopRecording(keepAttachment: Boolean = true) {
         val activeRecorder = recorder ?: return
         val file = recordingFile
         recorder = null
@@ -615,40 +636,21 @@ class FloatingNoteService : LocalizedLifecycleService() {
         val stopped = runCatching { activeRecorder.stop() }.isSuccess
         runCatching { activeRecorder.reset() }
         runCatching { activeRecorder.release() }
-        if (!stopped || file == null) {
+        if (!stopped || file == null || !keepAttachment) {
             file?.delete()
             recordingState = FloatingNoteRecordingPolicy.afterFinalize(recordingState)
             return
         }
-        recordingJob = recordingScope.launch {
-            val link = runCatching { EditorMediaUtil.audioLink(this@FloatingNoteService, file) }.getOrNull()
-            if (link != null) {
-                file.delete()
-                FloatingNoteDraftStore.insertLink(this@FloatingNoteService, link, state.targetRelativePath)
-                if (refreshOverlay) {
-                    withContext(Dispatchers.Main) {
-                        if (overlayView != null) {
-                            FloatingNoteDraftStore.loadInto(
-                                this@FloatingNoteService,
-                                state,
-                                FloatingNoteRequest(state.source, returnToHomeAfterClose = false, targetRelativePath = state.targetRelativePath, rememberTarget = state.rememberTarget),
-                            )
-                            targetOptions = FloatingNoteTargetStore.options(this@FloatingNoteService, state.targetRelativePath)
-                        }
-                    }
-                }
-            } else if (refreshOverlay) {
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(this@FloatingNoteService, getString(R.string.qd_editor_recording_save_failed), Toast.LENGTH_SHORT).show()
-                }
-            }
-        }.also { job ->
-            job.invokeOnCompletion {
-                if (recordingJob === job) recordingJob = null
-                recordingState = FloatingNoteRecordingPolicy.afterFinalize(recordingState)
-                if (closingOverlay) recordingScope.cancel()
-            }
-        }
+        // Keep the original until the note transaction imports it, including when closing offline.
+        val uri = CaptureFileUtil.fileUri(this, file)
+        state.pendingAttachments.add(uri)
+        val inserted = EditorMediaUtil.insertLink(state.text,
+            androidx.compose.ui.text.TextRange(state.selectionStart, state.selectionEnd), "![[${uri}]]")
+        state.text = inserted.text
+        state.selectionStart = inserted.selection.start
+        state.selectionEnd = inserted.selection.end
+        FloatingNoteDraftStore.persist(this, state)
+        recordingState = FloatingNoteRecordingPolicy.afterFinalize(recordingState)
     }
 
     private fun beginMoveOverlay() {
@@ -735,7 +737,7 @@ class FloatingNoteService : LocalizedLifecycleService() {
     }
 
     private fun openFullScreen() {
-        if (closingOverlay) return
+        if (closingOverlay || state.isSaving) return
         FloatingNoteDraftStore.persistOrClear(this, state)
         if (floatingCoachStep == OnboardingPolicy.FLOATING_COACH_STEP_COUNT - 2) {
             floatingCoachStep = OnboardingStore.advanceFloatingCoach(this)
@@ -773,7 +775,9 @@ class FloatingNoteService : LocalizedLifecycleService() {
         closingOverlay = true
         FloatingNoteTiming.mark("hide_start", "reason=$reason")
         BetaLogger.log("FloatingNote/Window", "hide reason=$reason")
-        stopRecording(refreshOverlay = false)
+        recoveryDialog?.dismiss()
+        recoveryDialog = null
+        stopRecording(keepAttachment = reason != "close")
         persistWindowPosition()
         if (persistDraft) {
             FloatingNoteDraftStore.persistOrClear(this, state)
@@ -827,11 +831,12 @@ class FloatingNoteService : LocalizedLifecycleService() {
     }
 
     override fun onDestroy() {
-        closeJob?.cancel()
-        closeJob = null
+        saveJob?.cancel()
+        saveJob = null
         closingOverlay = true
+        recoveryDialog?.dismiss()
+        recoveryDialog = null
         stopRecording()
-        if (recordingJob?.isActive != true) recordingScope.cancel()
         persistWindowPosition()
         overlayView?.let { view ->
             FloatingNoteImeController.hide(view) { stage, detail ->

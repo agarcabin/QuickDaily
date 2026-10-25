@@ -286,11 +286,11 @@ object FloatingNoteDraftStore {
         state.pendingAttachments.clear()
         state.invalidAttachments.clear()
         persistedImages.forEach { uri ->
-            if (isUriReadable(context, uri)) state.selectedImages.add(uri)
+            if (canRestoreUri(uri)) state.selectedImages.add(uri)
             else state.invalidAttachments.add(uri)
         }
         persistedAttachments.forEach { uri ->
-            if (isUriReadable(context, uri)) state.pendingAttachments.add(uri)
+            if (canRestoreUri(uri)) state.pendingAttachments.add(uri)
             else state.invalidAttachments.add(uri)
         }
         state.source = request.source
@@ -344,9 +344,14 @@ object FloatingNoteDraftStore {
     }
 
     fun persist(context: Context, state: FloatingNoteEditorState) {
+        preparePersist(context, state).apply()
+    }
+
+    /** Capture values on the UI thread; callers commit this snapshot on an IO worker. */
+    fun preparePersist(context: Context, state: FloatingNoteEditorState): android.content.SharedPreferences.Editor {
         val targetKey = FloatingNoteDraftTargetPolicy.keyFor(context, state.targetRelativePath)
         val prefix = prefixFor(targetKey)
-        context.getSharedPreferences(FLOATING_NOTE_PREFS, Context.MODE_PRIVATE).edit()
+        return context.getSharedPreferences(FLOATING_NOTE_PREFS, Context.MODE_PRIVATE).edit()
             .putString(prefix + FIELD_TEXT, state.text)
             .putString(prefix + FIELD_IMAGES, writeUris(state.selectedImages))
             .putString(prefix + FIELD_ATTACHMENTS, writeUris(state.pendingAttachments + state.invalidAttachments))
@@ -356,8 +361,6 @@ object FloatingNoteDraftStore {
             .putString(prefix + FIELD_DISPLAY_TITLE, state.displayTitle)
             .putInt(prefix + FIELD_SELECTION_START, state.selectionStart.coerceIn(0, state.text.length))
             .putInt(prefix + FIELD_SELECTION_END, state.selectionEnd.coerceIn(0, state.text.length))
-            .apply()
-        BetaLogger.log("FloatingNote/Draft", "persist targetKey=$targetKey textLength=${state.text.length}")
     }
 
     fun persistOrClear(context: Context, state: FloatingNoteEditorState) {
@@ -365,6 +368,10 @@ object FloatingNoteDraftStore {
     }
 
     fun clear(context: Context, targetRelativePath: String? = null) {
+        prepareClear(context, targetRelativePath).apply()
+    }
+
+    fun prepareClear(context: Context, targetRelativePath: String? = null): android.content.SharedPreferences.Editor {
         val targetKey = FloatingNoteDraftTargetPolicy.keyFor(context, targetRelativePath)
         val prefix = prefixFor(targetKey)
         val editor = context.getSharedPreferences(FLOATING_NOTE_PREFS, Context.MODE_PRIVATE).edit()
@@ -379,8 +386,7 @@ object FloatingNoteDraftStore {
                 LEGACY_KEY_SELECTION_START, LEGACY_KEY_SELECTION_END,
             ).forEach(editor::remove)
         }
-        editor.apply()
-        BetaLogger.log("FloatingNote/Draft", "clear targetKey=$targetKey")
+        return editor
     }
 
     fun addImages(context: Context, uris: List<Uri>, targetRelativePath: String? = null) {
@@ -391,7 +397,7 @@ object FloatingNoteDraftStore {
             targetRelativePath = targetRelativePath,
         ))
         uris.forEach { uri ->
-            if (isUriReadable(context, uri)) state.selectedImages.add(uri)
+            if (canRestoreUri(uri)) state.selectedImages.add(uri)
             else state.invalidAttachments.add(uri)
         }
         persist(context, state)
@@ -405,7 +411,7 @@ object FloatingNoteDraftStore {
             targetRelativePath = targetRelativePath,
         ))
         state.text = if (state.text.isBlank()) "![[${uri}]]" else "${state.text}\n![[${uri}]]"
-        if (isUriReadable(context, uri)) state.pendingAttachments.add(uri) else state.invalidAttachments.add(uri)
+        if (canRestoreUri(uri)) state.pendingAttachments.add(uri) else state.invalidAttachments.add(uri)
         persist(context, state)
     }
 
@@ -525,11 +531,13 @@ object FloatingNoteDraftStore {
     private fun prefixFor(targetKey: String): String =
         KEY_PREFIX + Base64.encodeToString(targetKey.toByteArray(Charsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP) + "_"
 
-    private fun isUriReadable(context: Context, uri: Uri): Boolean = runCatching {
+    // Draft restoration runs on the UI thread. Never probe a remote provider here;
+    // thumbnail loaders and the save worker verify actual readability off-thread.
+    private fun canRestoreUri(uri: Uri): Boolean = runCatching {
         when (uri.scheme?.lowercase()) {
-            "file" -> uri.path?.let { java.io.File(it).canRead() } == true
-            "content" -> context.contentResolver.openFileDescriptor(uri, "r")?.use { true } == true
-            else -> true
+            "file" -> !uri.path.isNullOrBlank()
+            "content" -> !uri.authority.isNullOrBlank()
+            else -> false
         }
     }.getOrDefault(false)
 }

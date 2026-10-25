@@ -71,6 +71,50 @@ class FileSaveCoordinatorTest {
     }
 
     @Test
+    fun failedNewWriteDoesNotDeleteUnknownPartialContentOrForgetItsJournal() {
+        val file = fixture("missing")
+        assertTrue(file.delete())
+        FileSaveTestHooks.targetWriter = { path, _ ->
+            File(path).writeText("unrecognised partial or external content")
+            throw IOException("interrupted new write")
+        }
+
+        val result = FileUtil.saveTextResult(file.path, "intended note")
+
+        assertEquals(FileSaveStatus.RECOVERY_FAILED, result.status)
+        assertTrue(file.readText().startsWith("unrecognised"))
+        assertEquals(SafeRecoveryState.RECOVERY_REQUIRED, FileUtil.pendingSaveRecoveries().single { it.path == file.path }.safeState)
+        FileSaveTestHooks.clear()
+        val retry = FileUtil.saveTextResult(file.path, "retry must not overwrite")
+        assertEquals(FileSaveStatus.RECOVERY_FAILED, retry.status)
+        assertTrue(file.readText().startsWith("unrecognised"))
+    }
+
+    @Test
+    fun failedNewWriteOnlyCleansUpWhenFileIdentityIsAvailable() {
+        val file = fixture("missing")
+        assertTrue(file.delete())
+        var identity: String? = null
+        FileSaveTestHooks.targetWriter = { path, _ ->
+            identity = FileUtil.fingerprint(path)?.identity
+            throw IOException("before first byte")
+        }
+
+        val result = FileUtil.saveTextResult(file.path, "note")
+
+        if (identity != null) {
+            assertEquals(FileSaveStatus.WRITE_FAILED, result.status)
+            assertFalse(file.exists())
+            assertTrue(FileUtil.pendingSaveRecoveries().none { it.path == file.path })
+        } else {
+            // Some Windows filesystems expose no fileKey; never guess that identity.
+            assertEquals(FileSaveStatus.RECOVERY_FAILED, result.status)
+            assertTrue(file.exists())
+            assertTrue(FileUtil.pendingSaveRecoveries().any { it.path == file.path })
+        }
+    }
+
+    @Test
     fun postWriteHashMismatchIsRestored() {
         val file = fixture("original")
         val before = FileUtil.fingerprint(file.path)

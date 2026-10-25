@@ -40,14 +40,20 @@ class QuickDailyReadWidget : AppWidgetProvider() {
     override fun onDeleted(context: Context, appWidgetIds: IntArray) {
         BetaLogger.init(context)
         BetaLogger.log("ReadWidget", "onDeleted widgetIds=" + appWidgetIds.joinToString())
-        appWidgetIds.forEach { ReadWidgetConfigStore.clear(context, it) }
+        appWidgetIds.forEach { ReadWidgetConfigStore.clear(context, it); WidgetSnapshots.read.remove(it) }
         super.onDeleted(context, appWidgetIds)
     }
 
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == AppWidgetManager.ACTION_APPWIDGET_UPDATE ||
+            intent.action == AppWidgetManager.ACTION_APPWIDGET_OPTIONS_CHANGED || intent.action == ACTION_REFRESH) {
+            val result = goAsync()
+            WidgetRefreshCoordinator.holdReceiver("read") { result.finish() }
+        }
         BetaLogger.init(context)
         BetaLogger.log("ReadWidget", "onReceive action=${intent.action} widgetId=${intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1)}")
         try { super.onReceive(context, intent) } catch (_: Exception) { }
+        if (intent.action == ACTION_REFRESH) refreshAllWidgets(context, immediate = true)
         if (ACTION_SCOPE == intent.action) {
             val widgetId = intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, INVALID_WIDGET_ID)
             if (widgetId >= 0) {
@@ -144,8 +150,11 @@ class QuickDailyReadWidget : AppWidgetProvider() {
                         WidgetFillInContract.KIND_READ,
                         id,
                     )
+                    try {
                     val config = ReadWidgetConfigStore.load(context, id)
-                    val result = WidgetContentLoader.loadRead(context, config)
+                    val vault = com.quickdaily.util.VaultStoragePrefs.current(context).rootPath
+                    // A stuck old provider must not keep this instance from reading a newly selected local vault.
+                    val result = BoundedWidgetLoader.load("read/$id/$vault", generation) { WidgetContentLoader.loadRead(context, config) }
                     logWidgetResult("ReadWidget[$id]", result)
                     if (!WidgetGeneration.isCurrent(
                             context,
@@ -158,6 +167,13 @@ class QuickDailyReadWidget : AppWidgetProvider() {
                         continue
                     }
                     updateWidget(context, manager, id, result, generation)
+                    } catch (error: Exception) {
+                        BetaLogger.logException("ReadWidget", "refresh_instance_failed widgetId=$id", error)
+                        if (WidgetGeneration.isCurrent(context, WidgetFillInContract.KIND_READ, id, generation)) {
+                            runCatching { updateWidget(context, manager, id,
+                                WidgetLoadResult.Failure(UiText.Resource(R.string.qd_widget_refresh_failed)), generation) }
+                        }
+                    }
                 }
                 if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) {
                     manager.notifyAppWidgetViewDataChanged(ids, R.id.content_list)
@@ -271,7 +287,10 @@ class QuickDailyReadWidget : AppWidgetProvider() {
             // Title
             views.setTextColor(R.id.widget_title, appearance.foreground)
             views.setTextColor(R.id.empty_view, appearance.muted)
-            val effectiveResult = result ?: WidgetLoadResult.Empty(UiText.Resource(R.string.qd_widget_loading))
+            val effectiveResult = result ?: WidgetLoadResult.Empty(UiText.Resource(R.string.qd_widget_refresh_ready))
+            val refreshIntent = Intent(ctx, QuickDailyReadWidget::class.java).apply { action = ACTION_REFRESH }
+            views.setOnClickPendingIntent(R.id.empty_view, PendingIntent.getBroadcast(ctx, widgetId + 500,
+                refreshIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
             val status: CharSequence = when (effectiveResult) {
                 is WidgetLoadResult.Success -> uiContext.getString(R.string.qd_widget_no_diary)
                 is WidgetLoadResult.Empty -> effectiveResult.message.resolve(uiContext)
@@ -292,6 +311,15 @@ class QuickDailyReadWidget : AppWidgetProvider() {
                     ),
                 )
             } else {
+                val items = (effectiveResult as? WidgetLoadResult.Success)?.value.orEmpty()
+                val message = when (effectiveResult) {
+                    is WidgetLoadResult.Empty -> effectiveResult.message
+                    is WidgetLoadResult.Failure -> effectiveResult.message
+                    is WidgetLoadResult.Success -> null
+                }
+                WidgetSnapshots.read[widgetId] = WidgetSnapshots.Read(renderGeneration,
+                    WidgetDisplayPreparer.prepareRead(items, WidgetDisplayPreparer.rules(ctx),
+                        imagePlaceholder = uiContext.getString(R.string.qd_widget_image_placeholder)), message)
                 // API 26-30 fallback: bind the RemoteViewsService with BIND_REMOTEVIEWS.
                 val serviceIntent = Intent(ctx, QuickDailyReadWidgetService::class.java).apply {
                     data = Uri.parse("quickdaily://read-widget/$widgetId/$renderGeneration")
@@ -315,5 +343,6 @@ class QuickDailyReadWidget : AppWidgetProvider() {
 
         private const val INVALID_WIDGET_ID = -1
         private const val ACTION_TOGGLE_TASK = "com.quickdaily.READ_TOGGLE_TASK"
+        private const val ACTION_REFRESH = "com.quickdaily.READ_REFRESH"
     }
 }

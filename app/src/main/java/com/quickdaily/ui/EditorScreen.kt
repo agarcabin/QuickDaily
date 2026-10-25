@@ -123,6 +123,7 @@ fun EditorScreen(
     val navBarColor = MaterialTheme.colorScheme.surface.toArgb()
     val diaryContent by appState.diaryContent.collectAsStateWithLifecycle()
     val isLoaded by appState.isLoaded.collectAsStateWithLifecycle()
+    val loadError by appState.editorLoadError.collectAsStateWithLifecycle()
     val editorConflict by appState.editorConflict.collectAsStateWithLifecycle()
     val todayPath by appState.todayPath.collectAsStateWithLifecycle()
     val editorTargetRelativePath by appState.editorTargetRelativePath.collectAsStateWithLifecycle()
@@ -501,7 +502,8 @@ fun EditorScreen(
                             if (appState.editorConflict.value != null) {
                                 Toast.makeText(context, context.getString(R.string.qd_editor_external_change), Toast.LENGTH_LONG).show()
                             } else if (!saveSucceeded) {
-                                Toast.makeText(context, context.getString(R.string.qd_editor_save_incomplete), Toast.LENGTH_LONG).show()
+                                Toast.makeText(context, appState.lastSaveFailure.value?.resolve(context)
+                                    ?: context.getString(R.string.qd_editor_save_incomplete), Toast.LENGTH_LONG).show()
                             } else {
                                 val storage = VaultStoragePrefs.current(context)
                                 val vaultId = context.getSharedPreferences("QuickDaily", 0)
@@ -818,6 +820,21 @@ fun EditorScreen(
                 if (!isLoaded) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator()
+                    }
+                } else if (loadError != null) {
+                    Column(
+                        modifier = Modifier.align(Alignment.Center).widthIn(max = 480.dp)
+                            .verticalScroll(rememberScrollState()).padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        Text(loadError!!.resolve(context).toString(), style = MaterialTheme.typography.bodyLarge)
+                        Button(onClick = { appState.preferLocalVault(forcePrompt = true); appState.loadEditorTarget(editorTargetRelativePath) }) {
+                            Text(stringResource(R.string.qd_editor_load_retry))
+                        }
+                        OutlinedButton(onClick = onSettingsClick) {
+                            Text(stringResource(R.string.qd_editor_load_settings))
+                        }
                     }
                 } else if (showPreview) {
                     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {

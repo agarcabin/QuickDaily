@@ -4,6 +4,7 @@ import android.content.Context
 import com.quickdaily.util.DateUtil
 import com.quickdaily.util.FileUtil
 import com.quickdaily.util.VaultStoragePrefs
+import com.quickdaily.util.VaultPathUtil
 
 enum class ReadWidgetTarget(
     val key: String,
@@ -110,9 +111,9 @@ object ReadWidgetConfigStore {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val vault = VaultStoragePrefs.current(context).rootPath
         if (vault.isBlank()) return null
-        val diaryFolder = prefs.getString("diary_folder", "Daily").orEmpty().trim().ifBlank { "Daily" }
+        val diaryFolder = prefs.getString("diary_folder", "Daily").orEmpty()
         val dateFormat = prefs.getString("date_format", "YYYY-MM-DD").orEmpty().ifBlank { "YYYY-MM-DD" }
-        return "${vault.trimEnd('/')}/${diaryFolder.trimEnd('/')}/${DateUtil.todayStr(dateFormat)}.md"
+        return VaultPathUtil.resolve(vault, VaultPathUtil.dailyRelativePath(diaryFolder, DateUtil.todayStr(dateFormat)))
     }
 
     fun recentCustomPaths(context: Context): List<String> =

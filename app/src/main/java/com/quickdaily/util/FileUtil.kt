@@ -53,7 +53,18 @@ data class FileReadSnapshot(
 )
 
 /** Test seams for deterministic partial-write and post-write verification tests. */
+internal data class CreatedSafTarget(
+    val path: String,
+    val name: String?,
+    val delete: () -> Boolean,
+    val exists: () -> Boolean,
+)
+
 internal object FileSaveTestHooks {
+    @Volatile
+    var fingerprintReader: ((String) -> FileFingerprint?)? = null
+    @Volatile
+    var safCreator: ((String) -> CreatedSafTarget?)? = null
     @Volatile
     var targetWriter: ((path: String, bytes: ByteArray) -> Unit)? = null
 
@@ -70,6 +81,8 @@ internal object FileSaveTestHooks {
     var abortAfterJournalStage: FileSaveStage? = null
 
     fun clear() {
+        fingerprintReader = null
+        safCreator = null
         targetWriter = null
         beforeTargetWrite = null
         afterTargetWrite = null
@@ -145,8 +158,17 @@ object FileUtil {
         bytes: ByteArray,
         expectedFingerprint: FileFingerprint? = null,
         rejectDifferentExisting: Boolean = false,
-    ): FileSaveResult = withPathMutation(path) {
-        saveBytesLocked(path, bytes, expectedFingerprint, rejectDifferentExisting)
+    ): FileSaveResult = try {
+        withPathMutation(path) {
+            saveBytesLocked(path, bytes, expectedFingerprint, rejectDifferentExisting)
+        }
+    } catch (error: java.util.concurrent.CancellationException) {
+        throw error
+    } catch (error: Exception) {
+        if (error !is SecurityException && error !is IOException) throw error
+        failure(FileSaveStatus.WRITE_FAILED, backendFor(path), targetKey(path), null,
+            FileFingerprint.fromBytes(bytes), exceptionType = error.javaClass.simpleName,
+            diagnostic = "save_exception")
     }
 
     /** Compatibility result API retained for callers that only need Boolean-like status. */
@@ -197,6 +219,7 @@ object FileUtil {
 
     /** Reads a stable content fingerprint for external-edit detection. */
     fun fingerprint(path: String): FileFingerprint? {
+        FileSaveTestHooks.fingerprintReader?.let { return it(path) }
         if (isSafBackedPath(path)) {
             return StorageContextHolder.get()?.let { VaultStorage.fingerprint(it, path) }
         }
@@ -275,9 +298,14 @@ object FileUtil {
 
     /** Called by Application startup so interrupted writes are discoverable. */
     fun recoverPendingSaves(): List<PendingSaveRecovery> {
-        val recoveries = pendingSaveRecoveries()
-        recoveries.filter { it.safeState != SafeRecoveryState.RECOVERY_REQUIRED }
-            .forEach { deleteJournal(it.targetKey) }
+        val recoveries = pendingSaveRecoveries().mapNotNull { pending ->
+            // Reinspect under the writer's lock: startup inspection may overlap a new save.
+            withPathMutation(pending.path) {
+                val current = inspectJournal(File(journalRoot(), "${pending.targetKey}.state"))
+                if (current != null && current.safeState != SafeRecoveryState.RECOVERY_REQUIRED) deleteJournal(current.targetKey)
+                current
+            }
+        }
         if (recoveries.isNotEmpty()) {
             runCatching {
                 Log.w(
@@ -327,6 +355,11 @@ object FileUtil {
         val backend = backendFor(path)
         val key = targetKey(path)
         val expected = FileFingerprint.fromBytes(bytes)
+        val pending = File(journalRoot(), "$key.state").takeIf { it.exists() }?.let(::inspectJournal)
+        if (pending?.safeState == SafeRecoveryState.RECOVERY_REQUIRED) {
+            return failure(FileSaveStatus.RECOVERY_FAILED, backend, key, null, expected,
+                diagnostic = "pending_save_requires_recovery")
+        }
         val before = fingerprint(path)
             ?: return failure(
                 FileSaveStatus.BACKUP_FAILED,
@@ -630,21 +663,76 @@ object FileUtil {
         bytes: ByteArray,
     ): FileSaveResult {
         var createdPhysical = false
-        var createdSaf = false
+        var createdSaf: CreatedSafTarget? = null
+        var createdPath: String? = null
+        var createdFingerprint: FileFingerprint? = null
         val context = StorageContextHolder.get()
+        fun cleanUp(): Boolean {
+            val exact = createdPath
+            val removed = if (createdSaf != null) {
+                runCatching {
+                    val current = exact?.let(::fingerprint)
+                    when {
+                        current?.exists == false -> true
+                        SafFileCreationPolicy.canRemoveCreated(createdFingerprint, current, expected) ->
+                            createdSaf!!.delete() && !createdSaf!!.exists()
+                        else -> false
+                    }
+                }.getOrDefault(false)
+            } else if (createdPhysical) {
+                // Keep unknown partial content for recovery rather than guessing who wrote it.
+                val current = fingerprint(path)
+                !File(path).exists() || (SafFileCreationPolicy.canRemoveCreated(createdFingerprint, current, expected) && File(path).delete())
+            } else true
+            if (removed) deleteJournal(key)
+            return removed
+        }
         try {
             if (backend == FileSaveBackend.SAF) {
-                val safContext = context
-                    ?: return failure(FileSaveStatus.UNSUPPORTED, backend, key, before, expected, diagnostic = "saf_context_unavailable")
-                if (VaultStorage.documentForPath(safContext, path) != null) {
+                if (fingerprint(path)?.exists != false) {
                     deleteJournal(key)
                     return failure(FileSaveStatus.CONFLICT, backend, key, before, expected, diagnostic = "target_created_concurrently")
                 }
-                if (VaultStorage.createDocumentForPath(safContext, path) == null) {
+                val creator = FileSaveTestHooks.safCreator
+                val created = if (creator != null) creator(path) else {
+                    val safContext = context
+                        ?: return failure(FileSaveStatus.UNSUPPORTED, backend, key, before, expected, diagnostic = "saf_context_unavailable")
+                    VaultStorage.createDocumentForPath(safContext, path)?.let { document ->
+                        CreatedSafTarget(
+                            SafDocumentPath.forDocumentUri(document.uri) ?: throw IOException("SAF created document identity unavailable"),
+                            document.name,
+                            delete = { VaultStorage.deleteDocument(document) },
+                            exists = { document.exists() },
+                        )
+                    }
+                }
+                if (created == null) {
                     deleteJournal(key)
                     return failure(FileSaveStatus.WRITE_FAILED, backend, key, before, expected, diagnostic = "saf_create_failed")
                 }
-                createdSaf = true
+                createdSaf = created
+                createdPath = created.path
+                createdFingerprint = fingerprint(createdPath!!)
+                val recorded = writeJournal(JournalRecord(key, path, FileSaveStage.WRITE_STARTED, before, expected, null, createdPath))
+                if (!recorded) {
+                    cleanUp()
+                    return failure(FileSaveStatus.BACKUP_FAILED, backend, key, before, expected, diagnostic = "created_document_journal_failed")
+                }
+                if (createdFingerprint?.exists != true || createdFingerprint?.length != 0L) {
+                    return failure(FileSaveStatus.RECOVERY_FAILED, backend, key, before, expected,
+                        diagnostic = "created_document_not_empty")
+                }
+                val requestedName = path.substringAfterLast('/')
+                if (created.name != requestedName) {
+                    val removed = cleanUp()
+                    return failure(if (removed) FileSaveStatus.WRITE_FAILED else FileSaveStatus.RECOVERY_FAILED,
+                        backend, key, before, expected, diagnostic = "saf_created_name_mismatch")
+                }
+                val resolved = fingerprint(path)
+                if (createdFingerprint?.hasSameIdentityAs(resolved) != true) {
+                    cleanUp()
+                    return failure(FileSaveStatus.CONFLICT, backend, key, before, expected, diagnostic = "saf_created_identity_mismatch")
+                }
             } else {
                 val target = File(path).absoluteFile
                 target.parentFile?.mkdirs()
@@ -653,16 +741,19 @@ object FileUtil {
                     return failure(FileSaveStatus.CONFLICT, backend, key, before, expected, diagnostic = "target_created_concurrently")
                 }
                 createdPhysical = true
+                createdFingerprint = fingerprint(path)
             }
 
-            val error = runCatching { writeInPlace(path, bytes) }.exceptionOrNull()
-            val after = fingerprint(path)
-            if (error == null && after?.hasSameContentAs(expected) == true) {
+            val writePath = createdPath ?: path
+            val error = runCatching { writeInPlace(writePath, bytes) }.exceptionOrNull()
+            val after = fingerprint(writePath)
+            val pathMatches = createdSaf == null || after?.hasSameIdentityAs(fingerprint(path)) == true
+            if (error == null && pathMatches && after?.hasSameContentAs(expected) == true) {
                 val targetVerifiedJournaled = writeJournal(
-                    JournalRecord(key, path, FileSaveStage.TARGET_VERIFIED, before, expected, null),
+                    JournalRecord(key, path, FileSaveStage.TARGET_VERIFIED, before, expected, null, createdPath),
                 )
                 val completedJournaled = targetVerifiedJournaled && writeJournal(
-                    JournalRecord(key, path, FileSaveStage.COMPLETED, before, expected, null),
+                    JournalRecord(key, path, FileSaveStage.COMPLETED, before, expected, null, createdPath),
                 )
                 if (!targetVerifiedJournaled || !completedJournaled) {
                     return FileSaveResult(
@@ -689,11 +780,9 @@ object FileUtil {
                     identityPreserved = false,
                 )
             }
-            if (createdPhysical) File(path).delete()
-            if (createdSaf) context?.let { VaultStorage.deleteDocumentForPath(it, path) }
-            deleteJournal(key)
+            val removed = cleanUp()
             return failure(
-                if (error == null) FileSaveStatus.VERIFY_FAILED else FileSaveStatus.WRITE_FAILED,
+                if (!removed) FileSaveStatus.RECOVERY_FAILED else if (error == null) FileSaveStatus.VERIFY_FAILED else FileSaveStatus.WRITE_FAILED,
                 backend,
                 key,
                 before,
@@ -703,11 +792,9 @@ object FileUtil {
                 diagnostic = "new_target_write_failed",
             )
         } catch (error: Exception) {
-            if (createdPhysical) File(path).delete()
-            if (createdSaf) context?.let { VaultStorage.deleteDocumentForPath(it, path) }
-            deleteJournal(key)
+            val removed = cleanUp()
             return failure(
-                FileSaveStatus.WRITE_FAILED,
+                if (removed) FileSaveStatus.WRITE_FAILED else FileSaveStatus.RECOVERY_FAILED,
                 backend,
                 key,
                 before,
@@ -820,6 +907,7 @@ object FileUtil {
         val before: FileFingerprint,
         val expected: FileFingerprint,
         val backupPath: String?,
+        val createdPath: String? = null,
     )
 
     private fun writeJournal(record: JournalRecord): Boolean {
@@ -833,6 +921,7 @@ object FileUtil {
                 setProperty("path", record.path)
                 setProperty("stage", record.stage.name)
                 setProperty("backupPath", record.backupPath.orEmpty())
+                setProperty("createdPath", record.createdPath.orEmpty())
                 putFingerprint(this, "before", record.before)
                 putFingerprint(this, "expected", record.expected)
             }
@@ -879,8 +968,12 @@ object FileUtil {
             val before = readFingerprint(properties, "before") ?: return@runCatching null
             val expected = readFingerprint(properties, "expected") ?: return@runCatching null
             val current = fingerprint(path)
+            val createdPath = properties.getProperty("createdPath").orEmpty().ifBlank { null }
+            val created = createdPath?.let(::fingerprint)
             val safeState = when {
-                current?.hasSameContentAs(expected) == true -> SafeRecoveryState.COMPLETED
+                current?.hasSameContentAs(expected) == true &&
+                    (createdPath == null || current.hasSameIdentityAs(created)) -> SafeRecoveryState.COMPLETED
+                createdPath != null && created?.exists != false -> SafeRecoveryState.RECOVERY_REQUIRED
                 current?.hasSameContentAs(before) == true -> SafeRecoveryState.NOT_STARTED
                 else -> SafeRecoveryState.RECOVERY_REQUIRED
             }
@@ -892,6 +985,7 @@ object FileUtil {
                 targetFingerprint = current,
                 expectedFingerprint = expected,
                 backupPath = properties.getProperty("backupPath").orEmpty().ifBlank { null },
+                createdPath = createdPath,
             )
         }.getOrNull()
     }

@@ -28,21 +28,22 @@ class ReadViewsFactory(
     private val widgetId: Int,
     private val generation: Long,
 ) : RemoteViewsService.RemoteViewsFactory {
-    private val lines = mutableListOf<PreparedReadWidgetItem>()
+    @Volatile
+    private var lines: List<PreparedReadWidgetItem> = emptyList()
 
     override fun onCreate() {
-        synchronized(QuickDailyReadWidgetService.readLoadLock) { loadContent() }
+        loadContent()
     }
 
     @Synchronized
     override fun onDataSetChanged() {
         BetaLogger.log("ReadWidgetSvc", "onDataSetChanged start")
-        synchronized(QuickDailyReadWidgetService.readLoadLock) { loadContent() }
+        loadContent()
         BetaLogger.log("ReadWidgetSvc", "onDataSetChanged complete lines=${lines.size}")
     }
 
     override fun onDestroy() {
-        lines.clear()
+        lines = emptyList()
     }
 
     override fun getCount(): Int = lines.size
@@ -68,47 +69,18 @@ class ReadViewsFactory(
     override fun hasStableIds(): Boolean = false
 
     private fun loadContent() {
-        lines.clear()
-        if (!WidgetGeneration.isCurrent(
-                context,
-                WidgetFillInContract.KIND_READ,
-                widgetId,
-                generation,
-            )
-        ) {
-            BetaLogger.log("ReadWidgetSvc", "skip stale factory widgetId=$widgetId generation=$generation")
+        if (!WidgetGeneration.isCurrent(context, WidgetFillInContract.KIND_READ, widgetId, generation)) {
+            lines = emptyList()
             return
         }
-        val config = ReadWidgetConfigStore.load(context, widgetId)
-        val result = WidgetContentLoader.loadRead(context, config)
-        if (!WidgetGeneration.isCurrent(
-                context,
-                WidgetFillInContract.KIND_READ,
-                widgetId,
-                generation,
-            )
-        ) {
-            BetaLogger.log("ReadWidgetSvc", "discard loaded stale factory widgetId=$widgetId generation=$generation")
-            return
-        }
-        if (result is WidgetLoadResult.Success) {
-            lines.addAll(
-                WidgetDisplayPreparer.prepareRead(
-                    result.value,
-                    WidgetDisplayPreparer.rules(context),
-                    imagePlaceholder = LocaleController.localizedContext(context).getString(R.string.qd_widget_image_placeholder),
-                ),
-            )
+        val snapshot = WidgetSnapshots.read[widgetId]?.takeIf { generation <= 0 || it.generation == generation }
+        lines = snapshot?.items.orEmpty()
+        if (snapshot == null) {
+            publishEmptyStatus(UiText.Resource(R.string.qd_widget_refresh_ready))
+            WidgetRefreshCoordinator.refreshRead(context)
         } else {
-            publishEmptyStatus(
-                when (result) {
-                    is WidgetLoadResult.Empty -> result.message
-                    is WidgetLoadResult.Failure -> result.message
-                    is WidgetLoadResult.Success -> UiText.Raw("")
-                }
-            )
+            snapshot.message?.let(::publishEmptyStatus)
         }
-        logWidgetResult("ReadWidgetSvc", result)
     }
 
     private fun publishEmptyStatus(message: UiText) {
@@ -117,9 +89,8 @@ class ReadViewsFactory(
         if (resolvedMessage.isBlank()) return
         try {
             val manager = android.appwidget.AppWidgetManager.getInstance(context)
-            val ids = manager.getAppWidgetIds(
-                android.content.ComponentName(context, QuickDailyReadWidget::class.java)
-            )
+            if (widgetId < 0 || !WidgetGeneration.isCurrent(context, WidgetFillInContract.KIND_READ, widgetId, generation)) return
+            val ids = intArrayOf(widgetId)
             if (ids.isNotEmpty()) {
                 val views = RemoteViews(context.packageName, R.layout.widget_diary_read)
                 views.setTextViewText(R.id.empty_view, resolvedMessage)

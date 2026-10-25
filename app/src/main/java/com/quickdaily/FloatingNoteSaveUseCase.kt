@@ -7,7 +7,6 @@ import com.quickdaily.util.DateUtil
 import com.quickdaily.util.DiaryAppendUtil
 import com.quickdaily.util.FileUtil
 import com.quickdaily.util.FileSaveResult
-import com.quickdaily.util.FileSaveStatus
 import com.quickdaily.util.ImageUtil
 import com.quickdaily.util.RecentTags
 import com.quickdaily.util.VaultPathUtil
@@ -26,26 +25,28 @@ sealed interface FloatingNoteSaveResult {
 
 /** The single save path used by NoteEditActivity and FloatingNoteService. */
 class FloatingNoteSaveUseCase(private val context: Context) {
-    suspend fun save(
+    internal suspend fun save(
         text: String,
         selectedImages: List<Uri>,
         pendingAttachments: List<Uri>,
         targetRelativePath: String? = null,
+        request: FloatingNoteSaveRequest? = null,
     ): FloatingNoteSaveResult = withContext(Dispatchers.IO) {
         if (!hasRealContent(text) && selectedImages.isEmpty() && pendingAttachments.isEmpty()) {
             return@withContext FloatingNoteSaveResult.NoContent
         }
 
         val prefs = context.getSharedPreferences("QuickDaily", Context.MODE_PRIVATE)
-        val vaultPath = VaultStoragePrefs.current(context).rootPath
+        val vaultPath = request?.vault ?: VaultStoragePrefs.current(context).rootPath
         if (vaultPath.isBlank() && targetRelativePath.isNullOrBlank()) {
             return@withContext FloatingNoteSaveResult.Failed(UiText.Resource(R.string.qd_editor_vault_path_required))
         }
 
         val diaryFolder = prefs.getString("diary_folder", "Daily").orEmpty()
         val dateFormat = prefs.getString("date_format", "YYYY-MM-DD").orEmpty()
-        val path = if (targetRelativePath.isNullOrBlank()) {
-            "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/${DateUtil.todayStr(dateFormat)}.md"
+        val path = request?.path ?: if (targetRelativePath.isNullOrBlank()) {
+            VaultPathUtil.resolve(vaultPath, VaultPathUtil.dailyRelativePath(diaryFolder, DateUtil.todayStr(dateFormat)))
+                ?: return@withContext FloatingNoteSaveResult.Failed(UiText.Resource(R.string.qd_editor_target_unavailable))
         } else {
             VaultPathUtil.resolveTarget(vaultPath, targetRelativePath)
                 ?: return@withContext FloatingNoteSaveResult.Failed(UiText.Resource(R.string.qd_editor_target_unavailable))
@@ -93,8 +94,20 @@ class FloatingNoteSaveUseCase(private val context: Context) {
 
         val mutationGuard = FileUtil.acquirePathMutation(path)
         try {
+        val signature = request?.signature
+        val receipts = FloatingNoteSaveReceipts(context)
+        if (signature != null) when (receipts.reconcile(path, signature)) {
+            ReceiptDecision.SAVED -> return@withContext FloatingNoteSaveResult.Saved
+            ReceiptDecision.UNCERTAIN -> return@withContext FloatingNoteSaveResult.Failed(UiText.Resource(R.string.qd_save_unconfirmed))
+            ReceiptDecision.READY -> Unit
+        }
         val initialFingerprint = FileUtil.fingerprint(path)
-        val existing = FileUtil.read(path)
+            ?: return@withContext FloatingNoteSaveResult.Failed(UiText.Resource(R.string.qd_save_backup_failed))
+        val existing = when (val read = FileUtil.readResult(path)) {
+            is com.quickdaily.util.ReadResult.Success -> read.content
+            com.quickdaily.util.ReadResult.NotFound -> ""
+            is com.quickdaily.util.ReadResult.Error -> return@withContext FloatingNoteSaveResult.Failed(UiText.Resource(R.string.qd_widget_read_failed))
+        }
         var parsed = ContentUtil.parseFrontmatter(existing)
         var body = if (parsed.hasFrontmatter) parsed.body else existing
 
@@ -102,10 +115,12 @@ class FloatingNoteSaveUseCase(private val context: Context) {
             val templatePath = prefs.getString("template_path", "").orEmpty()
             if (templatePath.isNotBlank()) {
                 val template = VaultPathUtil.resolveTarget(vaultPath, templatePath) ?: templatePath
-                FileUtil.readOrNull(template)?.takeIf { it.isNotEmpty() }?.let {
-                    parsed = ContentUtil.parseFrontmatter(it)
-                    body = if (parsed.hasFrontmatter) parsed.body else it
+                val templateContent = when (val read = FileUtil.readResult(template)) {
+                    is com.quickdaily.util.ReadResult.Success -> read.content
+                    else -> return@withContext FloatingNoteSaveResult.Failed(UiText.Resource(R.string.qd_save_template_failed))
                 }
+                parsed = ContentUtil.parseFrontmatter(templateContent)
+                body = if (parsed.hasFrontmatter) parsed.body else templateContent
             }
         }
 
@@ -162,13 +177,12 @@ class FloatingNoteSaveUseCase(private val context: Context) {
             ContentUtil.reconstructWithFrontmatter(parsed.frontmatter, newContent)
         } else newContent
 
+        if (signature != null && !receipts.prepare(path, signature, initialFingerprint, com.quickdaily.util.FileFingerprint.fromBytes(output.toByteArray(Charsets.UTF_8)))) {
+            return@withContext FloatingNoteSaveResult.Failed(UiText.Resource(R.string.qd_save_backup_failed))
+        }
         val saveResult = FileUtil.saveTextResult(path, output, expectedFingerprint = initialFingerprint)
         if (!saveResult.succeeded) {
-            val message = when (saveResult.status) {
-                FileSaveStatus.CONFLICT -> UiText.Resource(R.string.qd_editor_external_change)
-                FileSaveStatus.RECOVERED -> UiText.Resource(R.string.qd_editor_save_incomplete)
-                else -> UiText.Resource(R.string.qd_editor_save_failed_permission)
-            }
+            val message = saveResult.failureMessage()
             BetaLogger.log(
                 "FloatingNote/Save",
                 "coordinated_save_failed status=${saveResult.status} stage=${saveResult.stage} " +

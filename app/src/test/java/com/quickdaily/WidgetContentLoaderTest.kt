@@ -6,6 +6,43 @@ import org.junit.Test
 
 class WidgetContentLoaderTest {
     @Test
+    fun orderedReadItemsKeepTheirNumbersThroughDisplayPreparation() {
+        val body = "1. First\n2. **Second**\n10. Tenth\n- Bullet"
+        val items = WidgetContentLoader.parseReadLines(body, body, "/vault/today.md", 0)
+        val prepared = WidgetDisplayPreparer.prepareRead(items, emptyList())
+
+        assertEquals(listOf("ordered", "ordered", "ordered", "bullet"), items.map { it.type })
+        assertEquals(listOf("1. First", "2. Second", "10. Tenth", "  •  Bullet"), prepared.map { it.display.text })
+        assertTrue(prepared[1].display.styles.any { it.kind == DisplayStyleKind.BOLD && it.start == 3 && it.end == 9 })
+        assertEquals(listOf(0, 1, 2, 3), items.map { it.lineIndex })
+        assertEquals("2. **Second**", items[1].rawLine)
+    }
+
+    @Test
+    fun orderedReadItemsRequireWhitespaceAfterTheNumber() {
+        val body = "1.5 is a decimal\n2026.10.25\n3.no space\n3.\tTabbed item"
+        val items = WidgetContentLoader.parseReadLines(body, body, "/vault/today.md", 0)
+        val prepared = WidgetDisplayPreparer.prepareRead(items, emptyList())
+
+        assertEquals(listOf("plain", "plain", "plain", "ordered"), items.map { it.type })
+        assertEquals(body.lines(), prepared.map { it.display.text })
+    }
+
+    @Test
+    fun orderedReadItemsRespectHiddenTextAndPlainMode() {
+        val body = "3. private public"
+        val items = WidgetContentLoader.parseReadLines(body, body, "/vault/today.md", 0)
+        val prepared = WidgetDisplayPreparer.prepareRead(items, listOf("private"))
+        val plain = WidgetContentLoader.parsePlainReadLines("3. **literal**")
+
+        assertEquals("3. private public", prepared.single().display.text)
+        // Existing source-text matching hides the entire matching source row.
+        assertEquals(listOf(DisplayRange(0, body.length)), prepared.single().hiddenRanges)
+        assertEquals(body, prepared.single().source.rawLine)
+        assertEquals("3. **literal**", WidgetDisplayPreparer.prepareRead(plain, emptyList()).single().display.text)
+    }
+
+    @Test
     fun markdownReadItemsKeepNestedTasksAndShowCompletedTasks() {
         val body = listOf(
             "# Today",

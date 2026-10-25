@@ -96,6 +96,17 @@ internal object FloatingNoteExitAnimator {
 
         view.pivotX = currentBounds.width() / 2f
         view.pivotY = currentBounds.height() / 2f
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        var finished = false
+        lateinit var fallback: Runnable
+        val finishOnce = {
+            if (!finished) {
+                finished = true
+                handler.removeCallbacks(fallback)
+                onEnd()
+            }
+        }
+        fallback = Runnable { finishOnce() }
         val animator = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = FloatingNoteExitAnimationPolicy.DURATION_MS
             interpolator = DecelerateInterpolator()
@@ -109,10 +120,13 @@ internal object FloatingNoteExitAnimator {
             }
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
-                    onEnd()
+                    finishOnce()
                 }
+
+                override fun onAnimationCancel(animation: Animator) { finishOnce() }
             })
         }
+        handler.postDelayed(fallback, FloatingNoteExitAnimationPolicy.DURATION_MS + 300)
         animator.start()
         return true
     }

@@ -262,6 +262,7 @@ object VaultStoragePrefs {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit()
                 .putString(BACKEND_KEY, "saf")
+                .putBoolean("vault_explicit_saf", true)
                 .putString(TREE_URI_KEY, uri.toString())
                 .putString(DISPLAY_NAME_KEY, name)
                 .putString("vault_path", rootPath)
@@ -280,12 +281,68 @@ object VaultStoragePrefs {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit()
                 .putString(BACKEND_KEY, "file")
+                .remove("vault_explicit_saf")
                 .remove(TREE_URI_KEY)
                 .putString(DISPLAY_NAME_KEY, displayName.orEmpty().ifBlank { File(cleanPath).name })
                 .putString("vault_path", cleanPath)
                 .apply()
         }
         BetaLogger.log("VaultStorage", "configured backend=file path=$cleanPath")
+    }
+
+    /** No provider query and no fabricated physical path for cloud or home: document IDs. */
+    fun localPathForTree(uri: Uri): String? = runCatching {
+        LocalVaultPathPolicy.fromTreeId(uri.authority, DocumentsContract.getTreeDocumentId(uri))
+    }.getOrNull()
+
+    fun visibleLocalPath(path: String): String =
+        SafVirtualPath.parse(path)?.let { parsed ->
+            localPathForTree(parsed.rootUri)?.let { root ->
+                LocalVaultPathPolicy.normalize(listOf(root, parsed.relativePath).filter(String::isNotBlank).joinToString("/"))
+            }
+        }.orEmpty()
+            .ifBlank { path.takeUnless(SafVirtualPath::isSafPath).orEmpty() }
+
+    fun selectVault(context: Context, uri: Uri, useSaf: Boolean): String? {
+        if (useSaf) return saveSaf(context, uri)
+        val path = localPathForTree(uri) ?: return null
+        saveFile(context, path)
+        return path
+    }
+
+    /** Called on IO; migration is offered only when the same local folder is already accessible. */
+    fun localMigrationCandidate(context: Context, path: String): String? {
+        if (isExplicitSaf(context)) return null
+        if (SafVirtualPath.parse(path) == null) return null
+        val local = visibleLocalPath(path).takeIf(String::isNotBlank) ?: return null
+        return local.takeIf { hasLocalFileAccess(context) && LocalVaultAccess.verify(it) }
+    }
+
+    fun isExplicitSaf(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("vault_explicit_saf", false)
+
+    fun needsLegacyUpgrade(context: Context): Boolean {
+        val info = current(context)
+        return (info.backend == VaultBackend.SAF || SafVirtualPath.isSafPath(info.rootPath)) && !isExplicitSaf(context)
+    }
+
+    fun hasLocalFileAccess(context: Context): Boolean =
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            android.os.Environment.isExternalStorageManager()
+        } else {
+            androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_EXTERNAL_STORAGE) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED &&
+                androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+
+    /** Permission inventory only: safe to call on the main thread without querying a provider. */
+    fun hasPersistedSafGrant(context: Context): Boolean {
+        val info = current(context)
+        val uri = runCatching { Uri.parse(info.treeUri) }.getOrNull() ?: return false
+        return context.contentResolver.persistedUriPermissions.any {
+            it.uri == uri && it.isReadPermission && it.isWritePermission
+        }
     }
 
     fun isLegacyHomePath(path: String): Boolean =
@@ -431,7 +488,7 @@ object VaultStorage {
         }
         val parsed = SafVirtualPath.parse(path) ?: return null
         val root = DocumentFile.fromTreeUri(context, parsed.rootUri) ?: return null
-        return resolveDocument(root, parsed.relativePath)
+        return resolveDocument(context, root, parsed.relativePath)
     }
 
     internal fun readText(context: Context, path: String): String? {
@@ -459,16 +516,22 @@ object VaultStorage {
         val target = documentForPath(context, path)
             ?.takeIf { it.isFile && it.canWrite() }
             ?: return false
-        val output = runCatching {
-            context.contentResolver.openOutputStream(target.uri, "rwt")
-        }.getOrNull() ?: runCatching {
-            // Some providers reject rwt but still support same-URI truncation
-            // with w. No replacement or rename is attempted in this fallback.
-            context.contentResolver.openOutputStream(target.uri, "w")
-        }.getOrNull() ?: return false
+        fun open(mode: String) = try {
+            context.contentResolver.openOutputStream(target.uri, mode)
+        } catch (error: SecurityException) {
+            throw error
+        } catch (_: java.io.IOException) {
+            null
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+        // Prefer explicit truncation. The coordinator verifies even the legacy w fallback.
+        val output = open("rwt") ?: open("wt") ?: open("w") ?: return false
         return try {
             output.use { it.write(bytes) }
             true
+        } catch (error: SecurityException) {
+            throw error
         } catch (error: Exception) {
             BetaLogger.logException("VaultStorage", "saf_in_place_write_failed", error)
             false
@@ -483,9 +546,12 @@ object VaultStorage {
         val fileName = pieces.last()
         val parentRelative = pieces.dropLast(1).joinToString("/")
         val root = DocumentFile.fromTreeUri(context, parsed.rootUri) ?: return null
-        val parent = ensureDirectory(root, parentRelative) ?: return null
-        if (parent.findFile(fileName) != null) return null
-        return parent.createFile("text/plain", fileName)
+        val parent = ensureDirectory(context, root, parentRelative) ?: return null
+        if (findChild(context, parent, fileName) != null) return null
+        val mime = SafFileCreationPolicy.mimeType(fileName) { extension ->
+            android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
+        }
+        return parent.createFile(mime, fileName)
     }
 
     internal fun deleteDocumentForPath(context: Context, path: String): Boolean =
@@ -579,22 +645,44 @@ object VaultStorage {
         ).succeeded
     }
 
-    private fun resolveDocument(root: DocumentFile, relativePath: String): DocumentFile? {
+    private fun findChild(context: Context, parent: DocumentFile, name: String): DocumentFile? {
+        // DocumentFile.findFile asks every child's name separately (N+1 Binder calls).
+        // Query names in one cursor, then select the matching TreeDocumentFile by its ID.
+        val parentId = DocumentsContract.getDocumentId(parent.uri)
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(parent.uri, parentId)
+        val cursor = context.contentResolver.query(childrenUri, arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+        ), null, null, null) ?: throw java.io.IOException("saf_directory_query_failed")
+        val id = cursor.use {
+            val idColumn = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+            val nameColumn = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+            var found: String? = null
+            while (cursor.moveToNext()) {
+                if (cursor.getString(nameColumn) == name) { found = cursor.getString(idColumn); break }
+            }
+            found
+        } ?: return null
+        // Keep AndroidX's tree wrapper so createDirectory/listFiles still work for child folders.
+        return parent.listFiles().firstOrNull { DocumentsContract.getDocumentId(it.uri) == id }
+            ?: throw java.io.IOException("saf_document_disappeared_during_lookup")
+    }
+
+    private fun resolveDocument(context: Context, root: DocumentFile, relativePath: String): DocumentFile? {
         if (relativePath.isBlank()) return root
         var current = root
         relativePath.split('/').forEach { name ->
-            current = current.findFile(name) ?: return null
+            current = findChild(context, current, name) ?: return null
         }
         return current
     }
 
-    private fun ensureDirectory(root: DocumentFile, relativePath: String): DocumentFile? {
+    private fun ensureDirectory(context: Context, root: DocumentFile, relativePath: String): DocumentFile? {
         if (relativePath.isBlank()) return root
         var current = root
         relativePath.split('/').forEach { name ->
-            current = current.findFile(name)?.takeIf { it.isDirectory }
-                ?: current.createDirectory(name)
-                ?: return null
+            val found = findChild(context, current, name)
+            current = if (found != null) found.takeIf { it.isDirectory } ?: return null
+                else current.createDirectory(name) ?: return null
         }
         return current
     }
@@ -606,7 +694,7 @@ object VaultStorage {
     ): List<VaultFileMetadata> {
         val documentRoot = DocumentFile.fromTreeUri(context, root.rootUri)
             ?: throw VaultStorageException("SAF 文件夹不可访问：${root.rootUri}") // localization-legacy: internal scan diagnostic
-        val selectedRoot = resolveDocument(documentRoot, root.relativePath)
+        val selectedRoot = resolveDocument(context, documentRoot, root.relativePath)
             ?: throw VaultStorageException("SAF 文件夹不存在：${root.relativePath}") // localization-legacy: internal scan diagnostic
         if (!selectedRoot.exists() || !selectedRoot.isDirectory) {
             throw VaultStorageException("SAF 文件夹不是目录：${root.relativePath}") // localization-legacy: internal scan diagnostic

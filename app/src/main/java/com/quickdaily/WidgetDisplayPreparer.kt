@@ -88,7 +88,7 @@ internal object WidgetDisplayPreparer {
     }
 
     private fun readDisplay(item: ReadWidgetItem, imagePlaceholder: String): DisplayText = when (item.type) {
-        "task", "heading" -> InlineDisplayPolicy.render(item.text, InlineSurface.WIDGET)
+        "task", "heading", "ordered" -> InlineDisplayPolicy.render(item.text, InlineSurface.WIDGET)
         "quote" -> DisplayText(" ▍ ").plus(InlineDisplayPolicy.render(item.text, InlineSurface.WIDGET))
         "bullet" -> DisplayText("  •  ").plus(InlineDisplayPolicy.render(item.text, InlineSurface.WIDGET))
         "image" -> DisplayText(imagePlaceholder)

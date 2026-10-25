@@ -43,11 +43,16 @@ class TaskWidget : AppWidgetProvider() {
     override fun onDeleted(context: Context, appWidgetIds: IntArray) {
         BetaLogger.init(context)
         BetaLogger.log("TaskWidget", "onDeleted widgetIds=${appWidgetIds.joinToString()}")
-        appWidgetIds.forEach { TaskWidgetConfigStore.clear(context, it) }
+        appWidgetIds.forEach { TaskWidgetConfigStore.clear(context, it); WidgetSnapshots.tasks.remove(it) }
         super.onDeleted(context, appWidgetIds)
     }
 
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == AppWidgetManager.ACTION_APPWIDGET_UPDATE ||
+            intent.action == AppWidgetManager.ACTION_APPWIDGET_OPTIONS_CHANGED || intent.action == ACTION_REFRESH) {
+            val result = goAsync()
+            WidgetRefreshCoordinator.holdReceiver("tasks") { result.finish() }
+        }
         BetaLogger.init(context)
         super.onReceive(context, intent)
         val widgetId = intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, INVALID_WIDGET_ID)
@@ -195,7 +200,7 @@ class TaskWidget : AppWidgetProvider() {
             views.setTextColor(R.id.widget_title, appearance.foreground)
             views.setTextColor(R.id.empty_view, appearance.muted)
 
-            val effectiveResult = result ?: WidgetLoadResult.Empty(UiText.Resource(R.string.qd_widget_loading))
+            val effectiveResult = result ?: WidgetLoadResult.Empty(UiText.Resource(R.string.qd_widget_refresh_ready))
             val status: CharSequence = when (effectiveResult) {
                 is WidgetLoadResult.Success -> uiContext.getString(R.string.qd_widget_no_tasks)
                 is WidgetLoadResult.Empty -> effectiveResult.message.resolve(uiContext)
@@ -216,6 +221,14 @@ class TaskWidget : AppWidgetProvider() {
                     ),
                 )
             } else {
+                val items = (effectiveResult as? WidgetLoadResult.Success)?.value.orEmpty()
+                val message = when (effectiveResult) {
+                    is WidgetLoadResult.Empty -> effectiveResult.message
+                    is WidgetLoadResult.Failure -> effectiveResult.message
+                    is WidgetLoadResult.Success -> null
+                }
+                WidgetSnapshots.tasks[widgetId] = WidgetSnapshots.Tasks(renderGeneration,
+                    WidgetDisplayPreparer.prepareTasks(items, WidgetDisplayPreparer.rules(context)), message)
                 val serviceIntent = Intent(context, TaskWidgetService::class.java).apply {
                     data = Uri.parse("quickdaily://task-widget/$widgetId/$renderGeneration")
                     putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
@@ -337,8 +350,10 @@ class TaskWidget : AppWidgetProvider() {
                         WidgetFillInContract.KIND_TASK,
                         widgetId,
                     )
+                    try {
                     val config = TaskWidgetConfigStore.load(context, widgetId)
-                    val result = WidgetContentLoader.loadTasks(context, config)
+                    val vault = com.quickdaily.util.VaultStoragePrefs.current(context).rootPath
+                    val result = BoundedWidgetLoader.load("tasks/$widgetId/$vault", generation) { WidgetContentLoader.loadTasks(context, config) }
                     logWidgetResult("TaskWidget[$widgetId]", result)
                     if (!WidgetGeneration.isCurrent(
                             context,
@@ -360,6 +375,13 @@ class TaskWidget : AppWidgetProvider() {
                     )
                     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
                         manager.notifyAppWidgetViewDataChanged(intArrayOf(widgetId), R.id.task_list)
+                    }
+                    } catch (error: Exception) {
+                        BetaLogger.logException("TaskWidget", "refresh_instance_failed widgetId=$widgetId", error)
+                        if (WidgetGeneration.isCurrent(context, WidgetFillInContract.KIND_TASK, widgetId, generation)) {
+                            runCatching { updateWidget(context, manager, widgetId,
+                                WidgetLoadResult.Failure(UiText.Resource(R.string.qd_widget_refresh_failed)), generation = generation) }
+                        }
                     }
                 }
             } catch (e: Exception) {

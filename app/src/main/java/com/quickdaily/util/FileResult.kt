@@ -74,6 +74,8 @@ data class PendingSaveRecovery(
     val targetFingerprint: FileFingerprint?,
     val expectedFingerprint: FileFingerprint,
     val backupPath: String?,
+    /** Exact URI path of a newly-created document, even when the provider renamed it. */
+    val createdPath: String? = null,
 )
 
 enum class SafeRecoveryState {

@@ -7,6 +7,17 @@ import java.io.File
 
 class VaultPathUtilTest {
     @Test
+    fun dailyNotesMayLiveAtVaultRoot() {
+        assertEquals("2026-10-24.md", VaultPathUtil.dailyRelativePath("", "2026-10-24"))
+        assertEquals("2026-10-24.md", VaultPathUtil.dailyRelativePath("/", "2026-10-24"))
+    }
+
+    @Test
+    fun dailyFolderSeparatorsDoNotChangeTheTarget() {
+        assertEquals("日记/2026/2026-10-24.md", VaultPathUtil.dailyRelativePath(" /日记/2026/ ", "2026-10-24"))
+    }
+
+    @Test
     fun resolvesOnlyPathsInsideTheVault() {
         val vault = File(System.getProperty("java.io.tmpdir"), "quickdaily-vault").canonicalPath
 

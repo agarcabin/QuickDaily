@@ -84,6 +84,7 @@ class LauncherActivity : LocalizedComponentActivity() {
     }
 
     private fun shouldOpenFullScreen(): Boolean {
+        if (VaultStoragePrefs.needsLegacyUpgrade(this)) return false
         val prefs = getSharedPreferences("QuickDaily", 0)
         val vaultPath = VaultStoragePrefs.current(this).rootPath
         return QuickLaunchPolicy.shouldOpenFullScreen(
@@ -97,6 +98,7 @@ class LauncherActivity : LocalizedComponentActivity() {
     }
 
     private fun shouldOpenQuickNote(): Boolean {
+        if (VaultStoragePrefs.needsLegacyUpgrade(this)) return false
         val vaultPath = VaultStoragePrefs.current(this).rootPath
         val result = QuickLaunchPolicy.shouldOpenQuickNote(
             action = intent.action,
@@ -117,7 +119,7 @@ class LauncherActivity : LocalizedComponentActivity() {
     private fun hasStorageAccess(): Boolean {
         val storage = VaultStoragePrefs.current(this)
         if (storage.backend == VaultBackend.SAF) {
-            return VaultStoragePrefs.validate(this).status == com.quickdaily.util.VaultValidationStatus.VALID
+            return VaultStoragePrefs.hasPersistedSafGrant(this)
         }
         if (VaultStoragePrefs.isLegacyHomePath(storage.rootPath)) return false
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {

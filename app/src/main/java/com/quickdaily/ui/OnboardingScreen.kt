@@ -46,6 +46,8 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -118,7 +120,8 @@ fun OnboardingScreen(
     var refreshKey by remember { mutableIntStateOf(0) }
     var detectionMessage by rememberSaveable { mutableStateOf("") }
     var skipDialogOpen by rememberSaveable { mutableStateOf(false) }
-    val allFilesAccessGranted = remember(context, refreshKey) {
+    var useSafPicker by rememberSaveable { mutableStateOf(false) }
+    val allFilesAccessGranted = remember(context, refreshKey, config.vaultPath) {
         onboardingStoragePermissionGranted(context)
     }
     val canAdvance = OnboardingPolicy.canAdvance(
@@ -174,13 +177,17 @@ fun OnboardingScreen(
 
     val vaultPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri ?: return@rememberLauncherForActivityResult
-        val path = VaultStoragePrefs.saveSaf(context, uri)
-        val validation = VaultStoragePrefs.validate(context)
-        if (path == null || validation.status != com.quickdaily.util.VaultValidationStatus.VALID) {
-            detectionMessage = validation.message.resolve(context).toString()
-        } else {
-            appState.updateConfig { current -> current.copy(vaultPath = path) }
-            scope.launch { detectObsidian(path) }
+        scope.launch {
+            val path = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                VaultStoragePrefs.selectVault(context, uri, useSafPicker)
+            }
+            if (path == null) {
+                detectionMessage = context.getString(com.quickdaily.R.string.qd_vault_local_unavailable)
+            } else {
+                appState.updateConfig { current -> current.copy(vaultPath = path) }
+                appState.loadEditorTarget(appState.editorTargetRelativePath.value)
+                detectObsidian(path)
+            }
         }
     }
     val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
@@ -366,6 +373,16 @@ fun OnboardingScreen(
                         1 -> VaultPage(
                             config = config,
                             message = detectionMessage,
+                            useSaf = useSafPicker,
+                            onUseSafChange = { useSafPicker = it },
+                            onUseLocalPath = { input ->
+                                val path = com.quickdaily.util.LocalVaultPathPolicy.normalize(input)
+                                if (path == null) detectionMessage = context.getString(com.quickdaily.R.string.qd_vault_absolute_required)
+                                else {
+                                    appState.updateConfig { it.copy(vaultPath = path) }
+                                    scope.launch { detectObsidian(path) }
+                                }
+                            },
                             onPickVault = {
                                 onExternalLaunch()
                                 runCatching { vaultPicker.launch(null) }
@@ -418,7 +435,7 @@ fun OnboardingScreen(
 private fun onboardingStoragePermissionGranted(context: Context): Boolean {
     val vault = VaultStoragePrefs.current(context)
     if (vault.backend == com.quickdaily.util.VaultBackend.SAF) {
-        return VaultStoragePrefs.validate(context).status == com.quickdaily.util.VaultValidationStatus.VALID
+        return VaultStoragePrefs.hasPersistedSafGrant(context)
     }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
         val spec = PermissionPolicy.all().firstOrNull { it.id == PermissionPolicy.MANAGE_FILES_ID }
@@ -471,7 +488,14 @@ private fun WelcomePage() {
 }
 
 @Composable
-private fun VaultPage(config: DiaryConfig, message: String, onPickVault: () -> Unit) {
+private fun VaultPage(
+    config: DiaryConfig, message: String, onPickVault: () -> Unit,
+    useSaf: Boolean, onUseSafChange: (Boolean) -> Unit, onUseLocalPath: (String) -> Unit,
+) {
+    var pathInput by rememberSaveable(config.vaultPath) {
+        mutableStateOf(VaultStoragePrefs.visibleLocalPath(config.vaultPath))
+    }
+    val safModeLabel = stringResource(com.quickdaily.R.string.qd_vault_saf_mode)
     OnboardingHeader(
         Icons.Default.FolderOpen,
         stringResource(com.quickdaily.R.string.qd_onboarding_vault_title),
@@ -483,11 +507,21 @@ private fun VaultPage(config: DiaryConfig, message: String, onPickVault: () -> U
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(stringResource(com.quickdaily.R.string.qd_onboarding_current_vault), style = MaterialTheme.typography.titleMedium)
-            Text(
-                config.vaultPath.ifBlank { stringResource(com.quickdaily.R.string.qd_onboarding_vault_unselected) },
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            OutlinedTextField(
+                value = pathInput, onValueChange = { pathInput = it },
+                label = { Text(stringResource(com.quickdaily.R.string.qd_settings_vault_path)) },
+                placeholder = { Text("/storage/emulated/0/Documents/Vault") },
+                modifier = Modifier.fillMaxWidth(), minLines = 1, maxLines = 3, enabled = !useSaf,
             )
+            if (!useSaf) {
+                OutlinedButton(onClick = { onUseLocalPath(pathInput) }, enabled = pathInput.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth().height(48.dp)) {
+                    Text(stringResource(com.quickdaily.R.string.qd_vault_use_absolute))
+                }
+                Text(stringResource(com.quickdaily.R.string.qd_vault_local_hint), style = MaterialTheme.typography.bodySmall)
+            } else {
+                Text(stringResource(com.quickdaily.R.string.qd_vault_saf_hint), style = MaterialTheme.typography.bodySmall)
+            }
             FilledTonalButton(onClick = onPickVault, modifier = Modifier.fillMaxWidth().height(48.dp)) {
                 Icon(Icons.Default.FolderOpen, contentDescription = null)
                 Spacer(Modifier.size(8.dp))
@@ -500,6 +534,12 @@ private fun VaultPage(config: DiaryConfig, message: String, onPickVault: () -> U
                         },
                     ),
                 )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(com.quickdaily.R.string.qd_vault_saf_mode), modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium)
+                Switch(checked = useSaf, onCheckedChange = onUseSafChange,
+                    modifier = Modifier.semantics { contentDescription = safModeLabel })
             }
             if (message.isNotBlank()) {
                 Text(

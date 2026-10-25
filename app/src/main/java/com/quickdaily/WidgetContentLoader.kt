@@ -20,6 +20,7 @@ import com.quickdaily.util.DateUtil
 import com.quickdaily.util.FileUtil
 import com.quickdaily.util.ReadResult
 import com.quickdaily.util.VaultStoragePrefs
+import com.quickdaily.util.VaultPathUtil
 
 sealed interface WidgetLoadResult<out T> {
     data class Success<T>(val value: T, val sourcePath: String) : WidgetLoadResult<T>
@@ -47,6 +48,8 @@ data class ReadWidgetItem(
 object WidgetContentLoader {
     /** Extra left padding per nested task level in both widget renderers. */
     const val SUBTASK_INDENT_DP = 20
+
+    private val ORDERED_LIST_RE = Regex("^\\d+\\.[ \\t]+")
 
     fun loadRead(context: Context): WidgetLoadResult<List<ReadWidgetItem>> =
         loadRead(context, ReadWidgetConfig())
@@ -225,7 +228,9 @@ object WidgetContentLoader {
                     }
                     (0 until daysToLoad).map { offset ->
                         val date = DateUtil.dateStr(dateFormat, -offset.toLong())
-                        "${vaultPath.trimEnd('/')}/${diaryFolder.trimEnd('/')}/$date.md" to date
+                        val path = VaultPathUtil.resolve(vaultPath, VaultPathUtil.dailyRelativePath(diaryFolder, date))
+                            ?: return WidgetLoadResult.Failure(UiText.Resource(R.string.qd_widget_read_failed))
+                        path to date
                     }
                 }
                 TaskWidgetScope.CUSTOM -> {
@@ -379,9 +384,7 @@ object WidgetContentLoader {
             trimmed.startsWith("> ") -> item("quote", trimmed.drop(2).trimStart())
             Regex("^[-*_]{3,}$").matches(trimmed) -> item("hr")
             trimmed.startsWith("- ") -> item("bullet", trimmed.drop(2).trimStart())
-            Regex("^\\d+\\.").containsMatchIn(trimmed) -> {
-                item("bullet", trimmed.dropWhile { it != ' ' }.trimStart())
-            }
+            ORDERED_LIST_RE.containsMatchIn(trimmed) -> item("ordered", trimmed)
             trimmed.startsWith("![[") && trimmed.endsWith("]]") -> item("image")
             Regex("^!\\[.*\\]\\(.*\\)").containsMatchIn(trimmed) -> {
                 val alt = trimmed.substringAfter("![").substringBefore("](")
@@ -489,7 +492,7 @@ object ReadWidgetViews {
                 item.hiddenRanges,
             )
             "hr" -> simpleLine(context, item.display, colors.muted, item.hiddenRanges)
-            "bullet" -> simpleLine(
+            "bullet", "ordered" -> simpleLine(
                 context,
                 item.display,
                 colors.foreground,
